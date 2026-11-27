@@ -184,6 +184,7 @@ static void AcknowledgeBootstrapHealthAfterUiPresented() {
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include <filesystem>
 #include <thread>
 #include <mutex>
@@ -3921,8 +3922,6 @@ static void ApplyMagicEqQaPointerBeforeFrame() {
     }
 }
 
-extern void QaSendToDaw(AppState&, int);
-extern void QaWwiseStageSelection(AppState&);
 extern std::string ControlUpdateNoticeForQa(AppState&, const std::string&);
 extern std::string ControlAboutWindowForQa(AppState&, const std::string&);
 #if ARIS_PREVIEW_ISOLATION
@@ -4117,7 +4116,9 @@ static void PollQaCommandFile(AppState& state) {
         item += ",\"embedded_cover_key\":\"" + jsonEscape(r.embeddedCoverKey) + "\"";
         item += ",\"folder_cover_key\":\"" + jsonEscape(r.folderCoverKey) + "\"";
         item += ",\"cover_key\":\"" + jsonEscape(!r.embeddedCoverKey.empty() ? r.embeddedCoverKey : r.folderCoverKey) + "\"";
-        item += ",\"use_count\":" + std::to_string((long long)r.useCount);
+#if ARIS_PREVIEW_ISOLATION
+        item += ",\"play_count\":" + std::to_string(r.playCount);
+#endif
         item += ",\"selected\":" + std::string(state.selectedIndicesSet.count(rowIndex) ? "true" : "false");
         item += "}";
         return item;
@@ -5535,8 +5536,6 @@ static void PollQaCommandFile(AppState& state) {
         result += "\"drawn_list_header_sample\":\"" + jsonEscape(state.qaRegions.listHeaderSample) + "\",";
         result += "\"drawn_duration_column_width\":" + std::to_string(state.qaRegions.listDurationColWidth) + ",";
         result += "\"drawn_sample_rate_column_width\":" + std::to_string(state.qaRegions.listSampleRateColWidth) + ",";
-        result += "\"drawn_use_count_sample\":\"" + jsonEscape(state.qaRegions.listUseCountSample) + "\",";
-        result += "\"use_count_header\":[" + std::to_string(state.qaRegions.listUseCountHeaderLeft) + "," + std::to_string(state.qaRegions.listUseCountHeaderTop) + "," + std::to_string(state.qaRegions.listUseCountHeaderRight) + "," + std::to_string(state.qaRegions.listUseCountHeaderBottom) + "],";
 #endif
         result += "\"webui_active\":false,";
         result += "\"webui_bridge_active\":false,";
@@ -6167,35 +6166,6 @@ static void PollQaCommandFile(AppState& state) {
                    + ",\"result_count\":" + std::to_string(resultCount) + "}";
         }
 
-    } else if (cmd == "send_to_daw") {
-        const int dawIndex = getInt(raw, "index", state.selectedDAWIndex);
-        const bool hasSelection = !state.selectedIndicesSet.empty() ||
-            (state.selectedResultIndex >= 0 && state.selectedResultIndex < (int)state.searchResults.size());
-        if (!hasSelection) {
-            result = "{\"ok\":false,\"cmd\":\"send_to_daw\",\"error\":\"no selection\"}";
-        } else if (dawIndex < 0 || dawIndex >= (int)state.settings.dawTargets.size()) {
-            result = "{\"ok\":false,\"cmd\":\"send_to_daw\",\"error\":\"target index out of range\"}";
-        } else {
-            QaSendToDaw(state, dawIndex);
-            result = "{\"ok\":true,\"cmd\":\"send_to_daw\",\"index\":" + std::to_string(dawIndex) + "}";
-        }
-
-    } else if (cmd == "wwise_qa") {
-        const std::string action = getStr(raw, "action");
-        if (action == "stage") {
-            QaWwiseStageSelection(state);
-            result = "{\"ok\":true,\"cmd\":\"wwise_qa\",\"action\":\"stage\"}";
-        } else {
-            result = aura::wwise::QaWwiseCommand(action, getInt(raw, "port", 0),
-                                                    getStr(raw, "project"));
-        }
-
-    } else if (cmd == "send_feedback") {
-        const auto snapshot = state.dawSendFeedback.snapshot();
-        result = "{\"ok\":true,\"cmd\":\"send_feedback\",\"outcome\":" + std::to_string((int)snapshot.outcome)
-               + ",\"sent\":" + std::to_string(snapshot.sent.value_or(-1))
-               + ",\"total\":" + std::to_string(snapshot.total.value_or(-1)) + "}";
-
     } else if (cmd == "send_target_menu") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string action = getStr(raw, "action");
@@ -6757,8 +6727,6 @@ static void PollQaCommandFile(AppState& state) {
                                                          record.fileName, copyError);
                             } else {
                                 ++completed;
-                                // 导出成功才记一次使用；失败和跳过不计。
-                                if (record.id > 0) state.queueUseCount(record.id);
                             }
                         } catch (const std::exception& ex) {
                             ++errors;
@@ -11621,7 +11589,6 @@ static SortColumn ParseSortColumnForWeb(const std::string& sortColumn) {
     const std::string s = ToLowerAscii(sortColumn);
     if (s == "filename" || s == "name") return SortColumn::FileName;
     if (s == "duration") return SortColumn::Duration;
-    if (s == "usecount" || s == "uses") return SortColumn::UseCount;
     if (s == "format") return SortColumn::Format;
     if (s == "size") return SortColumn::Size;
     if (s == "samplerate") return SortColumn::SampleRate;
@@ -11650,7 +11617,6 @@ static void SortAudioRecordsForWeb(std::vector<AudioRecord>& rows, SortColumn co
         switch (column) {
         case SortColumn::FileName: return cmpStr(a.fileName, b.fileName);
         case SortColumn::Duration: return cmpNum(a.durationSeconds, b.durationSeconds);
-        case SortColumn::UseCount: return cmpNum(a.useCount, b.useCount);
         case SortColumn::Format: return cmpStr(!a.format.empty() ? a.format : a.extension, !b.format.empty() ? b.format : b.extension);
         case SortColumn::Size: return cmpNum(a.fileSize, b.fileSize);
         case SortColumn::SampleRate: return cmpNum(a.sampleRate, b.sampleRate);
@@ -14546,14 +14512,28 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
             state.audioEngine.playIfLoadReady();
             static aura::playback::PlayStatsGate s_playStatsGate;
             static std::uint64_t s_playStatsLoadToken = 0;
-            aura::playback::RecordSuccessfulPlayStats(
+            const auto playedFileId = state.currentFileId;
+            if (aura::playback::RecordSuccessfulPlayStats(
                 state.database,
                 s_playStatsGate,
                 aura::playback::PlayStatsEvent{
                     true,
                     state.audioEngine.isPlaying(),
-                    state.currentFileId,
-                    ++s_playStatsLoadToken});
+                    playedFileId,
+                    ++s_playStatsLoadToken})) {
+                const auto updateCachedCount = [playedFileId](std::vector<AudioRecord>& rows) {
+                    for (auto& record : rows) {
+                        if (record.id == playedFileId && record.playCount < (std::numeric_limits<int>::max)()) {
+                            ++record.playCount;
+                        }
+                    }
+                };
+                updateCachedCount(state.searchResults);
+                updateCachedCount(state.albumGrid.expandedTracks);
+                for (auto& tab : state.listTabs) {
+                    if (tab.searchResultsSnapshotValid) updateCachedCount(tab.searchResults);
+                }
+            }
         } else {
             std::string loadErr = state.audioEngine.getLastLoadError();
             if (!loadErr.empty()) {

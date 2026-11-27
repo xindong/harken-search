@@ -2209,13 +2209,6 @@
       "ja": "長さ"
     },
     {
-      "id": "Col_UseCount",
-      "type": "ui",
-      "zh": "使用次数",
-      "en": "Uses",
-      "ja": "使用回数"
-    },
-    {
       "id": "Col_Format",
       "type": "ui",
       "zh": "格式",
@@ -2319,6 +2312,13 @@
       "zh": "评级",
       "en": "Rating",
       "ja": "評価"
+    },
+    {
+      "id": "Col_AuditionHeat",
+      "type": "ui",
+      "zh": "试听热度",
+      "en": "Audition Heat",
+      "ja": "試聴頻度"
     },
     {
       "id": "Col_FilePath",

@@ -4059,6 +4059,22 @@ set_tests_properties(TestPlayStatsRecorderBoundary PROPERTIES
 )
 aura_set_test_labels(TestPlayStatsRecorderBoundary core stage4)
 
+add_executable(TestAuditionHeat EXCLUDE_FROM_ALL tests/test_audition_heat.cpp)
+target_include_directories(TestAuditionHeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_features(TestAuditionHeat PRIVATE cxx_std_17)
+add_test(NAME TestAuditionHeat COMMAND TestAuditionHeat)
+aura_set_test_labels(TestAuditionHeat core audio)
+
+add_test(
+    NAME TestAuditionHeatContract
+    COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_audition_heat_contract.py"
+)
+set_tests_properties(TestAuditionHeatContract PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    TIMEOUT 60
+)
+aura_set_test_labels(TestAuditionHeatContract core audio)
+
 add_test(
     NAME TestWaveformDetailSchedulingStateAdapterBoundary
     COMMAND ${Python3_EXECUTABLE} -m pytest

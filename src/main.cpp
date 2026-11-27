@@ -158,6 +158,7 @@
 #include "ui/CoreWorkspaceStyle.h"
 #include "ui/DatabaseBreadcrumbScroll.h"
 #include "ui/ResultsPanelLayout.h"
+#include "ui/AuditionHeat.h"
 #include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
 #include "ui/ModuleWindowShell.h"
@@ -1229,7 +1230,7 @@ static void SendToDAW(AppState& state, int dawIndex);
 static void SendToDAW(AppState& state, int dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
 static bool IsPlaylistSystemView(ViewMode mode);
 static void OpenTransferDialogForRecords(AppState& state, const std::vector<AudioRecord>& records);
-static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<AudioRecord>& records);
+static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& records);
 
 namespace {
 bool g_searchBarFocusedForShortcuts = false;
@@ -3241,66 +3242,6 @@ static void SuppressDefaultDragImage(IDataObject* dataObject) {
 }
 
 // Start drag operation for files
-// 拖出成功后判断落点是不是「已配置的 DAW」：OLE 的 S_DROP + 非零 effect 说明目标真的收了，
-// 再看落点窗口的进程名是否命中 DAW 集成里配的进程，避免拖到资源管理器/桌面也被计数。
-static std::string LowerAsciiCopy(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
-}
-
-static std::string ProcessNameForWindow(HWND hwnd) {
-    if (!hwnd) return {};
-    DWORD pid = 0;
-    GetWindowThreadProcessId(hwnd, &pid);
-    if (!pid) return {};
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
-    if (!process) return {};
-    wchar_t buffer[1024] = {};
-    DWORD size = static_cast<DWORD>(std::size(buffer));
-    std::string name;
-    if (QueryFullProcessImageNameW(process, 0, buffer, &size)) {
-        const std::wstring full(buffer, size);
-        const size_t slash = full.find_last_of(L"\/");
-        const std::wstring file = slash == std::wstring::npos ? full : full.substr(slash + 1);
-        name = LowerAsciiCopy(WideToUtf8(file));
-    }
-    CloseHandle(process);
-    return name;
-}
-
-static void CountDragOutUse(AppState& state,
-                            const std::vector<std::string>& files,
-                            HWND dropTargetWnd) {
-    const std::string targetProcess = ProcessNameForWindow(dropTargetWnd);
-    if (targetProcess.empty()) return;
-    bool isConfiguredDaw = false;
-    for (const auto& target : state.settings.dawTargets) {
-        if (!target.processName.empty() &&
-            LowerAsciiCopy(target.processName) == targetProcess) {
-            isConfiguredDaw = true;
-            break;
-        }
-    }
-    if (!isConfiguredDaw) return;
-
-    size_t counted = 0;
-    for (const auto& path : files) {
-        for (const auto& record : state.searchResults) {
-            if (record.id > 0 && record.filePath == path) {
-                state.queueUseCount(record.id);
-                ++counted;
-                break;
-            }
-        }
-    }
-    if (counted == 0) {
-        for (const auto& record : state.getSelectedRecords()) {
-            if (record.id > 0) state.queueUseCount(record.id);
-        }
-    }
-}
-
 void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* origin = nullptr) {
     if (files.empty()) return;
     if (g_isDragging) return;  // Prevent re-entry
@@ -3413,9 +3354,7 @@ void StartFileDrag(const std::vector<std::string>& files, const DragCardOrigin* 
                 HWND parent = GetAncestor(dropTargetWnd, GA_ROOT);
                 if (parent) dropTargetWnd = parent;
             }
-            AppendDiagLogF(L"StartFileDrag: 拖放目标窗口=%p", (void*)dropTargetWnd);
-            // 只有真正被 DAW 接收的拖放才计入使用次数。
-            if (g_appState) CountDragOutUse(*g_appState, files, dropTargetWnd);
+            AppendDiagLogF(L"StartFileDrag: 拖放目标窗口=%p", (void*)dropTargetWnd);
         }
 
         if (shouldHideWindow && g_hwnd) {
@@ -5322,11 +5261,6 @@ static bool DispatchToDaw(DawTarget& target, const std::vector<std::string>& fil
     }
 }
 
-// QA 隔离构建专用：走与右键「发送到宿主」完全相同的 SendToDAW 路径。
-void QaSendToDaw(AppState& state, int dawIndex) {
-    SendToDAW(state, dawIndex);
-}
-
 // Top-level: Send = prepare payload (shared with drag) → dispatch to DAW (async)
 static void SendToDAW(AppState& state, int dawIndex) {
     SendToDAW(state, dawIndex, HarkenSearch::CubaseAdapter::TransferActionKind::SpotToHost);
@@ -5335,8 +5269,7 @@ static void SendToDAW(AppState& state, int dawIndex) {
 static void DispatchPreparedSendToDAW(AppState& state,
                                       DawTarget& target,
                                       std::vector<std::string> files,
-                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
-                                      std::vector<int64_t> useCountIds);
+                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction);
 
 static void PublishDawSendFailure(AppState& state, LedgerText detail) {
     state.dawSendFeedback.failBeforeSend(std::move(detail));
@@ -5365,24 +5298,13 @@ static void SendToDAW(AppState& state,
         return;
     }
 
-    std::vector<int64_t> useCountIds;
-    {
-        auto selected = state.getSelectedRecords();
-        if (selected.empty() && state.selectedResultIndex >= 0 &&
-            state.selectedResultIndex < (int)state.searchResults.size())
-            selected.push_back(state.searchResults[state.selectedResultIndex]);
-        for (const auto& record : selected) {
-            if (record.id > 0) useCountIds.push_back(record.id);
-        }
-    }
-    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction, std::move(useCountIds));
+    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction);
 }
 
 static void DispatchPreparedSendToDAW(AppState& state,
                                       DawTarget& target,
                                       std::vector<std::string> files,
-                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction,
-                                      std::vector<int64_t> useCountIds) {
+                                      HarkenSearch::CubaseAdapter::TransferActionKind transferAction) {
     const bool isReaperPipe = IsReaperNamedPipeTarget(target);
     const bool keepHarkenSearchProcessingSuffix = state.settings.keepHarkenSearchOutputProcessingSuffix;
     DawTarget targetCopy = target;
@@ -5392,8 +5314,7 @@ static void DispatchPreparedSendToDAW(AppState& state,
         state.dawSendThread.join();
 
     auto dispatch = [&state, files = std::move(files), targetCopy = std::move(targetCopy),
-                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix,
-                   useCountIds = std::move(useCountIds)]() mutable {
+                   isReaperPipe, transferAction, keepHarkenSearchProcessingSuffix]() mutable {
         DawSendFeedbackSnapshot feedback;
         feedback.total = static_cast<int>(files.size());
         std::string status;
@@ -5423,10 +5344,6 @@ static void DispatchPreparedSendToDAW(AppState& state,
             feedback.outcome = DawSendOutcome::BridgeFailure;
             feedback.detail = std::move(bridgeSnap.detail);
             feedback.remediation = std::move(bridgeSnap.remediation);
-        }
-        // 只有整批真正送到 DAW 才算一次使用；部分成功/失败不计数。
-        if (feedback.outcome == DawSendOutcome::Success) {
-            for (int64_t fileId : useCountIds) state.queueUseCount(fileId);
         }
         return feedback;
     };
@@ -5465,16 +5382,7 @@ static void SendToDAWForPaths(AppState& state,
         return;
     }
 
-    std::vector<int64_t> useCountIds;
-    for (const auto& sourcePath : sourcePaths) {
-        for (const auto& record : state.searchResults) {
-            if (record.id > 0 && record.filePath == sourcePath) {
-                useCountIds.push_back(record.id);
-                break;
-            }
-        }
-    }
-    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction, std::move(useCountIds));
+    DispatchPreparedSendToDAW(state, target, std::move(files), transferAction);
 }
 
 static void OpenTransferDialogForRecords(AppState& state, const std::vector<AudioRecord>& records) {
@@ -5492,7 +5400,7 @@ static void OpenTransferDialogForRecords(AppState& state, const std::vector<Audi
     state.showTransferDialog = true;
 }
 
-static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<AudioRecord>& records) {
+static bool OpenWwiseTransferPanelForRecords(const std::vector<AudioRecord>& records) {
     std::vector<std::string> sources;
     std::vector<aura::wwise::MetadataContext> contexts;
     sources.reserve(records.size());
@@ -5518,23 +5426,10 @@ static bool OpenWwiseTransferPanelForRecords(AppState& state, const std::vector<
     if (sources.empty()) {
         return false;
     }
-    state.wwiseUseCountIds.clear();
-    for (const auto& r : records) {
-        if (r.id > 0 && !r.filePath.empty()) state.wwiseUseCountIds.push_back(r.id);
-    }
     aura::wwise::OpenWwiseTransferPanel(sources, contexts);
     return true;
 }
 
-// QA 隔离构建专用：把当前选中的行交给 Wwise 传输面板（与右键菜单同一入口）。
-void QaWwiseStageSelection(AppState& state) {
-    auto selected = state.getSelectedRecords();
-    if (selected.empty() && state.selectedResultIndex >= 0 &&
-        state.selectedResultIndex < (int)state.searchResults.size())
-        selected.push_back(state.searchResults[state.selectedResultIndex]);
-    if (!selected.empty()) OpenWwiseTransferPanelForRecords(state, selected);
-}
-
 // Folder Dialog
 
 std::string OpenFolderDialog(HWND hwnd) {
@@ -6551,33 +6446,21 @@ void LoadAppSettings(AppState& state) {
                 if (it != kv.end()) state.columnPresets[i].name = it->second;
                 state.columnPresets[i].showMeter = ParseBool(kv[p + "meter"],   false);
                 state.columnPresets[i].builtIn   = ParseBool(kv[p + "builtIn"], false);
-                const bool hasPathSlot = kv.find(p + "col15") != kv.end();
+                const bool hasTrialUseColumn = kv.find(p + "col15") != kv.end();
                 const bool hasKeywordsSlot = kv.find(p + "col14") != kv.end();
-                if (hasPathSlot) {
-                    for (int c = 0; c < kColumnViewPresetFieldCount; ++c)
-                        state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
-                } else if (hasKeywordsSlot) {
-                    // 15-field layout: Dur,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
-                    // Use count was inserted at index 1 (default visible).
-                    bool legacy[kColumnViewPresetFieldCount - 1] = {};
-                    for (int c = 0; c < kColumnViewPresetFieldCount - 1; ++c)
-                        legacy[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
-                    state.columnPresets[i].col[0] = legacy[0];
-                    state.columnPresets[i].col[1] = true;
-                    for (int c = 1; c < kColumnViewPresetFieldCount - 1; ++c)
-                        state.columnPresets[i].col[c + 1] = legacy[c];
+                if (hasKeywordsSlot) {
+                    for (int column = 0; column < kColumnViewPresetFieldCount; ++column) {
+                        const int savedColumn = column + (hasTrialUseColumn && column > 0 ? 1 : 0);
+                        state.columnPresets[i].col[column] =
+                            ParseBool(kv[p + "col" + std::to_string(savedColumn)], false);
+                    }
                 } else {
-                    // 14-field layout without Keywords: Dur,Fmt,Size,SR,Desc,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
-                    bool legacy[14] = {};
-                    for (int c = 0; c < 14; ++c)
-                        legacy[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
-                    state.columnPresets[i].col[0] = legacy[0];
-                    state.columnPresets[i].col[1] = true;
-                    for (int c = 1; c < 5; ++c)
-                        state.columnPresets[i].col[c + 1] = legacy[c];
-                    state.columnPresets[i].col[6] = false;  // Keywords
-                    for (int c = 5; c < 14; ++c)
-                        state.columnPresets[i].col[c + 2] = legacy[c];
+                    for (int c = 0; c < 5; ++c)
+                        state.columnPresets[i].col[c] = ParseBool(kv[p + "col" + std::to_string(c)], false);
+                    state.columnPresets[i].col[5] = false;
+                    // 14 = pre-Keywords field count; shift by 1 to make room for Keywords at index 5
+                    for (int legacy = 5; legacy < 14; ++legacy)
+                        state.columnPresets[i].col[legacy + 1] = ParseBool(kv[p + "col" + std::to_string(legacy)], false);
                 }
             }
             state.activeColumnPreset = ParseInt(kv["activeColumnPreset"], 0);
@@ -6604,38 +6487,38 @@ void LoadAppSettings(AppState& state) {
 // Call when no saved presets are found (first launch or migration).
 static void InitDefaultColumnPresets(AppState& state) {
     state.columnPresets.clear();
-    // Index layout: Dur,Use,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
-    //               [0] [1] [2] [3] [4] [5] [6]       [7] [8] [9] [10] [11] [12] [13] [14] [15]
+    // Index layout: Dur,Fmt,Size,SR,Desc,Keywords,Ch,Cat,Art,Album,BPM,Key,Mood,Date,FilePath
+    //               [0] [1]  [2] [3] [4] [5]       [6] [7] [8] [9]  [10][11][12] [13] [14]
     ColumnViewPreset sfx;
     sfx.name = "SFX";
-    sfx.col[0]=true; sfx.col[1]=true; sfx.col[2]=true; sfx.col[3]=false;
-    sfx.col[4]=true; sfx.col[5]=false; sfx.col[6]=false; sfx.col[7]=true;
-    sfx.col[8]=true; sfx.col[9]=false; sfx.col[10]=false; sfx.col[11]=false; sfx.col[12]=false;
-    sfx.col[13]=false; sfx.col[14]=false; sfx.col[15]=true;  // UX-112: SFX folks care where a sample came from
+    sfx.col[0]=true; sfx.col[1]=true; sfx.col[2]=false; sfx.col[3]=true;
+    sfx.col[4]=false; sfx.col[5]=false; sfx.col[6]=true; sfx.col[7]=true;
+    sfx.col[8]=false; sfx.col[9]=false; sfx.col[10]=false; sfx.col[11]=false; sfx.col[12]=false;
+    sfx.col[13]=false; sfx.col[14]=true;  // UX-112: SFX folks care where a sample came from
     sfx.showMeter=false; sfx.builtIn=true;
 
     ColumnViewPreset music;
     music.name = "Music";
     music.col[0]=true; music.col[1]=false; music.col[2]=false; music.col[3]=false;
     music.col[4]=false; music.col[5]=false; music.col[6]=false; music.col[7]=false;
-    music.col[8]=false; music.col[9]=true; music.col[10]=true; music.col[11]=true; music.col[12]=true;
-    music.col[13]=true; music.col[14]=false; music.col[15]=false;
+    music.col[8]=true; music.col[9]=true; music.col[10]=true; music.col[11]=true; music.col[12]=true;
+    music.col[13]=false; music.col[14]=false;
     music.showMeter=false; music.builtIn=true;
 
     ColumnViewPreset meta;
     meta.name = "Meta";
     meta.col[0]=true; meta.col[1]=false; meta.col[2]=false; meta.col[3]=false;
-    meta.col[4]=false; meta.col[5]=true; meta.col[6]=true; meta.col[7]=false;
-    meta.col[8]=false; meta.col[9]=true; meta.col[10]=false; meta.col[11]=false; meta.col[12]=false;
-    meta.col[13]=false; meta.col[14]=true; meta.col[15]=true;  // UX-112: metadata review naturally includes path audit
+    meta.col[4]=true; meta.col[5]=true; meta.col[6]=false; meta.col[7]=true;
+    meta.col[8]=true; meta.col[9]=false; meta.col[10]=false; meta.col[11]=false; meta.col[12]=false;
+    meta.col[13]=true; meta.col[14]=true;  // UX-112: metadata review naturally includes path audit
     meta.showMeter=false; meta.builtIn=true;
 
     ColumnViewPreset loud;
     loud.name = "Loud";
-    loud.col[0]=true; loud.col[1]=false; loud.col[2]=true; loud.col[3]=false;
-    loud.col[4]=true; loud.col[5]=false; loud.col[6]=false; loud.col[7]=false;
+    loud.col[0]=true; loud.col[1]=true; loud.col[2]=false; loud.col[3]=true;
+    loud.col[4]=false; loud.col[5]=false; loud.col[6]=false; loud.col[7]=false;
     loud.col[8]=false; loud.col[9]=false; loud.col[10]=false; loud.col[11]=false; loud.col[12]=false;
-    loud.col[13]=false; loud.col[14]=false; loud.col[15]=false;
+    loud.col[13]=false; loud.col[14]=false;
     loud.showMeter=true; loud.builtIn=true;
 
     state.columnPresets = {sfx, music, meta, loud};
@@ -7588,41 +7471,9 @@ void FlushSettingsDirty(AppState& state) {
     }
 }
 
-// 发送到 Wwise：整批成功（无失败条目）才记一次使用；同一轮只记一次。
-static void CountWwiseTransferUseOnce(AppState& state) {
-    const auto progress = aura::wwise::GetWwiseTransferProgress();
-    if (progress.active) {
-        state.wwiseUseCountHandled = false;
-        return;
-    }
-    if (!progress.finished || state.wwiseUseCountHandled) return;
-    state.wwiseUseCountHandled = true;
-    // 进度计数器在完成后会归零，这里只按“本轮没有失败”判定。
-    if (progress.failed) return;
-    if (state.wwiseUseCountIds.empty()) return;
-    for (int64_t fileId : state.wwiseUseCountIds) state.queueUseCount(fileId);
-    state.wwiseUseCountIds.clear();
-}
-
-// 使用次数：拖到 DAW / 发送 Wwise / 导出成功后由后台入队，UI 线程统一落库并刷新列表。
-// 试听、播放、hover 预览一律不登记。
-static void DrainPendingUseCounts(AppState& state) {
-    const std::vector<int64_t> ids = state.takePendingUseCounts();
-    if (ids.empty()) return;
-    bool changed = false;
-    for (int64_t fileId : ids) {
-        if (fileId <= 0) continue;
-        if (!state.database.incrementUseCount(fileId)) continue;
-        changed = true;
-        for (auto& record : state.searchResults) {
-            if (record.id == fileId) record.useCount += 1;
-        }
-    }
-    if (changed) state.bumpSearchResultsGen();
-}
-
 // Sort search results
-void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool ascending) {    std::sort(results.begin(), results.end(), [column, ascending](const AudioRecord& a, const AudioRecord& b) {
+void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool ascending) {
+    std::sort(results.begin(), results.end(), [column, ascending](const AudioRecord& a, const AudioRecord& b) {
         int cmp = 0;
         switch (column) {
             case SortColumn::FileName:
@@ -7630,9 +7481,6 @@ void SortResults(std::vector<AudioRecord>& results, SortColumn column, bool asce
                 break;
             case SortColumn::Duration:
                 cmp = (a.durationSeconds < b.durationSeconds) ? -1 : (a.durationSeconds > b.durationSeconds) ? 1 : 0;
-                break;
-            case SortColumn::UseCount:
-                cmp = (a.useCount < b.useCount) ? -1 : (a.useCount > b.useCount) ? 1 : 0;
                 break;
             case SortColumn::Format:
                 cmp = a.format.compare(b.format);
@@ -31118,7 +30966,6 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
             if (state.wwiseTaskWasActive) {
                 state.wwiseTaskWasActive = false;
                 state.wwiseTaskDoneAt = now;
-
             }
             if (!state.wwiseTaskDismissed &&
                 state.wwiseTaskDoneAt > 0.0 && now - state.wwiseTaskDoneAt < 3.0) {
@@ -31554,9 +31401,6 @@ void RenderUI(AppState& state) {
     // Guided Mode 镜像：每帧同步说明性 tooltip 全局开关（HoveredForHelp 读取此标志）
     g_showGuidedTooltips = state.settings.showGuidedMode;
     PumpFilePlayerDeferredDbWarmupLog();
-    CountWwiseTransferUseOnce(state);
-    DrainPendingUseCounts(state);
-
 
     // QA harness: process deferred rescan request (safe here — outside any table loop).
     // Set by PollQaCommandFile; avoids the use-after-free crash from calling
@@ -32343,8 +32187,6 @@ void RenderUI(AppState& state) {
                                                          rec.fileName, copyError);
                             } else {
                                 completed++;
-                                // 导出成功才记一次使用；失败和跳过不计。
-                                if (rec.id > 0) state.queueUseCount(rec.id);
                             }
                         } catch (const std::exception& ex) {
                             errors++;
@@ -42939,7 +42781,16 @@ void RenderUI(AppState& state) {
         // Calculate dynamic column count based on settings
         int meterColumnCount = 3;  // LUFS + RMS + TruePeak 始终注册（DefaultHide，右键可开关）
         int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
-        int totalColumns = 19 + meterColumnCount + coverColumnCount;  // Filename..FilePath + UseCount + Rating + meters + optional cover
+        const bool showAuditionHeat = !browserFileTable;
+        const int totalColumns = 18 + meterColumnCount + coverColumnCount;
+        const char* auditionHeatLabel = showAuditionHeat ? L(Col_AuditionHeat) : nullptr;
+        float auditionHeatWidth = 0.0f;
+        if (showAuditionHeat) {
+            ImGui::PushFont(GetUIListEmphasis());
+            auditionHeatWidth = (std::max)(workspacePx(72.0f),
+                ImGui::CalcTextSize(auditionHeatLabel).x + workspacePx(16.0f));
+            ImGui::PopFont();
+        }
 
         // Table ID V5 - 移除历史列 (已播放文件用文字颜色高亮)
         // inner_width 动态计算：取可用宽度和最小宽度的较大值
@@ -42950,8 +42801,11 @@ void RenderUI(AppState& state) {
         if (state.settings.showTruePeakMeter) fixedColsWidth += 70.0f;
         float minInnerWidth = fixedColsWidth + 600.0f;  // 至少600px给文件名+波形
         float availWidth = ImGui::GetContentRegionAvail().x;
-        float innerWidth = (std::max)(minInnerWidth, availWidth);
-        float flexibleColsWidth = (std::max)(600.0f, innerWidth - fixedColsWidth);
+        const auto auditionHeatRail = harken::results::LayoutAuditionHeatRail(
+            ImGui::GetCursorScreenPos().x, availWidth, auditionHeatWidth);
+        const float resultsTableOuterWidth = showAuditionHeat ? auditionHeatRail.tableWidth : 0.0f;
+        float innerWidth = (std::max)(minInnerWidth, auditionHeatRail.tableWidth);
+        float flexibleColsWidth = (std::max)(600.0f, availWidth - fixedColsWidth);
         float fileNameColW = flexibleColsWidth * (5.2f / (5.2f + 3.2f));
         float waveformColW = flexibleColsWidth - fileNameColW;
         // mini 波形峰值分辨率有限，列过宽会严重拉伸失真；超出上限的宽度划给文件名列
@@ -42992,6 +42846,26 @@ void RenderUI(AppState& state) {
         constexpr int kResultsFilePathColumnIndex = 16;
         const char* const resultsTableName = harken::results::TableName(browserFileTable);
         const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
+        if (ImGuiTableSettings* savedTable = ImGui::TableSettingsFindByID(resultsTableId);
+            savedTable && savedTable->ColumnsCount > kResultsFilePathColumnIndex + 1) {
+            auto* savedColumns = savedTable->GetColumnSettings();
+            if (!savedColumns[kResultsFilePathColumnIndex].IsStretch &&
+                savedColumns[kResultsFilePathColumnIndex + 1].IsStretch) {
+                constexpr int trialColumnIndex = 3;
+                const int removedOrder = savedColumns[trialColumnIndex].DisplayOrder;
+                const int removedSort = savedColumns[trialColumnIndex].SortOrder;
+                --savedTable->ColumnsCount;
+                for (int index = 0; index < savedTable->ColumnsCount; ++index) {
+                    auto& column = savedColumns[index];
+                    if (index >= trialColumnIndex) {
+                        column = savedColumns[index + 1];
+                        if (column.Index >= 0) column.Index = static_cast<ImGuiTableColumnIdx>(index);
+                    }
+                    if (removedOrder >= 0 && column.DisplayOrder > removedOrder) --column.DisplayOrder;
+                    if (removedSort >= 0 && column.SortOrder > removedSort) --column.SortOrder;
+                }
+            }
+        }
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
         const bool filePathVisible = previousResultsTable &&
             previousResultsTable->ColumnsCount > kResultsFilePathColumnIndex &&
@@ -43086,7 +42960,13 @@ void RenderUI(AppState& state) {
         // UX #109 follow-up (TASK-20261028-NO-EMPTY-SURFACE): the standalone
         // empty-results surface was removed at the user's request, so the
         // results table keeps its full height even with zero rows.
-        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)) {
+        ImDrawList* const auditionHeatDrawList = showAuditionHeat ? ImGui::GetWindowDrawList() : nullptr;
+        if (BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(resultsTableOuterWidth, 0.0f), resultsTableInnerWidth)) {
+            const ImGuiTable* const resultsTable = ImGui::GetCurrentTable();
+            const float heatLeftX = resultsTable->OuterRect.Max.x;
+            const float heatRightX = auditionHeatRail.rightX;
+            const float heatBottomY = resultsTable->InnerClipRect.Max.y;
+            float heatHeaderBottomY = resultsTable->OuterRect.Min.y;
             // The scrollable table owns a later regular draw list than the
             // surrounding CenterFileList child. Anchor the frame there so it
             // sits above headers/scrollbars but remains below popup windows.
@@ -43104,7 +42984,7 @@ void RenderUI(AppState& state) {
                 state.isSmoothScrolling = false;
             }
 
-            auto drawRowChrome = [&](const ImVec2& rowTopLeft, float rowHeight, bool isSelected, bool isHovered) {
+            auto drawRowChrome = [&](const ImVec2& rowTopLeft, float rowHeight, bool isSelected, bool isHovered, int playCount = 0) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 rowMin = rowTopLeft;
                 rowMin.x = ImGui::GetWindowPos().x + 1.0f;
@@ -43139,6 +43019,35 @@ void RenderUI(AppState& state) {
                 }
                 dl->AddLine(ImVec2(rowMin.x, rowMax.y - 0.5f), ImVec2(rowMax.x, rowMax.y - 0.5f),
                             rowSep, 1.0f);
+                if (!auditionHeatDrawList || heatRightX <= heatLeftX ||
+                    heatBottomY <= heatHeaderBottomY ||
+                    rowMax.y <= heatHeaderBottomY || rowMin.y >= heatBottomY) {
+                    return;
+                }
+                auditionHeatDrawList->PushClipRect(
+                    ImVec2(heatLeftX, heatHeaderBottomY), ImVec2(heatRightX, heatBottomY), true);
+                const ImVec2 heatRowMin(heatLeftX, rowMin.y);
+                const ImVec2 heatRowMax(heatRightX, rowMax.y);
+                if (isSelected) {
+                    auditionHeatDrawList->AddRectFilled(heatRowMin, heatRowMax, rowSelFill);
+                    auditionHeatDrawList->AddRect(
+                        ImVec2(heatRowMin.x - 1.0f, heatRowMin.y + 0.5f),
+                        ImVec2(heatRowMax.x - 0.5f, heatRowMax.y - 0.5f), rowSelOutline);
+                } else if (isHovered) {
+                    auditionHeatDrawList->AddRectFilled(heatRowMin, heatRowMax, rowHoverFill);
+                }
+                auditionHeatDrawList->AddLine(ImVec2(heatLeftX, rowMax.y - 0.5f),
+                                              ImVec2(heatRightX, rowMax.y - 0.5f), rowSep);
+                const auto rgb = harken::results::AuditionHeatRgb(playCount, kUseLightResultsChrome);
+                if (rgb != 0) {
+                    const float radius = (std::min)(listFontPx * 0.25f, (heatRightX - heatLeftX) * 0.5f);
+                    if (radius > 0.0f) {
+                        auditionHeatDrawList->AddCircleFilled(
+                            ImVec2((heatLeftX + heatRightX) * 0.5f, rowTopLeft.y + rowHeight * 0.5f),
+                            radius, IM_COL32((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255));
+                    }
+                }
+                auditionHeatDrawList->PopClipRect();
             };
 
             // 1. 设置表头
@@ -43157,7 +43066,6 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(L(Col_FileName), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_NoHide, fileNameColW, (ImGuiID)SortColumn::FileName);
             ImGui::TableSetupColumn(L(Col_Waveform), ImGuiTableColumnFlags_WidthFixed, waveformColW, 0);
             ImGui::TableSetupColumn(L(Col_Duration), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(88.0f, "00:00:00.00"), (ImGuiID)SortColumn::Duration);
-            ImGui::TableSetupColumn(L(Col_UseCount), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(72.0f, "99999"), (ImGuiID)SortColumn::UseCount);
             ImGui::TableSetupColumn(L(Col_Format), ImGuiTableColumnFlags_WidthFixed, workspacePx(72.0f), (ImGuiID)SortColumn::Format);
             ImGui::TableSetupColumn(L(Col_Size), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(84.0f, "1023.9 MB"), (ImGuiID)SortColumn::Size);
             ImGui::TableSetupColumn(L(Col_SampleRate), ImGuiTableColumnFlags_WidthFixed, numericDefaultWidth(76.0f, "192000"), (ImGuiID)SortColumn::SampleRate);
@@ -43225,9 +43133,9 @@ void RenderUI(AppState& state) {
             // SFX mode: completely hide music-specific columns from dropdown
             if (state.settings.productMode != ProductMode::Music &&
                 !ProductEdition::hasFeature("music_analysis")) {
-                ImGui::TableSetColumnEnabled(13, false);  // BPM
-                ImGui::TableSetColumnEnabled(14, false);  // MusicalKey
-                ImGui::TableSetColumnEnabled(15, false);  // Mood
+                ImGui::TableSetColumnEnabled(12, false);  // BPM
+                ImGui::TableSetColumnEnabled(13, false);  // MusicalKey
+                ImGui::TableSetColumnEnabled(14, false);  // Mood
             }
 
             // 波形列改为可隐藏：状态由右键表头菜单控制并持久化到 imgui.ini，
@@ -43256,9 +43164,9 @@ void RenderUI(AppState& state) {
                 state.columnPresetDirty     = false;
                 state.columnViewPresetDirty = false;
                 constexpr int kPresetColumnTableIndices[kColumnViewPresetFieldCount] = {
-                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17
+                    2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16
                 };
-                const int lufsBase = 18 + (state.settings.showCoverColumn ? 1 : 0);
+                const int lufsBase = 17 + (state.settings.showCoverColumn ? 1 : 0);
                 const auto& cp = state.columnPresets[
                     ImClamp(state.activeColumnPreset, 0, (int)state.columnPresets.size() - 1)];
                 for (int ci = 0; ci < kColumnViewPresetFieldCount; ++ci)
@@ -43284,6 +43192,22 @@ void RenderUI(AppState& state) {
             const ImVec4 kListHeaderText = uiWithAlpha(uiMix(results.text, results.secondaryText, 0.66f), 0.95f);
             ImGui::PushFont(GetUIListEmphasis());
             ImGui::PushStyleColor(ImGuiCol_Text, kListHeaderText);
+            if (auditionHeatDrawList && heatRightX > heatLeftX) {
+                const float headerTopY = resultsTable->RowPosY1;
+                const float headerTextY = headerTopY + resultsTable->RowCellPaddingY;
+                heatHeaderBottomY = (std::min)(
+                    heatBottomY, headerTextY + ImGui::CalcTextSize(auditionHeatLabel).y + resultsTable->RowCellPaddingY);
+                if (heatHeaderBottomY > headerTopY) {
+                    const ImVec2 headerMin(heatLeftX, headerTopY);
+                    const ImVec2 headerMax(heatRightX, heatHeaderBottomY);
+                    auditionHeatDrawList->PushClipRect(headerMin, headerMax, true);
+                    auditionHeatDrawList->AddRectFilled(headerMin, headerMax, ImGui::GetColorU32(ImGuiCol_TableHeaderBg));
+                    auditionHeatDrawList->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                        ImVec2(heatLeftX + fileTableStyle.CellPadding.x, headerTextY),
+                        ImGui::GetColorU32(ImGuiCol_Text), auditionHeatLabel);
+                    auditionHeatDrawList->PopClipRect();
+                }
+            }
             for (int col = 0; col < totalColumns; col++) {
                 ImGui::TableSetColumnIndex(col);
                 const char* colName = ImGui::TableGetColumnName(col);
@@ -43291,18 +43215,6 @@ void RenderUI(AppState& state) {
                 if (col == 0) {
                     state.qaRegions.listHeaderFontPixels = ImGui::GetFontSize();
                     state.qaRegions.listHeaderSample = colName ? colName : "";
-                }
-                if (col == 3) {
-                    // 使用次数表头矩形（viewport 相对），供隔离验收脚本点表头验证排序。
-                    ImGuiTable* qaHeaderTable = ImGui::GetCurrentTable();
-                    const ImVec2 headerPos = ImGui::GetCursorScreenPos();
-                    const ImVec2 viewportPos = ImGui::GetMainViewport()->Pos;
-                    const float headerWidth = qaHeaderTable ? qaHeaderTable->Columns[3].WidthGiven : 0.0f;
-                    const float headerHeight = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
-                    state.qaRegions.listUseCountHeaderLeft = headerPos.x - viewportPos.x;
-                    state.qaRegions.listUseCountHeaderTop = headerPos.y - viewportPos.y;
-                    state.qaRegions.listUseCountHeaderRight = headerPos.x - viewportPos.x + headerWidth;
-                    state.qaRegions.listUseCountHeaderBottom = headerPos.y - viewportPos.y + headerHeight;
                 }
 #endif
                 bool needsPop = false;
@@ -44555,7 +44467,7 @@ void RenderUI(AppState& state) {
                     bool rowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
                                       m.x >= rowMinX && m.x <= rowMaxX &&
                                       m.y >= rowVisualTopLeft.y && m.y <= (rowVisualTopLeft.y + rowVisualHeight);
-                    drawRowChrome(rowVisualTopLeft, rowVisualHeight, isSelected, rowHovered);
+                    drawRowChrome(rowVisualTopLeft, rowVisualHeight, isSelected, rowHovered, record.playCount);
 
                     // F-007: track_colour left-edge strip — drawn via foreground DL so it renders above cover art
                     {
@@ -45291,7 +45203,7 @@ void RenderUI(AppState& state) {
                                 }
                                 break;
                             case HarkenSearch::UI::SendTargetModeId::OpenTransferPanel:
-                                if (OpenWwiseTransferPanelForRecords(state, selectedRecords)) {
+                                if (OpenWwiseTransferPanelForRecords(selectedRecords)) {
                                     PushHistoryEntry(target, mode.id, localizedModeLabel, "Opened transfer panel");
                                 }
                                 break;
@@ -45782,24 +45694,6 @@ void RenderUI(AppState& state) {
                         ImGui::PushStyleColor(ImGuiCol_Text, kL3);
                         ImGui::Text("-");
                         ImGui::PopStyleColor();
-                    }
-
-                    // Use count (Mono, right-aligned, L2 gray)
-                    ImGui::TableNextColumn();
-                    {
-                        ImGui::PushFont(GetUIListMono());
-                        const std::string useCountText = std::to_string(record.useCount);
-                        const float cellAvail = ImGui::GetContentRegionAvail().x;
-                        const float textWidth = ImGui::CalcTextSize(useCountText.c_str()).x;
-                        if (cellAvail > textWidth + 4.0f)
-                            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (cellAvail - textWidth) - 4.0f);
-                        ImGui::PushStyleColor(ImGuiCol_Text, record.useCount > 0 ? kL2 : kL3);
-#if ARIS_PREVIEW_ISOLATION
-                        state.qaRegions.listUseCountSample = useCountText;
-#endif
-                        ImGui::TextUnformatted(useCountText.c_str());
-                        ImGui::PopStyleColor();
-                        ImGui::PopFont();
                     }
 
                     // Format (L3 dark-gray — low-priority suffix info)

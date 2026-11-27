@@ -48,8 +48,8 @@ int main() {
     ok &= requireContains(mainCpp, "resultsSizingPolicy |",
                           "results table combines the conditional sizing policy with stable flags");
     ok &= requireContains(mainCpp,
-                          "BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth)",
-                          "results table passes the visibility-aware inner width");
+                          "BeginTransientScrollbarTable(resultsTableName, totalColumns, tableFlags, ImVec2(resultsTableOuterWidth, 0.0f), resultsTableInnerWidth)",
+                          "results table keeps the visibility-aware inner width inside its viewport");
     ok &= requireNotContains(mainCpp, "TableSetColumnEnabled(kResultsFilePathColumnIndex, false)",
                              "tail fix must not mutate persisted column visibility or reorder row emission");
 

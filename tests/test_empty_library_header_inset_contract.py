@@ -45,7 +45,7 @@ def test_empty_and_populated_table_use_the_same_child_content_bounds() -> None:
     assert "adjustedFileTableOuterSize" not in setup
     assert "emptyLibraryFileTable = (state.totalFileCount == 0)" in MAIN
     assert "AlignBrowserPathLabel(emptyLibraryFileTable)" in MAIN
-    assert "tableFlags, ImVec2(0.0f, 0.0f), resultsTableInnerWidth" in MAIN
+    assert "tableFlags, ImVec2(resultsTableOuterWidth, 0.0f), resultsTableInnerWidth" in MAIN
 
 
 def test_empty_library_keeps_independent_frame_and_content_padding() -> None:
