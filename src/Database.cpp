@@ -4702,12 +4702,61 @@ void LogMetadataPatchDiag(const char* detail) {
     DIAG_ACTION("Metadata", detail);
 }
 
+// 批量改元数据的回调节流：每 16 条报一次，最后一定补一次收尾。
+// 大库里每行一次回调会把 UI 线程压满，一次不报又看不到进度。
+constexpr int kMetadataPatchProgressStride = 16;
+
+class MetadataPatchReporter {
+public:
+    MetadataPatchReporter(MetadataPatchProgressCallback cb, std::atomic<bool>* cancelFlag)
+        : cb_(std::move(cb)), cancel_(cancelFlag) {}
+
+    // 预检和写入各自是一个阶段，各自从 0 开始计。
+    void Begin(int total, bool verifying) {
+        total_ = total;
+        done_ = 0;
+        verifying_ = verifying;
+        Emit(true);
+    }
+
+    void Advance() {
+        ++done_;
+        if (done_ % kMetadataPatchProgressStride == 0) Emit(false);
+    }
+
+    void Finish() { Emit(true); }
+
+    bool CancelRequested() const {
+        return cancel_ != nullptr && cancel_->load(std::memory_order_relaxed);
+    }
+
+private:
+    void Emit(bool force) {
+        if (!cb_) return;
+        if (!force && done_ % kMetadataPatchProgressStride != 0) return;
+        MetadataPatchProgress snapshot;
+        snapshot.done = done_;
+        snapshot.total = total_;
+        snapshot.verifying = verifying_;
+        cb_(snapshot);
+    }
+
+    MetadataPatchProgressCallback cb_;
+    std::atomic<bool>* cancel_ = nullptr;
+    int total_ = 0;
+    int done_ = 0;
+    bool verifying_ = false;
+};
+
 }  // namespace
 
 BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int64_t>& fileIds,
-                                                            const MetadataEditPatch& patch) {
+                                                            const MetadataEditPatch& patch,
+                                                            MetadataPatchProgressCallback progress,
+                                                            std::atomic<bool>* cancelFlag) {
     BatchMetadataApplyResult result;
     result.total = (int)fileIds.size();
+    MetadataPatchReporter reporter(std::move(progress), cancelFlag);
 
     if (!m_db || fileIds.empty()) {
         if (!m_db && result.total > 0) {
@@ -4723,7 +4772,15 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
         return result;
     }
 
+    // 预检本身在库大时也是一次 O(n) 的读，进度要从这里就开始报。
+    reporter.Begin(result.total, true);
     for (int64_t fileId : fileIds) {
+        if (reporter.CancelRequested()) {
+            result.cancelled = true;
+            result.errors.push_back("cancelled by user");
+            DIAG_ACTION_FMT("Metadata", "PatchBatchCancelled: stage=preflight total=%d", result.total);
+            return result;
+        }
         const AudioRecord rec = getFileById(fileId);
         if (!rec.filePath.empty() && Platform::FileSystem::IsNetworkPath(rec.filePath)) {
             result.failed = result.total;
@@ -4732,7 +4789,9 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
             m_lastError = L(Write_BlockedNetworkLibrary);
             return result;
         }
+        reporter.Advance();
     }
+    reporter.Finish();
 
     MetadataPatchSqlPlan plan;
     if (!BuildMetadataPatchUpdateSql(patch, plan)) {
@@ -4786,8 +4845,14 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
     }
 
     bool allOk = true;
+    bool cancelled = false;
 
+    reporter.Begin(result.total, false);
     for (int64_t fileId : fileIds) {
+        if (reporter.CancelRequested()) {
+            cancelled = true;
+            break;
+        }
         if (fileId <= 0) {
             result.failed++;
             result.failedFileIds.push_back(fileId);
@@ -4796,6 +4861,7 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
             DIAG_ACTION_FMT("Metadata",
                             "PatchRejected: reason=invalid_file_id id=%lld",
                             (long long)fileId);
+            reporter.Advance();
             continue;
         }
         if (!AudioFileIdExists(existsStmt, fileId)) {
@@ -4806,6 +4872,7 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
             DIAG_ACTION_FMT("Metadata",
                             "PatchRejected: reason=missing_file_id id=%lld",
                             (long long)fileId);
+            reporter.Advance();
             continue;
         }
 
@@ -4822,10 +4889,25 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
             allOk = false;
         }
         sqlite3_reset(stmt);
+        reporter.Advance();
     }
 
     sqlite3_finalize(stmt);
     sqlite3_finalize(existsStmt);
+
+    // 取消要整批回滚，不能把已经写进去的一半当成成功。
+    if (cancelled) {
+        if (needOwnTxn) rollbackTransaction();
+        result.cancelled = true;
+        result.success = 0;
+        result.failed = 0;
+        result.failedFileIds.clear();
+        result.errors.clear();
+        result.errors.push_back("cancelled by user");
+        DIAG_ACTION_FMT("Metadata", "PatchBatchCancelled: stage=write total=%d", result.total);
+        return result;
+    }
+    reporter.Finish();
 
     if (needOwnTxn) {
         if (allOk) {
@@ -4863,9 +4945,12 @@ BatchMetadataApplyResult Database::applyMetadataPatchBatch(const std::vector<int
 }
 
 BatchMetadataApplyResult Database::applyMetadataPatchMany(
-    const std::vector<std::pair<int64_t, MetadataEditPatch>>& items) {
+    const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+    MetadataPatchProgressCallback progress,
+    std::atomic<bool>* cancelFlag) {
     BatchMetadataApplyResult result;
     result.total = (int)items.size();
+    MetadataPatchReporter reporter(std::move(progress), cancelFlag);
 
     if (!m_db || items.empty()) {
         if (!m_db && result.total > 0) {
@@ -4878,7 +4963,14 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
 
     int emptyOk = 0;
     std::map<std::string, std::vector<std::pair<int64_t, MetadataEditPatch>>> groups;
+    reporter.Begin(result.total, true);
     for (const auto& entry : items) {
+        if (reporter.CancelRequested()) {
+            result.cancelled = true;
+            result.errors.push_back("cancelled by user");
+            DIAG_ACTION_FMT("Metadata", "PatchManyCancelled: stage=preflight total=%d", result.total);
+            return result;
+        }
         const AudioRecord rec = getFileById(entry.first);
         if (!rec.filePath.empty() && Platform::FileSystem::IsNetworkPath(rec.filePath)) {
             result.failed = result.total;
@@ -4890,10 +4982,13 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
         const MetadataEditPatch& p = entry.second;
         if (p.isEmpty()) {
             emptyOk++;
+            reporter.Advance();
             continue;
         }
         groups[MetadataPatchKey(p)].push_back(entry);
+        reporter.Advance();
     }
+    reporter.Finish();
 
     const bool needOwnTxn = (sqlite3_get_autocommit(m_db) != 0);
     if (needOwnTxn) {
@@ -4917,10 +5012,13 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
     }
 
     bool allOk = true;
+    bool cancelled = false;
     int dbSuccess = 0;
     int dbFailed = 0;
 
+    reporter.Begin(result.total, false);
     for (auto& g : groups) {
+        if (cancelled) break;
         std::vector<std::pair<int64_t, MetadataEditPatch>>& vec = g.second;
         if (vec.empty()) continue;
 
@@ -4954,6 +5052,10 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
         }
 
         for (const auto& pr : vec) {
+            if (reporter.CancelRequested()) {
+                cancelled = true;
+                break;
+            }
             const int64_t fileId = pr.first;
             const MetadataEditPatch& rowPatch = pr.second;
 
@@ -4966,6 +5068,7 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
                                 "PatchRejected: reason=invalid_file_id id=%lld",
                                 (long long)fileId);
                 sqlite3_reset(stmt);
+                reporter.Advance();
                 continue;
             }
             if (!AudioFileIdExists(existsStmt, fileId)) {
@@ -4977,6 +5080,7 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
                                 "PatchRejected: reason=missing_file_id id=%lld",
                                 (long long)fileId);
                 sqlite3_reset(stmt);
+                reporter.Advance();
                 continue;
             }
 
@@ -4993,11 +5097,26 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
                 allOk = false;
             }
             sqlite3_reset(stmt);
+            reporter.Advance();
         }
 
         sqlite3_finalize(stmt);
     }
     sqlite3_finalize(existsStmt);
+
+    // 取消回滚整批；已写一半不算成功。
+    if (cancelled) {
+        if (needOwnTxn) rollbackTransaction();
+        result.cancelled = true;
+        result.success = 0;
+        result.failed = 0;
+        result.failedFileIds.clear();
+        result.errors.clear();
+        result.errors.push_back("cancelled by user");
+        DIAG_ACTION_FMT("Metadata", "PatchManyCancelled: stage=write total=%d", result.total);
+        return result;
+    }
+    reporter.Finish();
 
     result.success = emptyOk + dbSuccess;
     result.failed = dbFailed;
@@ -5043,7 +5162,9 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
 BatchMetadataApplyResult Database::applyMetadataPatchManyGuarded(
     const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
     const std::string& expectedColumn,
-    const std::unordered_map<int64_t, std::string>& expectedValues) {
+    const std::unordered_map<int64_t, std::string>& expectedValues,
+    MetadataPatchProgressCallback progress,
+    std::atomic<bool>* cancelFlag) {
     BatchMetadataApplyResult result;
     result.total = static_cast<int>(items.size());
     auto rejectAll = [&result](const std::string& reason) {
@@ -5125,7 +5246,17 @@ BatchMetadataApplyResult Database::applyMetadataPatchManyGuarded(
         return result;
     }
 
-    BatchMetadataApplyResult applied = applyMetadataPatchMany(items);
+    BatchMetadataApplyResult applied =
+        applyMetadataPatchMany(items, std::move(progress), cancelFlag);
+    if (applied.cancelled) {
+        rollbackTransaction();
+        result.cancelled = true;
+        result.success = 0;
+        result.failed = 0;
+        result.errors = applied.errors;
+        DIAG_ACTION_FMT("Metadata", "GuardedPatchManyCancelled: total=%d", result.total);
+        return result;
+    }
     if (applied.failed != 0) {
         rollbackTransaction();
         result.success = 0;

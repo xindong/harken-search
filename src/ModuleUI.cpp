@@ -1573,14 +1573,11 @@ void RenderWorkflowDialogContent(AppState& state) {
             pending.push_back({rec.id, patch});
         }
 
-        if (!state.database.beginTransaction()) {
-            s_workflowExecFail += (int)pending.size();
-            s_workflowExecMsg = L(Module_TxnBeginFail);
-        } else {
-            // F-011: 记录执行前的旧值（用于撤销）
-            WorkflowExecHistory history;
-            history.workflowName = s_currentWorkflow.name;
-            history.timestamp = (int64_t)std::time(nullptr);
+        {
+            // F-011: 记录执行前的旧值（用于撤销）。这部分只读 selected，留在界面线程。
+            auto history = std::make_shared<WorkflowExecHistory>();
+            history->workflowName = s_currentWorkflow.name;
+            history->timestamp = (int64_t)std::time(nullptr);
             for (const auto& [fileId, patch] : pending) {
                 WorkflowExecEntry entry;
                 entry.fileId = fileId;
@@ -1597,31 +1594,65 @@ void RenderWorkflowDialogContent(AppState& state) {
                     }
                 }
                 for (const auto& [col, newVal] : patch.fields) entry.newValues[col] = newVal;
-                history.entries.push_back(std::move(entry));
+                history->entries.push_back(std::move(entry));
             }
 
-            BatchMetadataApplyResult batchRes = state.database.applyMetadataPatchMany(pending);
-            if (state.database.commitTransaction()) {
-                if (batchRes.success > 0) {
-                    state.database.invalidateFacetQueryCache();
-                    // 保存执行历史
-                    s_workflowExecHistory.push_front(std::move(history));
-                    if ((int)s_workflowExecHistory.size() > kMaxWorkflowHistory)
-                        s_workflowExecHistory.pop_back();
-                }
-                s_workflowExecSuccess += batchRes.success;
-                s_workflowExecFail += batchRes.failed;
+            // 工作流的批量写入也在后台会话里跑：外事务整个留在工作线程上，
+            // 部分成功照旧保留，不改变原有语义。
+            auto* appState = &state;
+            const int queued = (int)pending.size();
+            if (appState->StartMetadataBatch(
+                    [appState, items = std::move(pending)]
+                    (AppState::MetadataBatchSink& sink, std::atomic<bool>* cancelFlag) {
+                        BatchMetadataApplyResult res;
+                        res.total = (int)items.size();
+                        if (!appState->database.beginTransaction()) {
+                            res.failed = res.total;
+                            res.errors.push_back("transaction_begin_failed");
+                            return res;
+                        }
+                        res = appState->database.applyMetadataPatchMany(
+                            items,
+                            [&sink](const MetadataPatchProgress& progress) {
+                                sink(progress.done, progress.total, progress.verifying);
+                            },
+                            cancelFlag);
+                        if (res.cancelled || !appState->database.commitTransaction()) {
+                            appState->database.rollbackTransaction();
+                            res.success = 0;
+                            res.failed = res.total;
+                            return res;
+                        }
+                        return res;
+                    },
+                    [appState, history](const BatchMetadataApplyResult& res, bool crashed) {
+                        if (crashed || res.cancelled) return;
+                        if (!res.errors.empty() && res.errors.front() == "transaction_begin_failed") {
+                            s_workflowExecFail += res.total;
+                            s_workflowExecMsg = L(Module_TxnBeginFail);
+                            return;
+                        }
+                        if (res.success > 0) {
+                            appState->database.invalidateFacetQueryCache();
+                            s_workflowExecHistory.push_front(*history);
+                            if ((int)s_workflowExecHistory.size() > kMaxWorkflowHistory)
+                                s_workflowExecHistory.pop_back();
+                        }
+                        s_workflowExecSuccess += res.success;
+                        s_workflowExecFail += res.failed;
+                        std::snprintf(s_resultMsgBuf, sizeof(s_resultMsgBuf),
+                                      L(Module_WfExecDoneFmt), s_workflowExecSuccess);
+                        s_workflowExecMsg = s_resultMsgBuf;
+                        if (s_workflowExecFail > 0)
+                            appendMsgFmt(s_workflowExecMsg, LStr::Module_FailSuffixFmt, s_workflowExecFail);
+                        RefreshSearchResults(*appState, false);
+                    })) {
+                // 交给后台后本轮不写消息，结果回来时再填。
             } else {
-                state.database.rollbackTransaction();
-                s_workflowExecFail += (int)pending.size();
-            }
-            std::snprintf(s_resultMsgBuf, sizeof(s_resultMsgBuf), L(Module_WfExecDoneFmt), s_workflowExecSuccess);
-            s_workflowExecMsg = s_resultMsgBuf;
-            if (s_workflowExecFail > 0) {
-                appendMsgFmt(s_workflowExecMsg, LStr::Module_FailSuffixFmt, s_workflowExecFail);
+                s_workflowExecFail += queued;
+                s_workflowExecMsg = L(Task_MetadataBusy);
             }
         }
-        RefreshSearchResults(state, false);
     }
     ImGui::EndDisabled();
 
