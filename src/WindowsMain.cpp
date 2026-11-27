@@ -5643,7 +5643,9 @@ static void PollQaCommandFile(AppState& state) {
                 result = R"({"ok":false,"error":"unknown_standalone_window"})";
             } else {
                 std::string label = L(Dlg_FolderAutoRename);
-                label += "###FolderAutoRenameWindow";
+                label += state.folderAutoRenameWindow.maximized
+                    ? "###FolderAutoRenameWindow__Maximized"
+                    : "###FolderAutoRenameWindow";
                 ImGuiWindow* window = ImGui::FindWindowByName(label.c_str());
                 if (action == "open") {
                     snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",

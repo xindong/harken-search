@@ -11735,6 +11735,15 @@ static bool SwitchDatabase(AppState& state,
     state.dbSwitchError.clear();
     state.dbSwitchRecoveryPath.clear();
     state.dbSwitchNotice.clear();
+    // The folder-rename preview belongs to the library it was built from. A
+    // modeless window can stay open across a library switch, so close it at
+    // this boundary; otherwise Execute would rename old folders while updating
+    // the newly opened library.
+    if (state.folderAutoRenameWindow.open || !state.folderRenamePreview.empty()) {
+        state.folderRenamePreview.clear();
+        state.folderRenameLog.clear();
+        aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+    }
     DIAG_SYSTEM_FMT("Database", "SwitchDatabaseStart: from=%s to=%s",
         state.currentDbPathUtf8.c_str(), effectiveDbPathUtf8.c_str());
     state.batchFeatureCancelRequested.store(true);

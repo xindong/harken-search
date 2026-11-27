@@ -298,6 +298,22 @@ def test_standalone_caption_buttons_share_lucide_ink():
     assert "bounds.Min.x = glyph.X0" in close_icon
 
 
+def test_database_switch_closes_folder_rename_preview():
+    main = read(ROOT / "src" / "main.cpp")
+    windows_main = read(ROOT / "src" / "WindowsMain.cpp")
+
+    start = main.index("static bool SwitchDatabase(AppState& state")
+    switch_block = main[start:main.index("bool BeginSwitchDatabase", start)]
+    assert "state.folderRenamePreview.clear();" in switch_block
+    assert "state.folderRenameLog.clear();" in switch_block
+    assert "aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);" in switch_block
+
+    # The QA receipt must follow the visible __Maximized window, not the hidden
+    # normal window that keeps the pre-maximize geometry.
+    assert '"###FolderAutoRenameWindow__Maximized"' in windows_main
+    assert "state.folderAutoRenameWindow.maximized" in windows_main
+
+
 if __name__ == "__main__":
     test_alert_helper_draws_title_inside_a_rounded_surface()
     test_dialogs_that_must_be_answered_hide_the_close_button()
@@ -311,4 +327,5 @@ if __name__ == "__main__":
     test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body()
     test_folder_auto_rename_uses_the_standalone_window_shell()
     test_standalone_caption_buttons_share_lucide_ink()
+    test_database_switch_closes_folder_rename_preview()
     print("alert dialog contract ok")
