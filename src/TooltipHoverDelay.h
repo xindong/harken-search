@@ -8,8 +8,10 @@ extern bool g_showGuidedTooltips;
 
 // Plain-text tooltips stay hidden until the pointer has rested on the target
 // for this long, so sweeping the pointer across a toolbar no longer flashes a
-// trail of hint text. Preview-class content (waveform thumbnail, cover, long
-// text expansion) stays immediate and uses the *Immediate entry points.
+// trail of hint text. Preview-class content (cover thumbnails, saved tab
+// preset previews) stays immediate and uses the *Immediate entry points.
+// Long-text explanations are plain text: they wait for the dwell like every
+// other hint, so "why did this result match" cannot pop up on a sweep.
 namespace HarkenSearch {
 inline constexpr float kTooltipHoverDelaySeconds = 1.0f;
 

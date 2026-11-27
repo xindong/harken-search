@@ -31,7 +31,8 @@ def test_no_source_file_bypasses_the_shared_tooltip_entry_points():
         if path.name == "TooltipHoverDelay.h":
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
-        for entry_point in ("ImGui::SetTooltip(", "ImGui::BeginTooltip("):
+        for entry_point in ("ImGui::SetTooltip(", "ImGui::BeginTooltip(",
+                            "ImGui::SetItemTooltip(", "ImGui::BeginItemTooltip("):
             if entry_point in text:
                 offenders.append(f"{path.relative_to(ROOT)}: {entry_point}")
     assert not offenders, offenders
@@ -68,3 +69,20 @@ def test_dock_drop_hints_dwell_on_their_own_region():
     dock_hint = main.split("auto drawDockPreview = [&](bool titleBarDragging) {", 1)[1][:400]
     assert "HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan" in dock_hint
     assert 'HarkenSearch::SetTooltipUngated("%s", L(Dock_UxTooSmall))' not in main
+
+
+def test_external_ai_settings_page_uses_the_shared_delayed_entry_point():
+    page = (ROOT / "src" / "ExternalAiSettingsPage.inl").read_text(encoding="utf-8")
+    for banned in ("ImGui::SetItemTooltip(", "ImGui::BeginItemTooltip(",
+                   "ImGui::SetTooltip(", "ImGui::BeginTooltip("):
+        assert banned not in page, banned
+    # Both client rows explain plain text, so they share the one-second dwell.
+    assert page.count("HarkenSearch::SetTooltipUngated(") >= 2
+    assert "if (cleanupFailed) HarkenSearch::SetTooltipUngated(" in page
+
+
+def test_long_text_explanations_are_not_documented_as_immediate():
+    header = HEADER.read_text(encoding="utf-8")
+    preamble = header.split("namespace HarkenSearch", 1)[0]
+    assert "long text expansion" not in preamble
+    assert "Long-text explanations are plain text" in preamble
