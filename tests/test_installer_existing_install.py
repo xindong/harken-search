@@ -2,6 +2,7 @@
 
 Uses a unique per-user AppId, harmless payload, and an owned cmd.exe copy.
 No Harken registration, shortcuts, legacy uninstall, or user data is touched.
+The fixture stubs consent because it only exercises directory and process safety.
 Logs are retained under --artifact-root (7-day QA retention).
 """
 from pathlib import Path
@@ -60,9 +61,19 @@ class InstallerExistingInstallTest(unittest.TestCase):
         self.assertTrue(ISCC.is_file(), 'Inno Setup compiler is required')
         product = (ROOT / 'installer/HarkenSearch_Setup.iss').read_text(encoding='utf-8')
         # Execute actual policy functions, not a Python reimplementation.
+        close_handle = re.search(r'^function CloseHandle\b[^\n]*\n  external[^\n]*', product, re.M)
+        self.assertIsNotNone(close_handle, 'Shipping CloseHandle declaration not found')
         helpers = product[product.index('function CreateFileW'):product.index('function IsUserProfileInstallDir')]
         prepare = re.search('function PrepareToInstall.*?' + chr(10) + 'end;', product, re.S)
-        code = helpers + (chr(10) + prepare.group(0) if prepare else '')
+        self.assertIsNotNone(prepare, 'Shipping PrepareToInstall not found')
+        consent_fixture = '''var
+  ConsentOnly: Boolean;
+
+function ConsumeInstallerConsent: Boolean;
+begin
+  Result := True;
+end;'''
+        code = '\n'.join((consent_fixture, close_handle.group(0), helpers, prepare.group(0)))
         setup = product.split('[Setup]', 1)[1].split('[Languages]', 1)[0]
         policy_keys = ('UsePreviousAppDir', 'CloseApplications', 'RestartApplications',
                        'ArchitecturesInstallIn64BitMode')
