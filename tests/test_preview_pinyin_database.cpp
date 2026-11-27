@@ -278,8 +278,8 @@ int main(int argc, char** argv) {
         for (const char* value : {"Weapons", "Impact"}) {
             filter.keyword = value;
             const auto results = database.searchFiles(filter, 10);
-            ok &= Expect(results.size() == 1 && results.front().fileName == "Tone.mp3",
-                         std::string("Harken value immediately searchable: ") + value);
+            const std::string caseName = std::string("Harken value immediately searchable: ") + value;
+            ok &= Expect(results.size() == 1 && results.front().fileName == "Tone.mp3", caseName.c_str());
         }
         // A legacy library gets the column as '' (TEXT DEFAULT ''); reading it
         // must not fail the search on malformed JSON.
