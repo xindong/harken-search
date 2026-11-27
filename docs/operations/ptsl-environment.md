@@ -1,8 +1,6 @@
 # Pro Tools (PTSL) 交付链路 · 环境与验收说明
 
-> **本文件的内容由需求侦察官整理，待交付方/开发官提交到仓库 `docs/operations/ptsl-environment.md`。**
-> 在正式落库前，本副本只作草稿；卡面引用应以仓库路径为准。
-> 最后核实：2026-11-28（Windows 本机，Pro Tools 未安装/未激活）
+最后核实：2026-11-28（Windows 本机，Pro Tools 未安装/未激活）
 
 ## 1. 这份文件解决什么
 
