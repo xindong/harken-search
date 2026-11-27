@@ -327,6 +327,16 @@ def check_generated_matches_ledger(ledger: dict[str, Any], output_dir: Path) -> 
         raise LedgerError("generated localization tables drifted from the JSON ledger")
 
 
+def write_lf(path: Path, text: str) -> None:
+    """Write text with LF endings on every platform, including Python 3.9.
+
+    Path.write_text(newline=...) is Python 3.10+, and macOS ships 3.9 as the
+    default interpreter, so the generated tables must not depend on it.
+    """
+    with open(path, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text)
+
+
 def write_generated(ledger: dict[str, Any], output_dir: Path) -> None:
     validate_ledger(ledger)
     if not any(entry["type"] == "theme" for entry in ledger["entries"]):
@@ -334,15 +344,13 @@ def write_generated(ledger: dict[str, Any], output_dir: Path) -> None:
     if not any(entry["type"] == "beta-hidden" for entry in ledger["entries"]):
         raise LedgerError("generated product ledger needs beta-hidden entries")
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "LocalizationGenerated.h").write_text(
+    write_lf(
+        output_dir / "LocalizationGenerated.h",
         render_generated_header(ledger["entries"]),
-        encoding="utf-8",
-        newline="\n",
     )
-    (output_dir / "LocalizationStrings.generated.h").write_text(
+    write_lf(
+        output_dir / "LocalizationStrings.generated.h",
         render_generated_strings(ledger["entries"]),
-        encoding="utf-8",
-        newline="\n",
     )
 
 
