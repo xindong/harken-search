@@ -207,24 +207,6 @@ int main() {
               changedFirst.keywords == originalFirst.keywords && changedSecond.keywords == originalSecond.keywords &&
               changedFirst.category == originalFirst.category && changedSecond.category == originalSecond.category,
           "guarded batch preserves the other metadata columns");
-    // ----- Test 1b-2: a harken_meta written by a metadata patch is searchable
-    // straight away. The patch UPDATE is evaluated against the pre-update row,
-    // so the new Harken values only reach search_data if the plan feeds them
-    // in from the bound value.
-    MetadataEditPatch harkenPatch;
-    harkenPatch.set("harken_meta",
-                    R"({"category":"Weapons","function":"Impact","source":"manual"})");
-    check(db.applyMetadataPatch(fileId, harkenPatch), "harken_meta patch applies");
-    SearchFilter harkenCategoryFilter;
-    harkenCategoryFilter.keyword = "weapons";
-    std::vector<AudioRecord> harkenCategoryHits = db.searchFiles(harkenCategoryFilter);
-    check(harkenCategoryHits.size() == 1 && harkenCategoryHits[0].id == fileId,
-          "harken_meta category from a patch is searchable immediately");
-    SearchFilter harkenFunctionFilter;
-    harkenFunctionFilter.keyword = "impact";
-    std::vector<AudioRecord> harkenFunctionHits = db.searchFiles(harkenFunctionFilter);
-    check(harkenFunctionHits.size() == 1 && harkenFunctionHits[0].id == fileId,
-          "harken_meta function from a patch is searchable immediately");
 
     // ----- Test 1c: project-list carts preserve insertion order and refresh
     // other tabs when membership changes.

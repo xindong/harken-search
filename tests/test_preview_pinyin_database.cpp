@@ -268,6 +268,20 @@ int main(int argc, char** argv) {
         filter.keyword = "Azurescore";
         ok &= Expect(database.searchFiles(filter, 10).empty(), "edited composer no longer matches old tags");
 
+        // A harken_meta written by the metadata patch must be searchable in the
+        // same statement's search_data rebuild even though SQL SET expressions
+        // read the pre-update row.
+        MetadataEditPatch harkenPatch;
+        harkenPatch.set("harken_meta",
+                        R"({"category":"Weapons","function":"Impact","source":"manual"})");
+        ok &= Expect(database.applyMetadataPatch(reread.id, harkenPatch), "update a Harken classification");
+        for (const char* value : {"Weapons", "Impact"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().fileName == "Tone.mp3",
+                         std::string("Harken value immediately searchable: ") + value);
+        }
+
         database.executeRawQuery("UPDATE audio_files SET search_data = 'Tone';");
         database.executeRawQuery(
             "INSERT INTO app_meta(key, value) VALUES('search_data_migrated', '2') "
