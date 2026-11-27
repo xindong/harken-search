@@ -1760,6 +1760,18 @@ float WaveformExtractor::ComputeTrueRmsDbfs(const std::string& filePath) {
     return (rms > 1e-10) ? std::clamp((float)(20.0 * std::log10(rms)), -100.0f, 0.0f) : -100.0f;
 }
 
+bool WaveformExtractor::ExtractExactMonoEnvelope(const std::string& filePath,
+                                                 int targetPeaks,
+                                                 std::vector<float>& outPeaks) {
+    outPeaks.clear();
+    WaveformExtractResult detail;
+    int monoChannels = 1;
+    return targetPeaks > 0 &&
+           ExtractDetailSequential(filePath, targetPeaks, false, detail) &&
+           BuildMiniFromDetail(detail.peaks, detail.minPeaks, detail.channels,
+                               targetPeaks, false, outPeaks, monoChannels);
+}
+
 bool WaveformExtractor::BuildMiniFromDetail(const std::vector<float>& maxDetail,
                                             const std::vector<float>& minDetail,
                                             int detailChannels,

@@ -173,7 +173,7 @@ def test_shipping_imgui_composes_the_workspace_palette_from_current_theme_tokens
 def test_only_four_non_dark_builtins_restore_pre_workspace_semantic_surfaces():
     main = read(MAIN_CPP)
     composition = between(main, "const ThemeColorScheme& kCurrentTheme", "// Non-soft-chrome fallback")
-    title_bar = between(main, "auto drawDockTitleBar", "struct DockModuleShellLayout")
+    tool_palette = between(main, "const auto resolveDockToolPalette", "const auto pushDockToolBodyStyle")
     module_shell = between(main, "auto drawDockModuleShell", "// The Info title actions belong to the module shell")
     toolbar = between(main, 'BeginTransientScrollbarChild("Toolbar"', "// MAIN CONTENT AREA")
     waveform = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "// FLOATING PANELS")
@@ -192,7 +192,8 @@ def test_only_four_non_dark_builtins_restore_pre_workspace_semantic_surfaces():
     assert "kLegacyDockTitleSurface" in composition
 
     # Current structure stays in place while only its surface inputs switch.
-    assert "workspaceDockTitleSurface" in title_bar
+    assert "TransportContrast::Over(workspaceDockTitleSurface, body)" in tool_palette
+    assert "sharedPalette ? palette.title : workspaceDockTitleSurface" in module_shell
     assert "kLegacyDockLaneSurface" in module_shell
     assert "kLegacyDockShellSurface" in module_shell
     assert "kUsePreWorkspaceSemanticColors" in module_shell
@@ -222,7 +223,8 @@ def test_shipping_dock_shell_has_one_perimeter_owner_and_no_decorative_layers():
     title_bar = between(main, "auto drawDockTitleBar", "struct DockModuleShellLayout")
     module_shell = between(main, "auto drawDockModuleShell", "// The Info title actions belong to the module shell")
 
-    assert "workspaceDockTitleSurface" in title_bar
+    assert "ImGui::GetColorU32(titleSurface)" in title_bar
+    assert "sharedPalette ? palette.title : workspaceDockTitleSurface" in module_shell
     assert "AddRectFilledMultiColor" not in title_bar
     assert "AddLine" not in title_bar
 
@@ -253,8 +255,9 @@ def test_filter_and_info_keep_their_internal_styles_and_receive_only_the_common_
     assert "CoreWorkspace" not in info_style
     assert "filterBrowserSelection" not in module_shell
     assert "infoPanelAccent" not in module_shell
-    assert main.count("RenderSidebarPanelContent(state,") == 4
-    assert main.count("RenderFileInfoPanelContent(state,") == 4
+    shared_body = between(main, "const auto renderToolContent", "const auto drawSimilarBodyPerimeter")
+    assert "RenderSidebarPanelContent(state, sidebarScope)" in shared_body
+    assert "RenderFileInfoPanelContent(state, width)" in shared_body
     for panel_id in ("##FloatingSidebar", "##FloatingFileInfo", "##DockedFilter", "##DockedFileInfo"):
         assert panel_id in main
     assert "beginSharedDockWindowHost(" in main
@@ -302,15 +305,32 @@ def test_filter_and_info_share_one_rounded_outer_shell_without_global_restyling(
 def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     main = read(MAIN_CPP)
 
+    body_style = between(main, "const auto pushDockToolBodyStyle", "constexpr float kDockShellVerticalInset")
+    docked_appearance = between(main, "const auto pushDockedToolAppearance", "const auto popDockedToolAppearance")
+    direct_style = main.replace(body_style, "").replace(docked_appearance, "")
     names = re.findall(
-        r"const int (\w+) = Push(?:Sidebar|FileInfo)ShellStyle\(ThemeColors::current\(\)\);",
-        main,
+        r"const int (\w+) = (?:Push(?:Sidebar|FileInfo)ShellStyle\(ThemeColors::current\(\)\)"
+        r"|pushDockToolBodyStyle\([^\n;]+\));",
+        direct_style,
     )
     assert names
+    assert "const int colors = PushFileInfoShellStyle(ThemeColors::current());" in body_style
+    assert body_style.count("ImGui::PushStyleColor(") == 2
+    assert "return colors + 2;" in body_style
+    assert "bodyColors + scrollbarColors" in docked_appearance
+    assert "return {palette.body, pushDockToolBodyStyle(palette)," in docked_appearance
+    assert "ImGui::PopStyleColor(appearance.colors)" in between(
+        main, "const auto popDockedToolAppearance", "const auto renderGroupedUtility"
+    )
+    appearance_pushes = main.count("const auto appearance = pushDockedToolAppearance(")
+    assert appearance_pushes > 0
+    assert main.count("popDockedToolAppearance(appearance);") == appearance_pushes
     for name in set(names):
         assert main.count(f"PopStyleColor({name})") == names.count(name)
-    assert main.count("const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) : PushFileInfoShellStyle(theme);") == 1
-    assert main.count("PopStyleColor(dockGroupStyleCount)") == 1
+    group_style = between(main, "const auto appearance = pushDockedToolAppearance(selected);",
+                          "renderFloatingToolBody(selected, size")
+    assert "beginFilterStyleFloatingWindow(" in group_style
+    assert "popDockedToolAppearance(appearance);" in main
     waveform = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "// FLOATING PANELS")
     assert "ThemeColors::waveformPanelBG(waveformShellTheme)" in waveform
     assert "const ImVec4 waveShellEdge = workspacePalette.perimeter" in waveform
@@ -383,11 +403,82 @@ def test_all_resize_handles_share_the_three_dot_grip_logic():
     assert "dl->AddLine(" not in vertical
     assert "dl->AddLine(" not in horizontal
 
+
+def test_sidebar_rail_and_active_content_keep_the_original_internal_spacing():
+    main = read(MAIN_CPP)
+    rail = between(main, 'BeginTransientScrollbarChild("##SidebarRail"', 'BeginTransientScrollbarChild("##SidebarContent"')
+
+    assert "ImGui::SameLine(0, 0);" in rail
+    assert "WorkspacePanelGapPx" not in rail
+    assert "AddRectFilled" not in rail
+
+
+def test_docked_workspace_seams_share_the_reference_gap_without_shrinking_resize_targets():
+    main = read(MAIN_CPP)
+    shell = between(main, "auto drawDockModuleShell", "const ImVec2 laneEnd")
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    assert "const float splitterWidth = WorkspacePanelGapPx() * 0.5f;" in main
+    assert "layout.insetL = splitterWidth;" in shell
+    assert "layout.insetR = splitterWidth;" in shell
+    assert "kWorkspaceColumnSplitterHitWidth = 12.0f" in main
+    assert 'InvisibleButton("##ResizeHit", ImVec2(kWorkspaceColumnSplitterHitWidth, height))' in vertical
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    assert "if (!waveformSplitter &&" in horizontal
+
     meter = between(main, "// Meter resize handle", "// AUDITION_NATIVE_EXCEPTION: waveform-derived-meter")
     assert "const float handleWidth = 12.0f" in meter
     assert "InvisibleButton(\"##handle\", ImVec2(handleWidth" in meter
     assert "DrawThreeDotSplitterGrip" in meter
     assert "ResolveThreeDotSplitterColor" in meter
+
+
+def test_workspace_splitter_dots_use_their_window_layer_below_covering_tools():
+    main = read(MAIN_CPP)
+    vertical = between(main, "bool VerticalSplitter(", "// Draw a horizontal splitter")
+    horizontal_start = main.rindex("bool HorizontalSplitter(")
+    horizontal = main[horizontal_start:main.index("// Begin a dockable panel", horizontal_start)]
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+    for splitter in (vertical, horizontal, fallback):
+        assert "GetWindowDrawList()" in splitter
+        assert "GetForegroundDrawList" not in splitter
+    overlay_order = between(main, "static void LayerWorkspaceSplitterOverlays(", "// Draw a vertical splitter")
+    assert "ImGui::BringWindowToDisplayBehind(overlay, occluder)" in overlay_order
+    assert "window->OuterRectClipped.Overlaps(overlay->OuterRectClipped)" in overlay_order
+    assert "ImGuiWindowFlags_Popup" in overlay_order
+    assert "LayerWorkspaceSplitterOverlays(workspaceWindow);" in main
+
+
+def test_fallback_column_splitters_keep_the_full_hit_width_centered_on_the_seam():
+    main = read(MAIN_CPP)
+    gripper = between(main, "const auto leftOuterGrip =", "static std::string activeGripId")
+    fallback = between(main, "for (int column = 0; column < 2; ++column)", "if (g_dockTestBandHintsVisible)")
+
+    for side in ("Left", "Right"):
+        assert f"PlanDockColumnOuterGrip(gripSnapshot, aura::ui::dock::DockSide::{side}, kWorkspaceColumnSplitterHitWidth)" in gripper
+    assert "grip.rect.x = columnBoundaryX - grip.rect.width * 0.5f;" in fallback
+
+
+def test_standalone_status_bar_anchors_to_the_full_dock_column_bottom():
+    main = read(MAIN_CPP)
+    status = between(main, "// STATUS BAR with Panel Toggle Buttons", 'BeginTransientScrollbarChild("StatusBar"')
+
+    assert "if (!showDockedWaveform)" in status
+    assert "ImGui::SetCursorScreenPos(ImVec2(viewport->WorkPos.x," in status
+    assert "dockColumnTop + sideColumnHeight + ImGui::GetStyle().ItemSpacing.y" in status
+
+
+def test_bottom_waveform_uses_the_same_visible_gap_as_the_columns():
+    main = read(MAIN_CPP)
+    budget = between(main, "const bool showDockedWaveform =", "const float minimumWaveform =")
+    seam = between(main, "// BOTTOM - Waveform and Transport", 'BeginTransientScrollbarChild("WaveformPanel"')
+    waveform_child = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "const auto& waveformShellTheme")
+
+    assert "WorkspacePanelGapPx()" in budget
+    assert "waveformPanelGapReserve" in budget and "waveformPanelGapReserve" in seam
+    assert "ItemSpacing.y" not in seam
+    assert "AddRectFilled" not in seam
+    assert "ImGuiWindowFlags_NoBackground" in waveform_child
 
 
 def test_lapis_blue_chrome_avoids_white_search_and_black_transport_seams():
@@ -437,7 +528,7 @@ def test_dock_widths_round_trip_in_workspace_units():
     main = read(MAIN_CPP)
     commit = between(main, "static void MirrorDockCommitToPanel", "static void ApplyDockedPanel(")
     assert "logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);" in commit
-    assert "ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);" in commit
+    assert "ApplyDockCommitToPanel(mirror, side, logicalRect);" in commit
     assert "const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);" in commit
     assert "state.panelSidebar.dockedWidth = logicalWidth;" in commit
     assert "state.panelFileInfo.dockedWidth = logicalWidth;" in commit
@@ -449,7 +540,7 @@ def test_docked_info_actions_use_the_scaled_title_and_body_boundary():
     main = read(MAIN_CPP)
     assert "const float infoDockTitleHeight = workspacePx(24.0f);" in main
     assert 'displayedTool == "info" ? infoDockTitleHeight : 24.0f' in main
-    assert "false, infoDockTitleHeight);" in main
+    assert 'false, infoDockTitleHeight, "info");' in main
     assert "drawFileInfoTitleActions(state, rightShell, rightShell.insetT)" in main
     assert "drawFileInfoTitleActions(state, shell, shell.insetT)" in main
 
@@ -878,12 +969,23 @@ def test_waveform_zoom_scrollbar_is_transient_independently_and_never_shown_at_o
     assert "waveformScrollBarEligible" in scroll
     assert 'ImGui::InvisibleButton("##WaveScrollBar"' in scroll
     assert "ImGuiButtonFlags_AllowOverlap" in scroll
-    assert "const float pitchColumnTailHeight = pitchModeTopOffset + pitchModeHeight;" in main
-    assert "const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);" in main
+    assert (
+        "float waveformHeight = std::max(24.0f, panelAvailH - waveFileNameBarHeight"
+        " - waveFooterGap - waveFooterEdge);" in main
+    )
     assert "waveScrollBarHeight + waveFooterGap" not in main
     assert "waveformPos.y + waveformHeight - scrollBarHeight - scrollOverlayInset" in scroll
-    assert "const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + 1.0f);" in main
+    assert "const ImVec2 footerPos(waveformPos.x, waveformPos.y + waveformHeight + waveFooterGap);" in main
     assert "Ctrl+Scroll Zoom" not in scroll
+
+
+def test_outer_dock_band_splitters_share_the_layout_floor():
+    main = read(MAIN_CPP)
+    top_grip = between(main, "float* topHeightOwner = dockBandHeightOwner", "float* bottomHeightOwner = dockBandHeightOwner")
+    bottom_grip = between(main, "float* bottomHeightOwner = dockBandHeightOwner", 'HorizontalSplitter("##BottomDockSplitter"')
+    for grip, side in ((top_grip, "Top"), (bottom_grip, "Bottom")):
+        assert "aura::ui::dock::DockBandMinimum(" in grip
+        assert f"g_dockLayout.RegionRoot(aura::ui::dock::DockSide::{side}), viewport->DpiScale).height" in grip
 
 
 def test_native_scrollbars_use_independent_region_visibility_gates():
@@ -905,11 +1007,14 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     assert "TransientScrollbarStyleScope transientScrollbarStyle" not in main
     assert "BeginTransientScrollbarChild" in main
     assert "BeginTransientScrollbarTable" in main
-    # The Similar Sounds leaf explicitly disables native scrollbars; normal
-    # content uses the wrapper. The QA narrator is a local packaging addition.
-    assert main.count("ImGui::BeginChild(") == 1
-    similar = between(main, 'ImGui::BeginChild(\n                        "##DockedSimilarSoundsContent"', 'ImGui::EndChild();')
-    assert "ImGuiWindowFlags_NoScrollbar |" in similar
+    assert "ImGui::BeginChild(" not in main
+    dock_content = between(main, "const auto beginDockContentViewport", "auto renderFunctionDockedModule")
+    assert "ImGui::SetNextWindowContentSize" in dock_content
+    assert "flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)" in dock_content
+    assert "BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
+    similar = between(main, '"similar-sounds", "##IndependentSimilarSoundsContent"', "ImGui::EndChild();")
+    assert "ImGuiWindowFlags_NoBackground" in similar
+    assert "ImGuiWindowFlags_NoScrollWithMouse" not in similar
     assert "ImGui::BeginTable(" not in main
     assert "ImGui::Begin(" not in main
     assert "ImGui::BeginPopup(" not in main
@@ -1113,8 +1218,10 @@ def test_pitch_mode_toggle_reserves_its_full_bottom_tail():
         in pitch_column
     )
     assert (
-        "const float reservedH = std::max(waveFileNameBarHeight, pitchColumnTailHeight);"
+        "const float pitchWheelHeight = std::max(24.0f, panelAvailH - "
+        "std::max(waveFileNameBarHeight, pitchColumnTailHeight));"
         in pitch_column
     )
+    assert "float pwHeight = pitchWheelHeight;" in pitch_column
     assert "const float segY = pwY + pwHeight + pitchModeTopOffset;" in pitch_column
     assert "const float segH = pitchModeHeight;" in pitch_column

@@ -56,7 +56,7 @@ struct AudioEmbeddingService::Impl {
 };
 AudioEmbeddingService::AudioEmbeddingService() : impl_(std::make_unique<Impl>()) {}
 AudioEmbeddingService::~AudioEmbeddingService() = default;
-bool AudioEmbeddingService::Load(const std::string& directory, std::string& error) {
+bool AudioEmbeddingService::Load(const std::string& directory, std::string& error, int intraOpThreads) {
     impl_ = std::make_unique<Impl>(); error.clear();
 #ifndef HARKEN_WITH_ONNX
     error = "model_runtime_unavailable"; return false;
@@ -76,7 +76,7 @@ bool AudioEmbeddingService::Load(const std::string& directory, std::string& erro
     std::memcpy(impl_->filters.data(), filters.data(), filters.size());
     std::memcpy(impl_->window.data(), window.data(), window.size());
     try {
-        Ort::SessionOptions options; options.SetIntraOpNumThreads(4); options.SetInterOpNumThreads(1);
+        Ort::SessionOptions options; options.SetIntraOpNumThreads(std::max(1, intraOpThreads)); options.SetInterOpNumThreads(1);
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 #ifdef _WIN32
         const auto nativePath = Platform::TextEncoding::Utf8ToWideStrict(model);

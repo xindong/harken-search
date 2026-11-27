@@ -13,6 +13,9 @@ def product_fragments():
     data_end = source.index("\n};", data_start) + len("\n};")
     rect_start = source.index("static RECT WaveformScreenRect(")
     rect_end = source.index("\n}", rect_start) + len("\n}")
+    region_start = source.index("static DragCardOrigin MakeRegionDragOrigin(")
+    region_overload = source.index("\nvoid StartRegionDrag(AudioEngine& engine) {", region_start)
+    region_end = source.rindex("\n}", region_start, region_overload) + len("\n}")
     helper_start = source.index("static void SuppressDefaultDragImage(")
     helper_end = source.index("\n}", helper_start) + len("\n}")
     card_start = source.index("        HarkenSearch::AudioDragCard::CardSpec card;", source.index("void StartFileDrag("))
@@ -31,7 +34,8 @@ def product_fragments():
     return (data + "\n" + helper + "\n" + source[rect_start:rect_end] +
             "\nstatic HarkenSearch::AudioDragCard::CardSpec MakeCardForTest(\n"
             "    const std::vector<std::string>& files, const DragCardOrigin* origin) {\n" +
-            source[card_start:card_end] + "\n    return card;\n}\n")
+            source[card_start:card_end] + "\n    return card;\n}\n" +
+            source[region_start:region_end])
 
 
 class AudioDragReviewTests(unittest.TestCase):
@@ -71,6 +75,9 @@ target_link_libraries(AudioDragReview PRIVATE ole32 shell32 user32 gdi32)
 
     def test_waveform_matches_first_file(self):
         self.run_case("waveform")
+
+    def test_region_drag_waveform_matches_transferred_audio(self):
+        self.run_case("region-waveform")
 
     def test_wav_fixture_bounds(self):
         self.run_case("wav")

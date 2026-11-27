@@ -84,6 +84,7 @@ inline PreferencePreview<AppSettings>& AppearancePreview() {
         {[](const AppSettings& a,const AppSettings& b){return a.theme==b.theme && a.useCustomColors==b.useCustomColors;},
          [](AppSettings& a,const AppSettings& b){a.theme=b.theme;a.useCustomColors=b.useCustomColors;}},
         Field(&AppSettings::readingFontSize),Field(&AppSettings::listFontSize),Field(&AppSettings::uiScalePercent),
+        Field(&AppSettings::uiFontFamilies),
         {[](const AppSettings& a,const AppSettings& b){return a.rowHeight==b.rowHeight && a.listDensity==b.listDensity;},
          [](AppSettings& a,const AppSettings& b){a.rowHeight=b.rowHeight;a.listDensity=b.listDensity;}}
     };
@@ -104,10 +105,11 @@ struct Editor {
         PREF(skipLeadingSilence),PREF(silenceThresholdDb),PREF(defaultPitch),PREF(pitchRange),
         PREF(monitorLayout),PREF(downmixMode),PREF(downmixCenterDb),PREF(downmixSurroundDb),PREF(binauralMonitor),
         PREF(theme),PREF(themeScheduleMode),PREF(useCustomColors),PREF(language),PREF(readingFontSize),PREF(listFontSize),PREF(uiScalePercent),PREF(rowHeight),PREF(listDensity),
+        PREF(uiFontFamilies),
         PREF(showFileExtension),PREF(waveformDisplayMode),PREF(waveformStyle),PREF(miniWaveformRmsBodyStyle),PREF(meterChannelLayout),
         PREF(showLoudnessMeter),PREF(showRMSMeter),PREF(showTruePeakMeter),PREF(showClickRipple),
         PREF(showMilliseconds),PREF(showFrameNumber),PREF(defaultFrameRate),PREF(searchRealtime),PREF(suggestSourceMode),PREF(autoRenameTabBySearch),
-        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(autoReconcileOnStartup),
+        PREF(memoryProfile),PREF(fpsLimit),PREF(thumbnailMaxResolution),PREF(threadLimit),PREF(similarityAnalysisConcurrency),PREF(autoReconcileOnStartup),
         PREF(idleAssetBackfillEnabled),PREF(idleAssetBackfillDelayMinutes),PREF(rememberLastFolder),PREF(closeButtonAction),
         PREF(showGuidedMode),PREF(suppressConfirmDialogs),PREF(enableShowManagerHotkey),
         Field(&AppSettings::showManagerHotkey,[](const KeyBinding& a,const KeyBinding& b){return a.key==b.key && a.ctrl==b.ctrl && a.alt==b.alt && a.shift==b.shift;}),
@@ -130,6 +132,7 @@ struct Editor {
     bool previousSearching=false, hadChildPopup=false, scrollToTop=false;
     char query[256]{};
     std::string focusId, highlightId, highlightQuery, error, action;
+    std::string themeImportResult;
     std::string clearSimilarTarget;
     bool clearSimilarConfirm=false;
     int64_t clearSimilarResult=-2;

@@ -2,6 +2,7 @@
 #include "ThemeScheduleClock.h"
 #include "Theme.h"
 #include "BuildConfig.h"
+#include <functional>
 #include <string>
 #include <vector>
 struct AppState;
@@ -20,6 +21,8 @@ bool ControlsTheme(const AppState& state);
 std::optional<ManualAppearance> ManualAppearanceForSettings(const AppState& state);
 void SetMode(AppState& state, Mode mode);
 void OnManualThemeSelected(AppState& state);
+bool TrySaveImportedAppearance(AppState& state, const std::string& name,
+                               const std::function<bool()>& persistSettings);
 std::optional<Period> SelectedPeriod(const AppState& state);
 void Tick(AppState& state, bool force = false);
 void Invalidate();

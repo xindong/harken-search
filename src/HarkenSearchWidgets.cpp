@@ -6,6 +6,7 @@
 #include "../thirdparty/lucide/IconsLucide.h"
 #include "Theme.h"
 #include "ui/TransportContrast.h"
+#include "ui/UiScale.h"
 #include "ui/ActionButtonStyle.h"
 #include "ui/CloseIconButton.h"
 #include "SettingsSearchHighlightSpans.h"
@@ -639,7 +640,7 @@ static bool FlatCombo(const char* label, int* currentIndex,
     const ActionButtonStyle::Scope scope(palette);
     const float padY = ImMax(0.0f, (kHeightMd - ImGui::GetFontSize()) * .5f);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(kPadXMd, padY));
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ActionButtonStyle::kRounding);
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, ActionButtonStyle::ScaledRounding());
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kGap8, kGap8));
     ImGui::PushStyleColor(ImGuiCol_FrameBg, palette.fill);
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, palette.hover);
@@ -1322,8 +1323,8 @@ bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags,
     ImGui::PushStyleColor(ImGuiCol_Border, ThemeColors::popupBorder(th));
     ImGui::PushStyleColor(ImGuiCol_BorderShadow, ThemeColors::popupShadow(th));
     ImGui::PushStyleColor(ImGuiCol_Text, th.menuText);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, kRadiusDialog);
-    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, kRadiusDialog);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, aura::ui::dpi::Px(kRadiusDialog));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, aura::ui::dpi::Px(kRadiusDialog));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kGap24, kGap16));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kGap12, kGap12));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
@@ -1362,7 +1363,7 @@ bool BeginAlertDialog(const char* id, const char* title, ImGuiWindowFlags flags,
         ImVec2(windowPos.x + kCaptionBorder, windowPos.y + kCaptionBorder),
         ImVec2(windowPos.x + windowSize.x - kCaptionBorder, windowPos.y + barHeight),
         ImGui::ColorConvertFloat4ToU32(captionBG),
-        kRadiusDialog - kCaptionBorder, ImDrawFlags_RoundCornersTop);
+        aura::ui::dpi::Px(kRadiusDialog) - kCaptionBorder, ImDrawFlags_RoundCornersTop);
 
     ImGui::PushID(title && *title ? title : id);
     // The caption widgets are placed by screen position, so they must not feed

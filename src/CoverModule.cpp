@@ -199,7 +199,11 @@ struct AsyncLoadTask {
     bool highPriority = false; // Needed by the current viewport.
     /// 入队时的视口代际；落后于 g_asyncGeneration 的任务视为僵尸，解码前丢弃
     uint64_t generation = 0;
+    bool resolveEmbeddedIdentity = false;
 };
+
+static bool ReadEmbeddedCoverArt(const std::string& filePathUtf8, AlbumArt& art);
+static void ResolveEmbeddedIdentityTask(const AsyncLoadTask& task, Database* database);
 
 static std::mutex g_asyncMutex;
 static std::deque<AsyncLoadTask> g_asyncQueue;
@@ -434,9 +438,10 @@ static void AsyncLoaderThread() {
 
         const std::string originalKey = task.key;
 
-        if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
-            std::lock_guard<std::mutex> lk(g_asyncMutex);
-            g_asyncPendingKeys.erase(originalKey);
+        if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) continue;
+
+        if (task.resolveEmbeddedIdentity) {
+            ResolveEmbeddedIdentityTask(task, dbPtr);
             continue;
         }
 
@@ -455,7 +460,7 @@ static void AsyncLoaderThread() {
                 if (candidatePathUtf8.empty()) return false;
 
                 AlbumArt art;
-                if (!MetadataReader::readAlbumArt(candidatePathUtf8, art) || !art.hasData()) {
+                if (!ReadEmbeddedCoverArt(candidatePathUtf8, art)) {
                     return false;
                 }
 
@@ -494,18 +499,6 @@ static void AsyncLoaderThread() {
             if (!success) {
                 if (tryDecodeEmbeddedArt(task.path)) {
                     success = true;
-                }
-            }
-
-            if (!success) {
-                AlbumArt art;
-                if (MetadataReader::readAlbumArt(task.path, art) && art.hasData()) {
-                            if (DecodeImageFromMemory(art.data.data(), art.data.size(), pixels, w, h)) {
-                        // 动态缩略图尺寸
-                        int thumbSize = g_appState ? g_appState->settings.thumbnailMaxResolution : 256;
-                        DownscaleRgbaToMaxDim(pixels, w, h, thumbSize);
-                        success = true;
-                    }
                 }
             }
 
@@ -602,14 +595,9 @@ static void AsyncLoaderThread() {
             }
         }
 
-        if (success && task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
-            success = false;
-        }
-
         if (success) {
-            // Apply backpressure until the UI upload queue has capacity; a
-            // successfully decoded image is not discarded.
-            while (g_asyncThreadRunning) {
+            while (g_asyncThreadRunning &&
+                   task.generation == g_asyncGeneration.load(std::memory_order_relaxed)) {
                 size_t queueSz;
                 {
                     std::lock_guard<std::mutex> ulk(g_uploadMutex);
@@ -618,25 +606,23 @@ static void AsyncLoaderThread() {
                 if (queueSz < kMaxUploadQueueSize) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
-            
-            PendingUpload u;
-            u.key = task.key;
-            u.kind = task.isEmbedded ? CoverKind::EmbeddedCover : CoverKind::FolderCover;
-            u.folderPathUtf8 = task.path;
-            u.filePathUtf8 = folderCoverImagePathUtf8; // 封面墙按 "F|filePathUtf8" 查，上传时双 key 写入
-            u.pixels = std::move(pixels);
-            u.w = w; u.h = h;
-            if (task.generation == g_asyncGeneration.load(std::memory_order_relaxed)) {
-                PushUpload(std::move(u));
-            }
         }
 
         {
             std::lock_guard<std::mutex> lk(g_asyncMutex);
+            if (task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) continue;
             g_asyncPendingKeys.erase(originalKey);
-            if (task.key != originalKey)
-                g_asyncPendingKeys.erase(task.key);
             if (success) {
+                PendingUpload upload;
+                upload.key = task.key;
+                upload.kind = task.isEmbedded ? CoverKind::EmbeddedCover : CoverKind::FolderCover;
+                upload.folderPathUtf8 = task.path;
+                upload.filePathUtf8 = folderCoverImagePathUtf8;
+                upload.pixels = std::move(pixels);
+                upload.w = w;
+                upload.h = h;
+                PushUpload(std::move(upload));
+
                 g_asyncFailedKeys.erase(task.key);
                 if (task.key != originalKey)
                     g_asyncFailedKeys.erase(originalKey);
@@ -703,6 +689,7 @@ static std::unordered_map<std::string, std::string> g_folderCoverIdentityKeyCach
 static std::unordered_map<std::string, TextureEntry> g_embeddedCoverCache;
 static std::unordered_map<std::string, std::string> g_fileEmbeddedKeyCache;
 static std::unordered_map<std::string, int64_t> g_fileEmbeddedKeyMtimeCache;
+static std::unordered_map<std::string, std::chrono::steady_clock::time_point> g_embeddedIdentityCheckedAt;
 static std::unordered_map<std::string, std::string> g_fileFolderKeyCache;          // filePath -> coverKey(identity)
 static std::unordered_map<std::string, int64_t> g_fileFolderCoverSrcMtimeCache;
 static std::unordered_map<std::string, TextureEntry> g_folderCoverKeyCache;        // coverKey(identity) -> texture
@@ -773,6 +760,7 @@ static void TrimStringCachesIfNeeded() {
     if (g_fileEmbeddedKeyCache.size() > kMaxStringCache || total > kMaxTotalStringEntries) {
         g_fileEmbeddedKeyCache.clear();
         g_fileEmbeddedKeyMtimeCache.clear();
+        g_embeddedIdentityCheckedAt.clear();
         g_fileFolderKeyCache.clear();
         g_fileFolderCoverSrcMtimeCache.clear();
         // 保留 kNoCoverMarker（负缓存）条目，避免重新探测已知无封面的文件夹（特别是 USB 驱动器慢 IO）。
@@ -881,10 +869,10 @@ static bool EnsureFolderCoverTextureLoaded(const std::string& keyOrFolderPathUtf
 
         if (!StartAsyncLoader()) return false;
         {
-            const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
             std::lock_guard<std::mutex> lk(g_asyncMutex);
             if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-            g_asyncPendingKeys.insert(stableKey);
+            if (!g_asyncPendingKeys.insert(stableKey).second) return false;
+            const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
             g_asyncQueue.push_front({stableKey, pathForLookup, false, 0, true, gen});
             g_asyncCv.notify_one();
         }
@@ -919,10 +907,10 @@ static bool EnsureFolderCoverTextureLoaded(const std::string& keyOrFolderPathUtf
 
     if (!StartAsyncLoader()) return false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
         if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-        g_asyncPendingKeys.insert(folderPath);
+        if (!g_asyncPendingKeys.insert(folderPath).second) return false;
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         g_asyncQueue.push_front({folderPath, folderPath, false, 0, true, gen});
         g_asyncCv.notify_one();
     }
@@ -964,10 +952,10 @@ static bool EnsureEmbeddedCoverTextureLoaded(const std::string& key,
     // 3. 发起异步任务
     if (!StartAsyncLoader()) return false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
         if (g_asyncQueue.size() >= kMaxAsyncQueueSize) return false;
-        g_asyncPendingKeys.insert(cacheKey);
+        if (!g_asyncPendingKeys.insert(cacheKey).second) return false;
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         // Selected-file and viewport requests enter at the front of the queue.
         g_asyncQueue.push_front({cacheKey, representativeFilePathUtf8, true, lodLevel, true, gen});
         g_asyncCv.notify_one();
@@ -1020,123 +1008,158 @@ static bool StartsWith(const std::string& s, const char* prefix) {
 
 // CoverKey updates
 static std::mutex g_keyUpdatesMutex;
-static std::deque<CoverKeyCacheUpdate> g_keyUpdates;
-static std::unordered_set<std::string> g_keyUpdatesQueuedPaths;
+static std::list<CoverKeyCacheUpdate> g_keyUpdates;
+static std::unordered_map<std::string, std::list<CoverKeyCacheUpdate>::iterator> g_keyUpdatesQueuedPaths;
 
 static void EnqueueKeyUpdate(const CoverKeyCacheUpdate& u) {
     if (u.filePathUtf8.empty()) return;
     if (!u.updateEmbedded && !u.updateFolder) return;
     std::lock_guard<std::mutex> lk(g_keyUpdatesMutex);
-    if (g_keyUpdatesQueuedPaths.find(u.filePathUtf8) != g_keyUpdatesQueuedPaths.end()) return;
-    g_keyUpdatesQueuedPaths.insert(u.filePathUtf8);
-    g_keyUpdates.push_back(u);
+    const auto existing = g_keyUpdatesQueuedPaths.find(u.filePathUtf8);
+    if (existing == g_keyUpdatesQueuedPaths.end()) {
+        g_keyUpdatesQueuedPaths.emplace(u.filePathUtf8, g_keyUpdates.insert(g_keyUpdates.end(), u));
+        return;
+    }
+    auto& pending = *existing->second;
+    if (u.updateEmbedded) {
+        pending.updateEmbedded = true;
+        pending.embeddedCoverKey = u.embeddedCoverKey;
+        pending.embeddedCoverKeyMtime = u.embeddedCoverKeyMtime;
+    }
+    if (u.updateFolder) {
+        pending.updateFolder = true;
+        pending.folderCoverKey = u.folderCoverKey;
+        pending.folderCoverSrcPathUtf8 = u.folderCoverSrcPathUtf8;
+        pending.folderCoverSrcMtime = u.folderCoverSrcMtime;
+    }
 }
 
-// dbPtr: 调用方传入的数据库连接；后台线程传本地连接，主线程传 s_database，避免共享句柄锁争用
-static bool ComputeEmbeddedCoverKeyForFile(Database* dbPtr, const std::string& filePathUtf8, std::string& outKey) {
-    outKey.clear();
-    if (filePathUtf8.empty()) return false;
-
-    {
-        std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        auto it = g_fileEmbeddedKeyCache.find(filePathUtf8);
-        if (it != g_fileEmbeddedKeyCache.end()) {
-            auto mtIt = g_fileEmbeddedKeyMtimeCache.find(filePathUtf8);
-            if (mtIt != g_fileEmbeddedKeyMtimeCache.end() && mtIt->second > 0) {
-                int64_t cur = 0;
-                if (TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, cur) && cur != mtIt->second) {
-                    g_fileEmbeddedKeyCache.erase(it);
-                    g_fileEmbeddedKeyMtimeCache.erase(mtIt);
-                } else {
-                    if (it->second == kNoCoverMarker) return false;
-                    outKey = it->second;
-                    return true;
-                }
-            } else {
-                if (it->second == kNoCoverMarker) return false;
-                outKey = it->second;
+static bool ReadEmbeddedCoverArt(const std::string& filePathUtf8, AlbumArt& art) {
+    if (MetadataReader::readAlbumArt(filePathUtf8, art) && art.hasData()) return true;
+    try {
+        const fs::path audioPath(Utf8ToWide(filePathUtf8));
+        const std::wstring stem = audioPath.stem().wstring();
+        const fs::path parent = audioPath.parent_path();
+        if (parent.empty() || stem.empty()) return false;
+        for (const std::wstring ext : { L".jpg", L".png", L".jpeg" }) {
+            const std::string imagePath = PathToUtf8(parent / (stem + ext));
+            if (!Platform::FileSystem::Exists(imagePath)) continue;
+            art.data = Platform::FileSystem::ReadFileBytes(imagePath, 32 * 1024 * 1024);
+            if (!art.data.empty()) {
+                art.mimeType = ext == L".png" ? "image/png" : "image/jpeg";
                 return true;
             }
         }
+    } catch (...) {}
+    return false;
+}
+
+static bool ComputeEmbeddedCoverKeyForFile(Database* dbPtr, const std::string& filePathUtf8,
+                                           std::string& outKey, const uint64_t* generation = nullptr) {
+    outKey.clear();
+    if (filePathUtf8.empty()) return false;
+
+    std::string cachedKey;
+    int64_t cachedMtime = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_metaCacheMutex);
+        const auto key = g_fileEmbeddedKeyCache.find(filePathUtf8);
+        if (key != g_fileEmbeddedKeyCache.end()) cachedKey = key->second;
+        const auto mtime = g_fileEmbeddedKeyMtimeCache.find(filePathUtf8);
+        if (mtime != g_fileEmbeddedKeyMtimeCache.end()) cachedMtime = mtime->second;
+    }
+
+    int64_t currentMtime = 0;
+    if (!TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, currentMtime)) currentMtime = 0;
+    if (!cachedKey.empty() && (currentMtime <= 0 || currentMtime == cachedMtime)) {
+        if (cachedKey == kNoCoverMarker) return false;
+        outKey = std::move(cachedKey);
+        return true;
     }
 
     AlbumArt art;
-    bool hasArt = MetadataReader::readAlbumArt(filePathUtf8, art) && art.hasData();
-
-    if (!hasArt) {
-        try {
-            fs::path p = fs::path(Utf8ToWide(filePathUtf8));
-            std::wstring wStem = p.stem().wstring();
-            fs::path parentDir = p.parent_path();
-
-            if (!parentDir.empty() && !wStem.empty()) {
-                for (const std::wstring ext : { L".jpg", L".png", L".jpeg" }) {
-                    fs::path imgPath = parentDir / (wStem + ext);
-                    const std::string imgPathUtf8 = PathToUtf8(imgPath);
-                    if (Platform::FileSystem::Exists(imgPathUtf8)) {
-                        art.data = Platform::FileSystem::ReadFileBytes(
-                            imgPathUtf8, 32 * 1024 * 1024);
-                        if (!art.data.empty()) {
-                            art.mimeType = (ext == L".png") ? "image/png" : "image/jpeg";
-                            hasArt = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        } catch (...) {}
+    if (ReadEmbeddedCoverArt(filePathUtf8, art)) {
+        const uint64_t hash = XXH3_64bits(art.data.data(), art.data.size());
+        outKey = CanonicalCoverKey(std::string("E|") + Hex64(hash) + "|" +
+                                   std::to_string(art.data.size()) + "|" + art.mimeType);
     }
-
-    if (!hasArt) {
-        std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        g_fileEmbeddedKeyCache[filePathUtf8] = kNoCoverMarker;
-        int64_t mt = 0;
-        TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, mt);
-        if (mt > 0) {
-            g_fileEmbeddedKeyMtimeCache[filePathUtf8] = mt;
-            CoverKeyCacheUpdate u;
-            u.filePathUtf8 = filePathUtf8;
-            u.updateEmbedded = true;
-            u.embeddedCoverKey.clear();
-            u.embeddedCoverKeyMtime = mt;
-            EnqueueKeyUpdate(u);
-        }
+    if (generation && *generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
+        outKey.clear();
         return false;
     }
+    if (dbPtr && !outKey.empty() && art.data.size() > 16 && !dbPtr->hasCoverThumb(outKey)) {
+        std::vector<uint8_t> smallJpeg;
+        std::string mime;
+        if (DownscaleForDbStorage(art.data, smallJpeg, mime)) {
+            dbPtr->saveCoverThumb(outKey, smallJpeg, mime);
+        } else {
+            dbPtr->saveCoverThumb(outKey, art.data, art.mimeType);
+        }
+    }
 
-    uint64_t h = (uint64_t)XXH3_64bits(art.data.data(), art.data.size());
-    // T2.2: 任何 cover key 出口都过 CanonicalCoverKey, 保证下游字节比较安全
-    outKey = CanonicalCoverKey(std::string("E|") + Hex64(h) + "|" + std::to_string(art.data.size()) + "|" + art.mimeType);
+    std::lock_guard<std::mutex> cacheLock(g_metaCacheMutex);
+    std::unique_lock<std::mutex> requestLock(g_asyncMutex, std::defer_lock);
+    if (generation) {
+        requestLock.lock();
+        if (!g_asyncThreadRunning || *generation != g_asyncGeneration.load(std::memory_order_relaxed)) {
+            outKey.clear();
+            return false;
+        }
+    }
+    g_fileEmbeddedKeyCache[filePathUtf8] = outKey.empty() ? kNoCoverMarker : outKey;
+    if (currentMtime > 0) {
+        g_fileEmbeddedKeyMtimeCache[filePathUtf8] = currentMtime;
+        CoverKeyCacheUpdate update;
+        update.filePathUtf8 = filePathUtf8;
+        update.updateEmbedded = true;
+        update.embeddedCoverKey = outKey;
+        update.embeddedCoverKeyMtime = currentMtime;
+        EnqueueKeyUpdate(update);
+    } else {
+        g_fileEmbeddedKeyMtimeCache.erase(filePathUtf8);
+    }
+    return !outKey.empty();
+}
 
+static void ResolveEmbeddedIdentityTask(const AsyncLoadTask& task, Database* database) {
+    std::string resolvedKey;
+    ComputeEmbeddedCoverKeyForFile(database, task.path, resolvedKey, &task.generation);
+    std::lock_guard<std::mutex> cacheLock(g_metaCacheMutex);
+    std::lock_guard<std::mutex> requestLock(g_asyncMutex);
+    if (!g_asyncThreadRunning || task.generation != g_asyncGeneration.load(std::memory_order_relaxed)) return;
+    if (g_fileEmbeddedKeyCache.count(task.path)) {
+        g_embeddedIdentityCheckedAt[task.path] = std::chrono::steady_clock::now();
+    }
+    g_asyncPendingKeys.erase(task.key);
+}
+
+static bool GetOrRequestEmbeddedIdentity(const std::string& path, std::string& outKey, bool highPriority) {
+    outKey.clear();
+    if (path.empty()) return true;
+    bool known = false;
+    bool needsCheck = true;
     {
-        std::lock_guard<std::mutex> lk(g_metaCacheMutex);
-        g_fileEmbeddedKeyCache[filePathUtf8] = outKey;
-        int64_t mt = 0;
-        TryGetPathMtimeUnixSecondsUtf8(filePathUtf8, mt);
-        if (mt > 0) {
-            g_fileEmbeddedKeyMtimeCache[filePathUtf8] = mt;
-            CoverKeyCacheUpdate u;
-            u.filePathUtf8 = filePathUtf8;
-            u.updateEmbedded = true;
-            u.embeddedCoverKey = outKey;
-            u.embeddedCoverKeyMtime = mt;
-            EnqueueKeyUpdate(u);
-        }
+        std::lock_guard<std::mutex> lock(g_metaCacheMutex);
+        const auto key = g_fileEmbeddedKeyCache.find(path);
+        known = key != g_fileEmbeddedKeyCache.end();
+        if (known && key->second != kNoCoverMarker) outKey = key->second;
+        const auto lastCheck = g_embeddedIdentityCheckedAt.find(path);
+        needsCheck = !known || lastCheck == g_embeddedIdentityCheckedAt.end() ||
+            std::chrono::steady_clock::now() - lastCheck->second >= std::chrono::seconds(10);
     }
 
-    if (dbPtr && !outKey.empty() && art.data.size() > 16) {
-        if (!dbPtr->hasCoverThumb(outKey)) {
-            // DB 瘦身：存缩小后的 JPEG 而非原图
-            std::vector<uint8_t> smallJpeg;
-            std::string smallMime;
-            if (DownscaleForDbStorage(art.data, smallJpeg, smallMime)) {
-                dbPtr->saveCoverThumb(outKey, smallJpeg, smallMime);
-            } else {
-                dbPtr->saveCoverThumb(outKey, art.data, art.mimeType);
-            }
+    if (needsCheck && StartAsyncLoader()) {
+        std::lock_guard<std::mutex> lock(g_asyncMutex);
+        const std::string taskKey = "I|" + path;
+        if (g_asyncQueue.size() < kMaxAsyncQueueSize && g_asyncPendingKeys.insert(taskKey).second) {
+            AsyncLoadTask task{taskKey, path, true, 0, highPriority,
+                               g_asyncGeneration.load(std::memory_order_relaxed), true};
+            if (highPriority) g_asyncQueue.push_front(std::move(task));
+            else g_asyncQueue.push_back(std::move(task));
+            g_asyncCv.notify_one();
         }
     }
-    return true;
+    return known;
 }
 
 static bool ComputeFolderCoverKeyForFile(const std::string& filePathUtf8, std::string& outKey) {
@@ -1755,8 +1778,8 @@ void PreCacheFolderCovers(const std::vector<std::string>& folderPathsUtf8) {
     if (!StartAsyncLoader()) return;
     bool anyPushed = false;
     {
-        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         std::lock_guard<std::mutex> lk(g_asyncMutex);
+        const uint64_t gen = g_asyncGeneration.load(std::memory_order_relaxed);
         for (const std::string& path : toEnqueue) {
             if (g_asyncQueue.size() >= kMaxAsyncQueueSize) break;
             if (IsKeyFailedLocked(path) || g_asyncPendingKeys.count(path)) continue;
@@ -1770,11 +1793,9 @@ void PreCacheFolderCovers(const std::vector<std::string>& folderPathsUtf8) {
 }
 
 void InvalidateViewportCoverTasks() {
-    g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lk(g_asyncMutex);
-    for (const auto& t : g_asyncQueue) {
-        g_asyncPendingKeys.erase(t.key);
-    }
+    g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
+    g_asyncPendingKeys.clear();
     g_asyncQueue.clear();
     g_asyncCv.notify_all();
 }
@@ -1801,7 +1822,8 @@ bool LoadCurrentFileCoverTexture(const std::string& audioFilePathUtf8,
     if (outCoverFolderUtf8) *outCoverFolderUtf8 = folder;
 
     std::string embKey;
-    if (ComputeEmbeddedCoverKeyForFile(s_database, audioFilePathUtf8, embKey) && !embKey.empty()) {
+    if (!GetOrRequestEmbeddedIdentity(audioFilePathUtf8, embKey, true)) return false;
+    if (!embKey.empty()) {
         TextureEntry e;
         // 请求 LOD 2 (512px) 用于右侧详情面板展示；允许失败后重试一次（点进灰色项时能显示封面）
         bool ok = EnsureEmbeddedCoverTextureLoaded(embKey, audioFilePathUtf8, e, 2, true);
@@ -2308,9 +2330,15 @@ bool GetFolderCoverImagePathBackground(const std::string& folderPathUtf8,
     return false;
 }
 
-bool GetEmbeddedCoverTextureByPath(const std::string& audioFilePathUtf8, TextureHandle& outTex) {
+bool GetEmbeddedCoverTextureByPath(const std::string& audioFilePathUtf8, TextureHandle& outTex,
+                                   bool* identityPending) {
+    outTex = TextureHandle();
+    if (identityPending) *identityPending = true;
+    if (IsWaveformForegroundRebuildActive()) return false;
     std::string key;
-    if (!ComputeEmbeddedCoverKeyForFile(s_database, audioFilePathUtf8, key) || key.empty()) return false;
+    const bool ready = GetOrRequestEmbeddedIdentity(audioFilePathUtf8, key, false);
+    if (identityPending) *identityPending = !ready;
+    if (!ready || key.empty()) return false;
     return GetEmbeddedCoverTexture(key, audioFilePathUtf8, outTex, 1);
 }
 
@@ -2322,6 +2350,7 @@ void InvalidateCoverForPath(const std::string& filePathUtf8) {
 
 void InvalidateFileCoverCaches(const std::vector<std::string>& filePaths) {
     if (filePaths.empty()) return;
+    InvalidateViewportCoverTasks();
     std::unordered_set<std::string> affectedFolders;
     std::unordered_set<std::string> affectedFolderCoverKeys;
     std::unordered_set<std::string> affectedFolderCoverPaths;
@@ -2345,6 +2374,7 @@ void InvalidateFileCoverCaches(const std::vector<std::string>& filePaths) {
                 g_fileEmbeddedKeyCache.erase(keyIt);
             }
             g_fileEmbeddedKeyMtimeCache.erase(fp);
+            g_embeddedIdentityCheckedAt.erase(fp);
 
             auto fkIt = g_fileFolderKeyCache.find(fp);
             if (fkIt != g_fileFolderKeyCache.end()) {
@@ -2610,11 +2640,20 @@ size_t RemoveFailedCoverItems(std::vector<CoverItem>& items) {
 
 void ClearAllCoverCaches() {
     {
+        std::lock_guard<std::mutex> lock(g_asyncMutex);
+        g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
+        g_asyncPendingKeys.clear();
+        g_asyncFailedKeys.clear();
+        g_asyncQueue.clear();
+        g_asyncCv.notify_all();
+    }
+    {
         std::lock_guard<std::mutex> lk(g_metaCacheMutex);
         g_folderCoverPathCache.clear();
         g_folderCoverIdentityKeyCache.clear();
         g_fileEmbeddedKeyCache.clear();
         g_fileEmbeddedKeyMtimeCache.clear();
+        g_embeddedIdentityCheckedAt.clear();
         g_fileFolderKeyCache.clear();
         g_fileFolderCoverSrcMtimeCache.clear();
     }
@@ -2637,14 +2676,6 @@ void ClearAllCoverCaches() {
         std::lock_guard<std::mutex> lk(g_wallCacheMutex);
         g_wallCache.clear();
         g_wallCacheLru.clear();
-    }
-    {
-        std::lock_guard<std::mutex> lk(g_asyncMutex);
-        g_asyncGeneration.fetch_add(1, std::memory_order_relaxed);
-        g_asyncPendingKeys.clear();
-        g_asyncFailedKeys.clear();
-        g_asyncQueue.clear();
-        g_asyncCv.notify_all();
     }
     {
         std::lock_guard<std::mutex> lk(g_uploadMutex);
@@ -2688,11 +2719,13 @@ void PrimeFileCoverKeysFromDb(const std::string& filePathUtf8,
                               int64_t folderSrcMtime) {
     if (filePathUtf8.empty()) return;
 
+    std::lock_guard<std::mutex> lock(g_metaCacheMutex);
+
     // T2.7: embeddedKey (E|...) 与 folderKey (F|...) 都过一次 CanonicalCoverKey,
     // 防止老库的 F|<MixedCase> / 残缺 F|H| 直接污染内存缓存.
     // 失败 (返回空) 视为该 key 无效, 不写入缓存, 等待运行时重新计算.
 
-    if (!embeddedKey.empty()) {
+    if (!embeddedKey.empty() && !g_fileEmbeddedKeyCache.count(filePathUtf8)) {
         std::string canonEmbedded = CanonicalCoverKey(embeddedKey);
         if (!canonEmbedded.empty()) {
             g_fileEmbeddedKeyCache[filePathUtf8] = canonEmbedded;

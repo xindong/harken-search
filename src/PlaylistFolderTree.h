@@ -78,6 +78,18 @@ inline std::vector<std::string> SplitPathSegments(std::string_view path) {
     return parts;
 }
 
+inline std::vector<std::string> SplitCanonicalPathSegments(std::string_view path) {
+    std::vector<std::string> parts = SplitPathSegments(path);
+#ifndef _WIN32
+    if (!parts.empty() && path.front() == '/') parts.front().insert(0, 1, '/');
+#endif
+    return parts;
+}
+
+inline std::string PathSegmentName(const std::string& segment) {
+    return !segment.empty() && segment.front() == '/' ? segment.substr(1) : segment;
+}
+
 inline std::string JoinPathPrefix(const std::vector<std::string>& parts, size_t inclusiveIndex) {
     std::string out;
     const char sep = PreferredSeparator();
@@ -105,7 +117,7 @@ inline void InsertRecordFolder(FolderInfo& root, const AudioRecord& record) {
     const std::string canonicalFolder = FolderPathForRecord(record);
     if (canonicalFolder.empty()) return;
 
-    const std::vector<std::string> parts = SplitPathSegments(canonicalFolder);
+    const std::vector<std::string> parts = SplitCanonicalPathSegments(canonicalFolder);
     if (parts.empty()) return;
 
     const std::vector<std::string> displayParts =
@@ -113,14 +125,15 @@ inline void InsertRecordFolder(FolderInfo& root, const AudioRecord& record) {
 
     FolderInfo* current = &root;
     for (size_t i = 0; i < parts.size(); ++i) {
-        const std::string& key = parts[i];
+        const std::string name = PathSegmentName(parts[i]);
+        const std::string path = JoinPathPrefix(parts, i);
         const std::string display = (i < displayParts.size() && !displayParts[i].empty())
             ? displayParts[i]
-            : key;
+            : name;
 
         FolderInfo* found = nullptr;
         for (FolderInfo& child : current->subfolders) {
-            if (child.name == key) {
+            if (child.path == path) {
                 found = &child;
                 break;
             }
@@ -128,9 +141,9 @@ inline void InsertRecordFolder(FolderInfo& root, const AudioRecord& record) {
 
         if (!found) {
             FolderInfo node;
-            node.name = key;
+            node.name = name;
             node.displayName = display;
-            node.path = JoinPathPrefix(parts, i);
+            node.path = path;
             current->subfolders.push_back(std::move(node));
             found = &current->subfolders.back();
         } else if (found->displayName.empty() && !display.empty()) {
@@ -147,7 +160,7 @@ inline void InsertRecordFolder(FolderInfo& root, const AudioRecord& record) {
 inline void SortTree(FolderInfo& folder) {
     std::sort(folder.subfolders.begin(), folder.subfolders.end(),
               [](const FolderInfo& a, const FolderInfo& b) {
-                  return a.name < b.name;
+                  return a.path < b.path;
               });
     for (FolderInfo& child : folder.subfolders) {
         SortTree(child);
@@ -183,7 +196,8 @@ inline FolderInfo ConvertFolderCountNode(const std::string& name,
     for (const auto& child : node.children) {
         const std::string childPath =
             path.empty() ? child.first : path + std::string(1, PreferredSeparator()) + child.first;
-        info.subfolders.push_back(ConvertFolderCountNode(child.first, childPath, child.second));
+        info.subfolders.push_back(
+            ConvertFolderCountNode(PathSegmentName(child.first), childPath, child.second));
     }
     return info;
 }
@@ -222,7 +236,7 @@ inline FolderInfo BuildPlaylistFolderTreeFromFolderCounts(
     for (const PlaylistFolderCount& folderCount : folderCounts) {
         if (folderCount.folderPath.empty() || folderCount.fileCount <= 0) continue;
         const std::vector<std::string> parts =
-            PlaylistFolderTreeDetail::SplitPathSegments(folderCount.folderPath);
+            PlaylistFolderTreeDetail::SplitCanonicalPathSegments(folderCount.folderPath);
         if (parts.empty()) continue;
         const std::vector<std::string> displayParts =
             PlaylistFolderTreeDetail::SplitPathSegments(
@@ -236,7 +250,7 @@ inline FolderInfo BuildPlaylistFolderTreeFromFolderCounts(
             if (inserted.second) {
                 child.displayName = (i < displayParts.size() && !displayParts[i].empty())
                     ? displayParts[i]
-                    : parts[i];
+                    : PlaylistFolderTreeDetail::PathSegmentName(parts[i]);
             }
             current = &child;
         }

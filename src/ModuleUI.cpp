@@ -18,6 +18,7 @@
 #include "EmbedScript.h"
 #include "NamingScript.h"
 #include "TransferEngine.h"
+#include "TransferOptionLabels.h"
 #include "WorkflowEngine.h"
 #include "Theme.h"
 #include "ThemeEditor.h"
@@ -360,7 +361,7 @@ void RenderUCSBrowserContent(AppState& state) {
                 // all empty — apply directly with undo
                 s_ucsApplyCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = "UCS category assign";
+                undoOp->editKind = MetadataUndoKind::WriteUcsCategory;
                 if (state.database.beginTransaction()) {
                     bool abort = false;
                     for (const auto& rec : selectedRecords) {
@@ -412,7 +413,7 @@ void RenderUCSBrowserContent(AppState& state) {
                 auto recs = state.getSelectedRecords();
                 s_ucsApplyCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = "UCS category assign";
+                undoOp->editKind = MetadataUndoKind::WriteUcsCategory;
                 if (state.database.beginTransaction()) {
                     bool abort = false;
                     for (const auto& rec : recs) {
@@ -1042,10 +1043,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto strategies = TransferEngine::getFolderStrategyList();
     ImGui::SetNextItemWidth(350);
     if (ImGui::BeginCombo("##FolderStrategy",
-        state.transferFolderStrategy >= 0 && state.transferFolderStrategy < (int)strategies.size()
-            ? strategies[state.transferFolderStrategy].second.c_str() : "")) {
+        aura::ui::TransferOptionPreview(strategies, state.transferFolderStrategy,
+            strategies.front().second.c_str()))) {
         for (int i = 0; i < (int)strategies.size(); i++) {
-            if (ImGui::Selectable(strategies[i].second.c_str(), state.transferFolderStrategy == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(strategies[i]), state.transferFolderStrategy == i)) {
                 state.transferFolderStrategy = i;
             }
         }
@@ -1061,10 +1062,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto fileTypes = TransferEngine::getFileTypeChoices();
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo(L(Module_ComboFileFormat),
-        state.transferFileType >= 0 && state.transferFileType < (int)fileTypes.size()
-            ? fileTypes[state.transferFileType].first.c_str() : "")) {
+        aura::ui::TransferOptionPreview(fileTypes, state.transferFileType,
+            fileTypes.front().first.c_str()))) {
         for (int i = 0; i < (int)fileTypes.size(); i++) {
-            if (ImGui::Selectable(fileTypes[i].first.c_str(), state.transferFileType == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(fileTypes[i]), state.transferFileType == i)) {
                 state.transferFileType = i;
             }
         }
@@ -1109,10 +1110,10 @@ void RenderTransferDialogContent(AppState& state) {
     auto existBehaviors = TransferEngine::getExistingBehaviorChoices();
     ImGui::SetNextItemWidth(200);
     if (ImGui::BeginCombo(L(Export_ExistingFile),
-        state.transferExistingBehavior >= 0 && state.transferExistingBehavior < (int)existBehaviors.size()
-            ? existBehaviors[state.transferExistingBehavior].first.c_str() : "")) {
+        aura::ui::TransferOptionPreview(existBehaviors, state.transferExistingBehavior,
+            existBehaviors.front().first.c_str()))) {
         for (int i = 0; i < (int)existBehaviors.size(); i++) {
-            if (ImGui::Selectable(existBehaviors[i].first.c_str(), state.transferExistingBehavior == i)) {
+            if (ImGui::Selectable(aura::ui::TransferOptionLabel(existBehaviors[i]), state.transferExistingBehavior == i)) {
                 state.transferExistingBehavior = i;
             }
         }
@@ -1249,6 +1250,61 @@ static int s_workflowExecFail = 0;
 static std::deque<WorkflowExecHistory> s_workflowExecHistory;
 static constexpr int kMaxWorkflowHistory = 5;
 
+static const char* GetWorkflowNodeName(WorkflowNodeType type) {
+    switch (type) {
+        case WorkflowNodeType::SetField: return L(Wf_NodeSetFieldName);
+        case WorkflowNodeType::CopyField: return L(Wf_NodeCopyFieldName);
+        case WorkflowNodeType::FindAndReplace: return L(Wf_NodeFindAndReplaceName);
+        case WorkflowNodeType::FindAndReplaceWord: return L(Wf_NodeFindAndReplaceWordName);
+        case WorkflowNodeType::ChangeCase: return L(Wf_NodeChangeCaseName);
+        case WorkflowNodeType::AddRemoveChars: return L(Wf_NodeAddRemoveCharsName);
+        case WorkflowNodeType::AppendPrependField: return L(Wf_NodeAppendPrependFieldName);
+        case WorkflowNodeType::RemoveWords: return L(Wf_NodeRemoveWordsName);
+        case WorkflowNodeType::RemoveOccurrences: return L(Wf_NodeRemoveOccurrencesName);
+        case WorkflowNodeType::RemoveMultipleSpaces: return L(Wf_NodeRemoveMultipleSpacesName);
+        case WorkflowNodeType::TakeFirstWords: return L(Wf_NodeTakeFirstWordsName);
+        case WorkflowNodeType::TakeLastWords: return L(Wf_NodeTakeLastWordsName);
+        case WorkflowNodeType::SplitAndSort: return L(Wf_NodeSplitAndSortName);
+        case WorkflowNodeType::SeparateItems: return L(Wf_NodeSeparateItemsName);
+        case WorkflowNodeType::SeparateLastItems: return L(Wf_NodeSeparateLastItemsName);
+        case WorkflowNodeType::CopyFirstRecord: return L(Wf_NodeCopyFirstRecordName);
+        case WorkflowNodeType::CopyFolderName: return L(Wf_NodeCopyFolderNameName);
+        case WorkflowNodeType::FilePathExtractor: return L(Wf_NodeFilePathExtractorName);
+        case WorkflowNodeType::FieldBuild: return L(Wf_NodeFieldBuildName);
+        case WorkflowNodeType::AutoSplit: return L(Wf_NodeAutoSplitName);
+        case WorkflowNodeType::AssignCats: return L(Wf_NodeAssignCatsName);
+        case WorkflowNodeType::UCSBuild: return L(Wf_NodeUCSBuildName);
+        case WorkflowNodeType::SetRating: return L(Wf_NodeSetRatingName);
+        case WorkflowNodeType::SetColour: return L(Wf_NodeSetColourName);
+        case WorkflowNodeType::Number: return L(Wf_NodeNumberName);
+        case WorkflowNodeType::Date: return L(Wf_NodeDateName);
+        case WorkflowNodeType::SetUniqueID: return L(Wf_NodeSetUniqueIDName);
+        case WorkflowNodeType::ProcessIf: return L(Wf_NodeProcessIfName);
+        case WorkflowNodeType::Comment: return L(Wf_NodeCommentName);
+        case WorkflowNodeType::CodeExecute: return L(Wf_NodeCodeExecuteName);
+        case WorkflowNodeType::FindAndPlace: return L(Wf_NodeFindAndPlaceName);
+        case WorkflowNodeType::PublisherCheck: return L(Wf_NodePublisherCheckName);
+        default: return L(Wf_NodeUnknownName);
+    }
+}
+
+static const char* GetWorkflowNodeHelp(WorkflowNodeType type) {
+    switch (type) {
+        case WorkflowNodeType::SetField: return L(Wf_NodeSetFieldHelp);
+        case WorkflowNodeType::CopyField: return L(Wf_NodeCopyFieldHelp);
+        case WorkflowNodeType::FindAndReplace: return L(Wf_NodeFindAndReplaceHelp);
+        case WorkflowNodeType::ChangeCase: return L(Wf_NodeChangeCaseHelp);
+        case WorkflowNodeType::RemoveMultipleSpaces: return L(Wf_NodeRemoveMultipleSpacesHelp);
+        case WorkflowNodeType::TakeFirstWords: return L(Wf_NodeTakeFirstWordsHelp);
+        case WorkflowNodeType::TakeLastWords: return L(Wf_NodeTakeLastWordsHelp);
+        case WorkflowNodeType::CopyFolderName: return L(Wf_NodeCopyFolderNameHelp);
+        case WorkflowNodeType::Number: return L(Wf_NodeNumberHelp);
+        case WorkflowNodeType::ProcessIf: return L(Wf_NodeProcessIfHelp);
+        case WorkflowNodeType::Comment: return L(Wf_NodeCommentHelp);
+        default: return nullptr;
+    }
+}
+
 void RenderWorkflowDialogContent(AppState& state) {
     if (!state.showWorkflowDialog) return;
 
@@ -1301,15 +1357,15 @@ void RenderWorkflowDialogContent(AppState& state) {
 
     auto nodeTypes = WorkflowEngine::getAvailableNodeTypes();
     for (auto nt : nodeTypes) {
-        const char* name = WorkflowEngine::getNodeTypeNameZh(nt);
+        const char* name = GetWorkflowNodeName(nt);
         ImGui::PushID(static_cast<int>(nt));
         if (ImGui::Selectable(name, false, ImGuiSelectableFlags_AllowDoubleClick)) {
             if (ImGui::IsMouseDoubleClicked(0)) {
                 s_currentWorkflow.addNode(nt);
             }
         }
-        if (HoveredForHelp()) {
-            HarkenSearch::SetTooltip("%s", WorkflowEngine::getNodeTypeDescription(nt));
+        if (const char* help = GetWorkflowNodeHelp(nt); help && HoveredForHelp()) {
+            HarkenSearch::SetTooltip("%s", help);
         }
         ImGui::PopID();
     }
@@ -1328,7 +1384,7 @@ void RenderWorkflowDialogContent(AppState& state) {
 
     for (int i = 0; i < (int)s_currentWorkflow.nodes.size(); i++) {
         auto& node = s_currentWorkflow.nodes[i];
-        const char* typeName = WorkflowEngine::getNodeTypeNameZh(node.type);
+        const char* typeName = GetWorkflowNodeName(node.type);
 
         ImGui::PushID(i);
 

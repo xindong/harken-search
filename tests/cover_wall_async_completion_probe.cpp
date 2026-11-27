@@ -41,6 +41,7 @@ struct AppState {
     Database database;
     CoverWallState coverWall;
     bool coverWallDatabaseInvalidationRequested = false;
+    bool coverWallDisplayRefreshRequested = false;
     bool needsCoverWallReload = false;
     bool preloadedCoverWallFullyDiscovered = false;
     std::vector<Database::CoverWallEntry> preloadedCoverWallEntries;
@@ -49,6 +50,7 @@ struct AppState {
     bool needsDatabaseRefresh = false;
 
 #include "app_invalidation.inc"
+#include "app_scan_cover_refresh.inc"
 };
 
 #include "force_reload.inc"
@@ -80,9 +82,58 @@ CoverModule::CoverItem CoverWithKey(const char* key) {
     return item;
 }
 
+int TestScanBackfillRefresh() {
+    AppState state;
+    auto& cw = state.coverWall;
+    const auto dbPath = state.database.getMainDbPath();
+    const auto generation = cw.generation;
+    cw.loaded = true;
+    cw.lastTotalFileCount = 768;
+    cw.lastScrollY = 420.0f;
+    cw.items = {CoverWithKey("visible-cover")};
+    cw.displaySnapshot = cw.items;
+    cw.globalItemsCache = cw.items;
+    cw.globalItemsCacheValid = true;
+    cw.globalItemsCacheDbPath = dbPath;
+    cw.globalPageDbPath = dbPath;
+    cw.globalPageNextCursor = "fl2:old-page";
+    cw.globalPageHasMore = true;
+    cw.preloadFullList = cw.items;
+    cw.preloadDbPath = dbPath;
+    state.preloadedCoverWallEntries.emplace_back();
+    state.preloadedCoverWallFullyDiscovered = true;
+
+    std::promise<CoverWallPageLoadResult> oldPage;
+    cw.entriesFuture = oldPage.get_future();
+    cw.entriesInFlight = true;
+    cw.entriesGeneration = cw.generation;
+    const auto applyResult = [](AppState& state_) {
+        const struct { bool scanCoverRefresh; } result_{true};
+#include "scan_cover_refresh.inc"
+    };
+    applyResult(state);
+
+    if (cw.loaded || cw.generation == generation || cw.globalItemsCacheValid ||
+        !cw.globalPageNextCursor.empty() || !cw.preloadFullList.empty() ||
+        !state.preloadedCoverWallEntries.empty() || state.preloadedCoverWallFullyDiscovered) {
+        std::cerr << "The same-size global wall or its stale cover cache would be reused\n";
+        return 1;
+    }
+    oldPage.set_value({{CoverWithKey("obsolete-cover")}, "", false});
+    ApplyReadyCompletions(state);
+    if (cw.items.size() != 1 || cw.items.front().key != "visible-cover" ||
+        cw.displaySnapshot.size() != 1 || cw.lastScrollY != 420.0f ||
+        cw.texturesPendingClear || cw.entriesInFlight || !state.needsCoverWallReload) {
+        std::cerr << "The in-flight refresh did not preserve the visible wall or retire the obsolete page\n";
+        return 1;
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     if (argc != 2) return 2;
     const std::string requestKind = argv[1];
+    if (requestKind == "scan-backfill") return TestScanBackfillRefresh();
     AppState state;
     auto& cw = state.coverWall;
     const auto dbPath = state.database.getMainDbPath();

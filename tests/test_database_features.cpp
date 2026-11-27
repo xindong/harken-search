@@ -24,8 +24,23 @@
 #include <cstdlib>
 #include <cmath>
 #include <algorithm>
+#include <memory>
+#include <optional>
 
 namespace fs = std::filesystem;
+
+static std::optional<std::string> readTestEnvironment(const char* name) {
+#ifdef _WIN32
+    char* raw = nullptr;
+    size_t length = 0;
+    const int result = _dupenv_s(&raw, &length, name);
+    const std::unique_ptr<char, decltype(&std::free)> value(raw, &std::free);
+    if (result == 0 && value) return std::string(value.get());
+#else
+    if (const char* value = std::getenv(name)) return std::string(value);
+#endif
+    return std::nullopt;
+}
 
 void printSeparator(const std::string& title) {
     std::cout << "\n" << std::string(60, '=') << "\n";
@@ -1525,7 +1540,7 @@ int testLargeCoverBrowseHotPathsUseBoundedRegistryHeuristic() {
 
     const std::string facetBody = extractFunctionBody(
         source,
-        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit)");
+        "std::vector<Database::CoverFacetEntry> Database::getCoverFacets(");
     const bool facetUsesBoundedHelper =
         !facetBody.empty() &&
         facetBody.find("AssessGlobalCoverAggregationReadiness") != std::string::npos &&
@@ -1903,9 +1918,7 @@ int testCoverThumbMaintenanceSkipsTerminalFailuresAndInvalidKeys() {
     const AudioRecord seeded = db.getFileByPath(audioPath.u8string());
     const std::string activeCoverKey = seeded.folderCoverKey;
     const std::string escapedActiveCoverKey = escapeSqlLiteral(activeCoverKey);
-    const std::string escapedBlobsPath = escapeSqlLiteral(db.getBlobsDbPathPublic(dbPath));
     std::vector<std::string> fixtureSql = {
-        "ATTACH DATABASE '" + escapedBlobsPath + "' AS blobs_db;",
         "DELETE FROM blobs_db.cover_thumbs;",
         "UPDATE cover_cache_registry SET cover_phash = 0, cover_phash_version = 0;",
     };
@@ -1926,8 +1939,14 @@ int testCoverThumbMaintenanceSkipsTerminalFailuresAndInvalidKeys() {
         "WHERE cover_key = '" + escapedActiveCoverKey + "';");
     fixtureSql.push_back(
         "INSERT OR REPLACE INTO app_meta (key, value) VALUES ('cover_registry_needs_maintenance', '1');");
-    fixtureSql.push_back("DETACH DATABASE blobs_db;");
-    const bool fixturePrimed = execSqlOnDbPath(dbPath, fixtureSql);
+    const bool fixturePrimed = std::all_of(fixtureSql.begin(), fixtureSql.end(),
+        [&](const std::string& sql) {
+            if (sqlite3_exec(db.db(), sql.c_str(), nullptr, nullptr, nullptr) == SQLITE_OK) {
+                return true;
+            }
+            std::cerr << "Fixture SQL failed: " << sqlite3_errmsg(db.db()) << '\n';
+            return false;
+        });
     std::cout << (fixturePrimed ? "PASS" : "FAIL")
               << ": primed fixture with >200 dead rows, one empty key row, and one valid row\n";
     if (!fixturePrimed) ++failures;
@@ -2750,9 +2769,11 @@ int testTemporaryCoverIdentityReverseLookupMatchesCoverFilter() {
     coverFilter.specificCoverKey = "?|" + folderA;
     auto filtered = db.searchFiles(coverFilter, 20, 0);
     const bool coverFilterMatchesTileMembership =
-        filtered.size() == membershipIds.size() &&
+        filtered.size() == 2 && filtered.size() == membershipIds.size() &&
         std::all_of(filtered.begin(), filtered.end(), [&](const AudioRecord& record) {
-            return HarkenSearch::CanonicalFolderPath(record.folderPath) == folderA &&
+            return std::find(membershipIds.begin(), membershipIds.end(), record.id) !=
+                       membershipIds.end() &&
+                   HarkenSearch::CanonicalFolderPath(record.folderPath) == folderA &&
                    record.embeddedCoverKey.empty() &&
                    record.folderCoverKey.empty();
         });
@@ -5384,16 +5405,13 @@ int testFavoriteColumnMigrationReportsFailure() {
 }
 
 int testLegacyDescriptionDisplay() {
-    char* qaRootRaw = nullptr;
-    size_t qaRootLength = 0;
-    _dupenv_s(&qaRootRaw, &qaRootLength, "HARKEN_DESCRIPTION_QA_ROOT");
-    const bool keepQaFixture = qaRootRaw && *qaRootRaw;
+    const auto qaRoot = readTestEnvironment("HARKEN_DESCRIPTION_QA_ROOT");
+    const bool keepQaFixture = qaRoot && !qaRoot->empty();
     const fs::path root = keepQaFixture
-        ? fs::u8path(qaRootRaw) / "Library"
+        ? fs::u8path(*qaRoot) / "Library"
         : fs::temp_directory_path() /
               ("harken-description-display-" +
                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::free(qaRootRaw);
     if (!fs::create_directories(root)) return 1;
     Database db;
     const std::string dbPath = PathToUtf8(root / "main.db");
@@ -5405,16 +5423,16 @@ int testLegacyDescriptionDisplay() {
     legacy.extension = ".mp3";
     legacy.description = "old";
     if (!db.addFile(legacy)) return 1;
-    const uint8_t oldBytes[] = {'e', 'n', 'g', 0xFF, 0xFE, 0, 0,
-                                0xFF, 0xFE, 'A', 0, 0xF3, 0x97, '6'};
+    constexpr char convertedLegacyPrefix[] = "eng\xEF\xBF\xBD\xEF\xBF\xBD\0\0";
+    const std::string convertedLegacy(convertedLegacyPrefix, sizeof(convertedLegacyPrefix) - 1);
     sqlite3_stmt* update = nullptr;
     const bool prepared = sqlite3_prepare_v2(
         db.db(), "UPDATE audio_files SET description=? WHERE file_path=?",
         -1, &update, nullptr) == SQLITE_OK;
     bool updated = false;
     if (prepared) {
-        sqlite3_bind_text(update, 1, reinterpret_cast<const char*>(oldBytes),
-                          sizeof(oldBytes), SQLITE_TRANSIENT);
+        sqlite3_bind_text(update, 1, convertedLegacy.data(),
+                          static_cast<int>(convertedLegacy.size()), SQLITE_TRANSIENT);
         sqlite3_bind_text(update, 2, legacy.filePath.c_str(), -1, SQLITE_TRANSIENT);
         updated = sqlite3_step(update) == SQLITE_DONE;
     }
@@ -5493,13 +5511,12 @@ int testLegacyDescriptionDisplay() {
     const bool convertedAdded = db.addFile(converted);
     sqlite3_stmt* convertedUpdate = nullptr;
     bool convertedUpdated = false;
-    const auto damagedBytes = fromHex(damagedDbHex);
     if (sqlite3_prepare_v2(db.db(),
             "UPDATE audio_files SET description=? WHERE file_path=?", -1,
             &convertedUpdate, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(convertedUpdate, 1,
-                          reinterpret_cast<const char*>(damagedBytes.data()),
-                          static_cast<int>(damagedBytes.size()), SQLITE_TRANSIENT);
+                          convertedLegacy.data(),
+                          static_cast<int>(convertedLegacy.size()), SQLITE_TRANSIENT);
         sqlite3_bind_text(convertedUpdate, 2, converted.filePath.c_str(), -1,
                           SQLITE_TRANSIENT);
         convertedUpdated = sqlite3_step(convertedUpdate) == SQLITE_DONE;
@@ -5603,6 +5620,74 @@ int testLegacyDescriptionDisplay() {
                        << " collectionOverride=" << (collectionChinese
                            ? collectionChinese->databaseListDescriptionOverride : std::string());
     return ok ? 0 : 1;
+}
+
+static int testSearchWorkerRecountsAfterWatcherRevision() {
+    const fs::path root = makeTempRoot("search_worker_watcher_revision");
+    const std::string dbPath = PathToUtf8(root / "watcher_revision.db");
+    Database db;
+    int failures = 0;
+    auto expect = [&](bool ok, const char* label) {
+        std::cout << (ok ? "PASS: " : "FAIL: ") << label << "\n";
+        if (!ok) ++failures;
+        return ok;
+    };
+
+    if (expect(db.open(dbPath), "open watcher revision fixture")) {
+        AudioRecord seed;
+        seed.fileName = "seed.wav";
+        seed.filePath = PathToUtf8(root / seed.fileName);
+        seed.extension = ".wav";
+        AudioRecord hybrid;
+        hybrid.fileName = "hybrid.wv";
+        hybrid.filePath = PathToUtf8(root / hybrid.fileName);
+        hybrid.extension = ".wv";
+        hybrid.wavPackLossless = false;
+
+        if (expect(db.addFile(seed) && db.addFile(hybrid) && db.rebuildFolderIndex(),
+                   "store lossless seed and lossy hybrid in indexed library")) {
+            SearchWorker worker;
+            worker.start(dbPath);
+            AsyncSearchRequest request;
+            request.viewMode = 1;
+            request.limit = 16;
+            request.hasFileTypeFilter = true;
+            request.filter.losslessWavPackOnly = true;
+            const auto verify = [&](int total, const char* label) {
+                request.requestedAtDbRevision = db.dataRevision();
+                const auto requestId = worker.submitSearch(request);
+                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+                AsyncSearchResult result;
+                while (std::chrono::steady_clock::now() < deadline) {
+                    if (worker.pollResult(result, requestId)) {
+                        if (!expect(result.success && result.loadedCount == total &&
+                                    result.totalCount == total, label)) {
+                            std::cerr << "  expected " << total << " rows and total; received "
+                                      << result.loadedCount << " rows, total " << result.totalCount << "\n";
+                        }
+                        return;
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+                expect(false, label);
+            };
+
+            verify(1, "lossless search primes the read-only worker count");
+            hybrid.wavPackLossless = true;
+            expect(db.updateFile(hybrid) && db.invalidateFacetQueryCache(),
+                   "watcher writer updates hybrid losslessness and invalidates persisted count");
+            verify(2, "matching correction refreshes rows and the worker's total");
+            hybrid.wavPackLossless = false;
+            expect(db.updateFile(hybrid) && db.invalidateFacetQueryCache(),
+                   "watcher writer removes hybrid lossless classification");
+            verify(1, "removing correction drops the row and total");
+            worker.stop();
+        }
+    }
+    db.close();
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
 }
 
 // BUG-20261119-LEGACY-WAVEFORM-MIGRATION: old builds kept waveform BLOBs in
@@ -5937,46 +6022,22 @@ int testLegacyWaveformMigrationFillsPartialSidecarRow() {
 int testConcurrentFtsTriggerRefresh();
 
 int main(int argc, char* argv[]) {
+    if (argc == 2 && std::string(argv[1]) == "--watcher-search-count")
+        return testSearchWorkerRecountsAfterWatcherRevision() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--fts-trigger-concurrency")
         return testConcurrentFtsTriggerRefresh();
-    char* descriptionOnlyRaw = nullptr;
-    size_t descriptionOnlyLen = 0;
-    const bool descriptionOnly =
-        _dupenv_s(&descriptionOnlyRaw, &descriptionOnlyLen,
-                   "HARKEN_DESCRIPTION_DISPLAY_ONLY") == 0 &&
-        descriptionOnlyRaw && std::string(descriptionOnlyRaw) == "1";
-    std::free(descriptionOnlyRaw);
-    if (descriptionOnly) return testLegacyDescriptionDisplay();
-    char* favoritesOnlyRaw = nullptr;
-    size_t favoritesOnlyLen = 0;
-    const bool favoritesOnly =
-        _dupenv_s(&favoritesOnlyRaw, &favoritesOnlyLen,
-                   "HARKEN_FAVORITES_MIGRATION_ONLY") == 0 && favoritesOnlyRaw;
-    std::free(favoritesOnlyRaw);
-    if (favoritesOnly) return testFavoriteColumnMigrationReportsFailure();
-    char* relinkUpdateOnlyRaw = nullptr;
-    size_t relinkUpdateOnlyLen = 0;
-    const bool relinkUpdateOnly =
-        _dupenv_s(&relinkUpdateOnlyRaw, &relinkUpdateOnlyLen,
-                   "HARKEN_RELINK_PATH_UPDATE_ONLY") == 0 && relinkUpdateOnlyRaw;
-    std::free(relinkUpdateOnlyRaw);
-    if (relinkUpdateOnly) return testRelinkUpdateRequiresExistingSource();
-    char* relinkSearchOnlyRaw = nullptr;
-    size_t relinkSearchOnlyLen = 0;
-    const bool relinkSearchOnly =
-        _dupenv_s(&relinkSearchOnlyRaw, &relinkSearchOnlyLen,
-                   "HARKEN_RELINK_SEARCH_REPORT_ONLY") == 0 && relinkSearchOnlyRaw;
-    std::free(relinkSearchOnlyRaw);
-    if (relinkSearchOnly) return testRelinkSearchReportsStatusReasonAndProgress();
+    if (readTestEnvironment("HARKEN_DESCRIPTION_DISPLAY_ONLY") == "1")
+        return testLegacyDescriptionDisplay();
+    if (readTestEnvironment("HARKEN_FAVORITES_MIGRATION_ONLY"))
+        return testFavoriteColumnMigrationReportsFailure();
+    if (readTestEnvironment("HARKEN_RELINK_PATH_UPDATE_ONLY"))
+        return testRelinkUpdateRequiresExistingSource();
+    if (readTestEnvironment("HARKEN_RELINK_SEARCH_REPORT_ONLY"))
+        return testRelinkSearchReportsStatusReasonAndProgress();
     const int readOnlySidecarFailures = testReadOnlyOpenDoesNotCreateLegacySidecars() +
         testReadOnlyOpenSurvivesCorruptRebuildableSidecars();
-    char* focusedFallbackRaw = nullptr;
-    size_t focusedFallbackLen = 0;
-    const bool focusedFallback =
-        _dupenv_s(&focusedFallbackRaw, &focusedFallbackLen,
-                   "HARKEN_READ_ONLY_FALLBACK_ONLY") == 0 && focusedFallbackRaw;
-    std::free(focusedFallbackRaw);
-    if (focusedFallback) return readOnlySidecarFailures;
+    if (readTestEnvironment("HARKEN_READ_ONLY_FALLBACK_ONLY"))
+        return readOnlySidecarFailures;
     std::cout << "============================================================\n";
     std::cout << "  数据库拆分和路径索引功能测试程序\n";
     std::cout << "============================================================\n";
@@ -6010,11 +6071,8 @@ int main(int argc, char* argv[]) {
     // 关闭数据库
     db.close();
 
-    char* focusedCaseRaw = nullptr;
-    size_t focusedCaseLen = 0;
-    if (_dupenv_s(&focusedCaseRaw, &focusedCaseLen, "AURA_TEST_DATABASE_FEATURES_CASE") == 0 && focusedCaseRaw) {
-        const std::string focused(focusedCaseRaw);
-        std::free(focusedCaseRaw);
+    if (const auto focusedCase = readTestEnvironment("AURA_TEST_DATABASE_FEATURES_CASE")) {
+        const std::string& focused = *focusedCase;
         if (focused == "cover_tile_membership") {
             int focusedFailures = 0;
             focusedFailures += testCoverWallGroupedSelectionIncludesAllFoldersWithoutFuzzyNeighbors();
@@ -6156,13 +6214,15 @@ int main(int argc, char* argv[]) {
     int waveformCompressionFailures = testWaveformCompressionRoundTripAndLegacyRawCompatibility();
     int tagFacetIndexFailures = testTagFacetIndexPrestoreAndFallback();
     int readOnlyPinyinFailures = testReadOnlyPinyinRecomputeStops();
+    int watcherSearchCountFailures = testSearchWorkerRecountsAfterWatcherRevision();
     int legacyWaveformBlobMigrationFailures =
         testLegacyWaveformBlobMigrationRunsOncePerLibrary() +
         testLegacyWaveformMigrationRetriesWhenCopyIsSkipped() +
         testLegacyWaveformMigrationFillsPartialSidecarRow();
 
     printSeparator("测试完成");
-    if (channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
+    if (watcherSearchCountFailures == 0 &&
+        channelFailures == 0 && audioBoundaryFailures == 0 && coverDedupFailures == 0 &&
         coverDeferredFailures == 0 && largeCoverWallFailures == 0 &&
         coverWallPageFailures == 0 && coverWallSparsePageFailures == 0 &&
         smallCoverWallPageFailures == 0 &&

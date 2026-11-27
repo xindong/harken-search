@@ -10,10 +10,19 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <GL/gl.h>
+#elif defined(__APPLE__)
+#include <OpenGL/gl.h>
 #endif
 
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -21,7 +30,43 @@ namespace TestCoverStubs {
 
 static int g_frameCount = 0;
 static double g_timeSeconds = 0.0;
+#if defined(_WIN32) || defined(__APPLE__)
 static GLuint g_nextTextureId = 1;
+#endif
+static std::mutex g_albumArtMutex;
+static std::condition_variable g_albumArtCv;
+static std::string g_slowAlbumArtPath;
+static std::thread::id g_albumArtThread;
+static bool g_releaseAlbumArt = false;
+
+void PauseAlbumArt(const std::string& path) {
+    std::lock_guard<std::mutex> lock(g_albumArtMutex);
+    g_slowAlbumArtPath = path;
+    g_albumArtThread = {};
+    g_releaseAlbumArt = false;
+}
+
+std::thread::id WaitForAlbumArtReader() {
+    std::unique_lock<std::mutex> lock(g_albumArtMutex);
+    g_albumArtCv.wait_for(lock, std::chrono::seconds(2), [] {
+        return g_albumArtThread != std::thread::id{};
+    });
+    return g_albumArtThread;
+}
+
+void ResumeAlbumArt() {
+    std::lock_guard<std::mutex> lock(g_albumArtMutex);
+    g_releaseAlbumArt = true;
+    g_albumArtCv.notify_all();
+}
+
+static void RecordAlbumArtRead(const std::string& path) {
+    std::unique_lock<std::mutex> lock(g_albumArtMutex);
+    if (path != g_slowAlbumArtPath) return;
+    g_albumArtThread = std::this_thread::get_id();
+    g_albumArtCv.notify_all();
+    g_albumArtCv.wait_for(lock, std::chrono::milliseconds(650), [] { return g_releaseAlbumArt; });
+}
 
 void AdvanceFrame(int frames, double dtSeconds) {
     if (frames < 1) frames = 1;
@@ -48,7 +93,7 @@ double GetTime() {
 
 } // namespace ImGui
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 extern "C" {
 
 void APIENTRY glGenTextures(GLsizei n, GLuint* textures) {
@@ -181,6 +226,7 @@ bool Database::hasCoverThumb(const std::string&) {
     return false;
 }
 
-bool MetadataReader::readAlbumArt(const std::string&, AlbumArt&) {
+bool MetadataReader::readAlbumArt(const std::string& path, AlbumArt&) {
+    TestCoverStubs::RecordAlbumArtRead(path);
     return false;
 }

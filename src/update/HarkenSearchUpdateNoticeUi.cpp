@@ -315,21 +315,24 @@ std::string FormatContributors(const ReleaseNotesEntry* release) {
 // Shared single-column content for target preview and history.
 void RenderReleaseContents(const ReleaseNotesEntry& release, const ThemeColorScheme& theme) {
     const ThemeModuleColors modules = ResolveThemeModuleColors(theme);
+    const bool useEnglish = g_currentLanguage == AppLanguage::English;
     const std::string metadata = DisplayVersion(release.version) + "   " +
         SanitizeHarkenSearchUpdateDisplayText(release.releaseDate);
     ImGui::TextColored(modules.results.secondaryText, "%s", metadata.c_str());
     ImGui::Spacing();
     ImGui::PushTextWrapPos(0.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, modules.results.text);
-    if (!release.headline.empty()) {
-        const auto headline = SanitizeHarkenSearchUpdateDisplayText(release.headline);
+    const auto headlineText = HarkenSearchReleaseNoteText(release.headline, release.headlineEn, useEnglish);
+    if (!headlineText.empty()) {
+        const auto headline = SanitizeHarkenSearchUpdateDisplayText(headlineText);
         ImGui::TextUnformatted(headline.c_str());
         ImGui::Dummy(ImVec2(0.0f, 10.0f));
     }
     for (std::size_t index = 0; index < release.items.size(); ++index) {
         const auto& item = release.items[index];
         ImGui::PushID(static_cast<int>(index));
-        const auto title = SanitizeHarkenSearchUpdateDisplayText(item.title);
+        const auto title = SanitizeHarkenSearchUpdateDisplayText(
+            HarkenSearchReleaseNoteText(item.title, item.titleEn, useEnglish));
         const auto author = SanitizeHarkenSearchUpdateDisplayText(item.author);
         if (ImGui::BeginTable("##TopicHeading", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("title", ImGuiTableColumnFlags_WidthStretch, 0.64f);
@@ -348,7 +351,8 @@ void RenderReleaseContents(const ReleaseNotesEntry& release, const ThemeColorSch
             ImGui::PopTextWrapPos();
             ImGui::EndTable();
         }
-        const auto text = SanitizeHarkenSearchUpdateDisplayText(item.text);
+        const auto text = SanitizeHarkenSearchUpdateDisplayText(
+            HarkenSearchReleaseNoteText(item.text, item.textEn, useEnglish));
         ImGui::TextUnformatted(text.c_str());
         ImGui::Dummy(ImVec2(0.0f, 12.0f));
         ImGui::PopID();

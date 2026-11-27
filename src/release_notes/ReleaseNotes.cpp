@@ -114,6 +114,14 @@ bool ReadString(const json& object, const char* key, std::string& output,
     return output.size() <= kMaximumTextBytes;
 }
 
+std::string ReadOptionalTranslation(const json& object, const std::string& key) {
+    const auto found = object.find(key);
+    if (found == object.end() || !found->is_string()) return {};
+    const auto& value = found->get_ref<const std::string&>();
+    if (value.size() > kMaximumTextBytes || value.find_first_not_of(" \t\r\n") == std::string::npos) return {};
+    return value;
+}
+
 bool ReadStringArray(const json& object, const char* key,
                      std::vector<std::string>& output) {
     const auto found = object.find(key);
@@ -192,6 +200,8 @@ bool ParseV3Entries(const json& releaseJson, ReleaseRecord& release,
         }
         if (entry.contributors.empty()) entry.contributors = release.contributors;
         if (entry.contributors.empty()) entry.contributors.push_back("Harken Search Team");
+        entry.titleEn = ReadOptionalTranslation(entryJson, "title_en");
+        entry.descriptionEn = ReadOptionalTranslation(entryJson, "description_en");
         release.entries.push_back(std::move(entry));
         if (++entryCount > kMaximumEntries) return false;
     }
@@ -209,6 +219,7 @@ bool ParseLegacySections(const json& releaseJson, ReleaseRecord& release,
         if (!ReadString(sectionJson, "title", sectionTitle) || sectionTitle.empty()) {
             return false;
         }
+        const auto sectionTitleEn = ReadOptionalTranslation(sectionJson, "title_en");
         const auto groups = sectionJson.find("items");
         if (groups == sectionJson.end() || !groups->is_array()) return false;
         for (const auto& groupJson : *groups) {
@@ -217,6 +228,7 @@ bool ParseLegacySections(const json& releaseJson, ReleaseRecord& release,
             if (!ReadString(groupJson, "name", author)) return false;
             const auto list = groupJson.find("list");
             if (list == groupJson.end() || !list->is_array()) return false;
+            const auto translations = groupJson.find("list_en");
             if (!author.empty() && std::find(release.contributors.begin(),
                                              release.contributors.end(), author) ==
                                        release.contributors.end()) {
@@ -228,20 +240,33 @@ bool ParseLegacySections(const json& releaseJson, ReleaseRecord& release,
                 if (itemJson.is_string()) {
                     entry.title = sectionTitle;
                     entry.description = itemJson.get<std::string>();
+                    entry.titleEn = sectionTitleEn;
+                    if (translations != groupJson.end() && translations->is_object())
+                        entry.descriptionEn = ReadOptionalTranslation(*translations, entry.description);
+                    if (author.empty() && !release.contributors.empty()) {
+                        entry.group = sectionTitle;
+                    }
                 } else if (itemJson.is_object()) {
                     if (!ReadString(itemJson, "title", entry.title) ||
                         !ReadString(itemJson, "description", entry.description) ||
                         !ReadString(itemJson, "source", sourceRef, false)) {
                         return false;
                     }
-                    if (entry.title.empty()) entry.title = sectionTitle;
+                    entry.titleEn = ReadOptionalTranslation(itemJson, "title_en");
+                    entry.descriptionEn = ReadOptionalTranslation(itemJson, "description_en");
+                    if (entry.title.empty()) {
+                        entry.title = sectionTitle;
+                        if (entry.titleEn.empty()) entry.titleEn = sectionTitleEn;
+                    }
                     if (sourceRef.empty()) sourceRef = "aris_release_notes.json";
                 } else {
                     return false;
                 }
                 if (entry.description.empty()) continue;
                 if (!author.empty()) entry.contributors.push_back(author);
-                if (entry.contributors.empty()) entry.contributors.push_back("Harken Search Team");
+                if (entry.contributors.empty() && entry.group.empty()) {
+                    entry.contributors.push_back("Harken Search Team");
+                }
                 entry.sources.push_back({ReleaseNoteSourceKind::ReleaseNote,
                                          std::move(sourceRef), {}});
                 release.entries.push_back(std::move(entry));
@@ -270,6 +295,8 @@ bool ParseLegacyItems(const json& releaseJson, ReleaseRecord& release,
         }
         entry.title = category.empty() ? "更新" : category;
         entry.description = text;
+        entry.titleEn = ReadOptionalTranslation(itemJson, "title_en");
+        entry.descriptionEn = ReadOptionalTranslation(itemJson, "text_en");
         if (!author.empty()) entry.contributors.push_back(author);
         if (entry.contributors.empty()) entry.contributors = release.contributors;
         if (entry.contributors.empty()) entry.contributors.push_back("Harken Search Team");
@@ -338,6 +365,7 @@ ParseResult ParseDocument(std::string_view jsonBytes) {
             !IsValidDate(release.releaseDate)) {
             return Failure(ParseError::MissingField, "release fields are missing or invalid");
         }
+        release.headlineEn = ReadOptionalTranslation(releaseJson, "headline_en");
         SemVersion parsedVersion;
         if (!ParseVersion(release.version, parsedVersion)) {
             return Failure(ParseError::InvalidVersion, "release version is not strict semver");

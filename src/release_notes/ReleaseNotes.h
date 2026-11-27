@@ -32,6 +32,9 @@ struct ReleaseNoteEntry {
     std::string description;
     std::vector<std::string> contributors;
     std::vector<ReleaseNoteSource> sources;
+    std::string group;
+    std::string titleEn;
+    std::string descriptionEn;
 };
 
 struct ReleaseRecord {
@@ -43,6 +46,7 @@ struct ReleaseRecord {
     std::vector<std::string> contributors;
     std::vector<ReleaseNoteEntry> entries;
     std::vector<std::string> notes;
+    std::string headlineEn;
 };
 
 struct ReleaseNotesDocument {

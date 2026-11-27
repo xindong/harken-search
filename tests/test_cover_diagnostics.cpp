@@ -13,6 +13,9 @@ namespace fs = std::filesystem;
 
 namespace TestCoverStubs {
 void AdvanceFrame(int frames = 1, double dtSeconds = 0.1);
+void PauseAlbumArt(const std::string& path);
+std::thread::id WaitForAlbumArtReader();
+void ResumeAlbumArt();
 }
 
 static int g_failures = 0;
@@ -130,6 +133,95 @@ static void testCoverCacheDirectoryPolicy(const fs::path& root) {
     CoverModule::SetCoverCacheDir(root.u8string());
 }
 
+static void testBrowseCoverIdentityRunsOffCaller(const fs::path& root) {
+    const auto caller = std::this_thread::get_id();
+    for (const bool currentCover : {false, true}) {
+        const auto filename = currentCover ? "current.wav" : "prefetch.wav";
+        const fs::path audioPath = root / filename;
+        std::ofstream(audioPath, std::ios::binary | std::ios::trunc) << "audio";
+        const auto path = audioPath.u8string();
+        TestCoverStubs::PauseAlbumArt(path);
+        CoverModule::TextureHandle texture;
+        const auto startedAt = std::chrono::steady_clock::now();
+        if (currentCover) {
+            CoverModule::LoadCurrentFileCoverTexture(path, texture, nullptr);
+        } else {
+            CoverModule::GetEmbeddedCoverTextureByPath(path, texture);
+        }
+        const auto elapsed = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - startedAt).count();
+        std::cout << "Browse cover caller time (" << filename << "): " << elapsed << " ms\n";
+        const auto reader = TestCoverStubs::WaitForAlbumArtReader();
+        TestCoverStubs::ResumeAlbumArt();
+        check(reader != std::thread::id{} && reader != caller,
+              currentCover ? "current cover identity reads on a worker"
+                           : "prefetch and played cover identity read on a worker");
+    }
+    CoverModule::ShutdownCoverWallPrecache();
+    CoverModule::ClearAllCoverCaches();
+}
+
+static void testBrowseCoverFallbacks(const fs::path& root) {
+    for (const bool sidecar : {true, false}) {
+        const auto folder = root / (sidecar ? "sidecar-browse" : "folder-browse");
+        check(writeFakeCoverImage(folder / (sidecar ? "sample.jpg" : "cover.jpg")),
+              "browse fallback image fixture created");
+        const auto audioPath = folder / "sample.wav";
+        std::ofstream(audioPath, std::ios::binary | std::ios::trunc) << "audio";
+        const auto path = audioPath.u8string();
+        CoverModule::TextureHandle texture;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (std::chrono::steady_clock::now() < deadline) {
+            TestCoverStubs::AdvanceFrame();
+            CoverModule::PumpCoverTextureUploads(8);
+            if (CoverModule::LoadCurrentFileCoverTexture(path, texture, nullptr)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(texture.hasTexture, sidecar ? "same-name artwork reaches the current cover"
+                                          : "missing embedded artwork falls back to folder cover");
+
+        std::vector<CoverModule::CoverKeyCacheUpdate> updates;
+        CoverModule::DrainCoverKeyCacheUpdates(updates, 128);
+        bool persistedIdentity = false;
+        for (const auto& update : updates) {
+            if (update.filePathUtf8 != path || !update.updateEmbedded) continue;
+            persistedIdentity = update.embeddedCoverKey.empty() != sidecar;
+        }
+        check(persistedIdentity, "background identity queues the matching cache update");
+    }
+    CoverModule::ShutdownCoverWallPrecache();
+    CoverModule::ClearAllCoverCaches();
+}
+
+static void testCoverPersistencePreservesBothSources(const fs::path& root) {
+    const auto folder = root / "two-cover-sources";
+    check(writeFakeCoverImage(folder / "cover.jpg") &&
+              writeFakeCoverImage(folder / "two.jpg"),
+          "folder and sidecar artwork fixtures created");
+    const auto audioPath = folder / "two.wav";
+    std::ofstream(audioPath, std::ios::binary | std::ios::trunc) << "audio";
+    const auto path = audioPath.u8string();
+    const std::vector<std::string> paths{path};
+    CoverModule::RequestCoverWallPrecache(paths, CoverModule::ComputeBatchSignatureXXH3(paths));
+    std::vector<CoverModule::CoverItem> items;
+    CoverModule::CoverWallStatus status;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (std::chrono::steady_clock::now() < deadline) {
+        CoverModule::GetCoverWallSnapshot(items, status);
+        if (status.done) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(status.done, "cover discovery completed for both sources");
+    std::vector<CoverModule::CoverKeyCacheUpdate> updates;
+    CoverModule::DrainCoverKeyCacheUpdates(updates, 128);
+    check(updates.size() == 1 && updates.front().filePathUtf8 == path &&
+              updates.front().updateEmbedded && !updates.front().embeddedCoverKey.empty() &&
+              updates.front().updateFolder && !updates.front().folderCoverKey.empty(),
+          "same-path queued cover updates preserve both sources");
+    CoverModule::ShutdownCoverWallPrecache();
+    CoverModule::ClearAllCoverCaches();
+}
+
 int main() {
     auto& diag = DiagnosticsLogger::instance();
     diag.setEnabled(true);
@@ -143,6 +235,9 @@ int main() {
 
     CoverModule::ClearAllCoverCaches();
     CoverModule::CancelPendingCoverWork();
+    testBrowseCoverIdentityRunsOffCaller(root);
+    testBrowseCoverFallbacks(root);
+    testCoverPersistencePreservesBothSources(root);
     testEmbeddedCoverMtimeCachePolicy(root);
     testCoverCacheDirectoryPolicy(root);
 

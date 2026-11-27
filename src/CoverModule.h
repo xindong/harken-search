@@ -374,7 +374,8 @@ bool GetFolderCoverImagePathBackground(const std::string& folderPathUtf8,
 
 // Loads embedded artwork by file path when a cached key became stale after an edit.
 
-bool GetEmbeddedCoverTextureByPath(const std::string& audioFilePathUtf8, TextureHandle& outTex);
+bool GetEmbeddedCoverTextureByPath(const std::string& audioFilePathUtf8, TextureHandle& outTex,
+                                  bool* identityPending = nullptr);
 
 
 

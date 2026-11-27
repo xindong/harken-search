@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(HarkenSearch VERSION 1.0.46 LANGUAGES C CXX)
+project(HarkenSearch VERSION 1.0.47 LANGUAGES C CXX)
 
 enable_testing()
 add_executable(TestPerformanceMonitor EXCLUDE_FROM_ALL tests/test_performance_monitor.cpp)
@@ -67,6 +67,10 @@ find_package(Threads REQUIRED)
 if(NOT Python3_Interpreter_FOUND)
     message(FATAL_ERROR "Python3 is required to generate localization tables from locale/harken.ui.strings.json")
 endif()
+# Python3 was found without a version constraint, so the interpreter that ends
+# up running the localization generator is not obvious. Print it, otherwise a
+# platform default (macOS ships 3.9) silently produces the next failure.
+message(STATUS "Localization generator interpreter: ${Python3_EXECUTABLE} (${Python3_VERSION})")
 set(ARIS_LOCALE_LEDGER "${CMAKE_CURRENT_SOURCE_DIR}/locale/harken.ui.strings.json")
 set(ARIS_LOCALE_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_localization.py")
 set(ARIS_LOCALE_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -542,6 +546,7 @@ set(APP_SOURCES
     src/RecordRemovalWorkflow.cpp
     src/RecordRenameWorkflow.cpp
     src/BatchRenamePolicy.cpp
+    src/BatchMetadataRuleEdit.cpp
     src/BatchRenameExecutionWorkflow.cpp
     src/BrowserSystemFolderSearchPolicy.cpp
     src/BrowserSystemFolderSearchRuntime.cpp
@@ -861,6 +866,7 @@ elseif(APPLE)
         src/platform/executable_path_macos.mm
         src/platform/pe_inspection_macos.mm
         src/platform/file_hash_macos.cpp
+        src/platform/harken_user_data_layout_macos.cpp
         src/platform/hmac_sha256_unsupported.cpp
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
@@ -893,6 +899,11 @@ if(WIN32)
     target_compile_features(TestFloatingPanelClampPolicy PRIVATE cxx_std_17)
     target_compile_options(TestFloatingPanelClampPolicy PRIVATE /utf-8)
     add_test(NAME FloatingPanelClampPolicy COMMAND TestFloatingPanelClampPolicy)
+    add_executable(TestPinnedTaskbarIconRefresh EXCLUDE_FROM_ALL tests/test_pinned_taskbar_icon_refresh.cpp)
+    target_include_directories(TestPinnedTaskbarIconRefresh PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_features(TestPinnedTaskbarIconRefresh PRIVATE cxx_std_17)
+    target_compile_options(TestPinnedTaskbarIconRefresh PRIVATE /utf-8)
+    add_test(NAME PinnedTaskbarIconRefresh COMMAND TestPinnedTaskbarIconRefresh)
     add_executable(TestSettingsBodyScrollHeight EXCLUDE_FROM_ALL tests/test_settings_body_scroll_height.cpp)
     target_include_directories(TestSettingsBodyScrollHeight PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_features(TestSettingsBodyScrollHeight PRIVATE cxx_std_17)
@@ -1267,6 +1278,9 @@ aura_set_test_labels(DiagnosticLogBundle core)
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
 # External AI authorization document: the settings page reads and writes it.
 list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp src/ExternalAiPlaylistBridge.cpp src/ExternalAiPlaylistService.cpp src/ExternalAiBridgeServer.cpp)
+if(NOT WIN32)
+    list(APPEND APP_SOURCES src/platform/protected_config_file_posix.cpp)
+endif()
 if(AURA_BUILD_DIAGNOSTICS)
     list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
     list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
@@ -1722,6 +1736,7 @@ if(WIN32)
         ixwebsocket
     )
 elseif(APPLE)
+    target_link_options(HarkenSearch PRIVATE "LINKER:-dead_strip")
     target_link_libraries(HarkenSearch PRIVATE
         Threads::Threads
         "-framework Cocoa"
@@ -1732,6 +1747,7 @@ elseif(APPLE)
         "-framework CoreFoundation"
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()
@@ -1882,6 +1898,15 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/lucide/lucide.ttf")
         COMMENT "Copying lucide.ttf...")
 endif()
 
+if(WIN32)
+    set(HARKEN_UI_FONTS SourceHanSansSC-Regular.otf Inter.ttf JetBrainsMono-Regular.ttf)
+    list(TRANSFORM HARKEN_UI_FONTS PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/")
+    add_custom_command(TARGET HarkenSearch POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:HarkenSearch>/assets/fonts"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${HARKEN_UI_FONTS} "$<TARGET_FILE_DIR:HarkenSearch>/assets/fonts"
+        VERBATIM)
+endif()
+
 # F-035 T5: copy brand icon PNGs next to HarkenSearch.exe. Search icons are derived
 # from user-supplied PNGs; see assets/icons/source/harken-app-icons/README.md.
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/brand")
@@ -2002,6 +2027,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -2059,6 +2085,10 @@ if(WIN32)
     )
    add_test(NAME PreviewPinyinDatabase COMMAND TestPreviewPinyinDatabase)
    aura_set_test_labels(PreviewPinyinDatabase db)
+   add_test(NAME Mp3MetadataSearch COMMAND TestPreviewPinyinDatabase --mp3-search)
+   aura_set_test_labels(Mp3MetadataSearch db)
+   add_test(NAME FlacMetadataSearch COMMAND TestPreviewPinyinDatabase --flac-search)
+   aura_set_test_labels(FlacMetadataSearch db)
     add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
         tests/test_cover_wall_order_index.cpp
         tests/test_database_link_stubs.cpp
@@ -2977,11 +3007,69 @@ target_include_directories(TestWavPackDecode PRIVATE
 )
 target_link_libraries(TestWavPackDecode PRIVATE harken_wavpack)
 target_compile_features(TestWavPackDecode PRIVATE cxx_std_17)
+target_compile_definitions(TestWavPackDecode PRIVATE HARKEN_TEST_WAVPACK_VERIFICATION_COUNT)
 if(MSVC)
     target_compile_options(TestWavPackDecode PRIVATE /W3 /utf-8)
 endif()
 add_test(NAME WavPackDecode COMMAND TestWavPackDecode)
 
+add_executable(TestMp3Id3Reader EXCLUDE_FROM_ALL
+    tests/test_mp3_id3_reader.cpp
+    src/MetadataReader.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestMp3Id3Reader PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(TestMp3Id3Reader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+    target_sources(TestMp3Id3Reader PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestMp3Id3Reader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestMp3Id3Reader PRIVATE harken_wavpack)
+target_compile_features(TestMp3Id3Reader PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestMp3Id3Reader PRIVATE /utf-8)
+endif()
+add_test(NAME Mp3Id3Reader COMMAND TestMp3Id3Reader)
+aura_set_test_labels(Mp3Id3Reader core)
+
+add_executable(TestVorbisMetadataReader EXCLUDE_FROM_ALL
+    tests/test_vorbis_metadata_reader.cpp
+    src/MetadataReader.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(TestVorbisMetadataReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestVorbisMetadataReader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestVorbisMetadataReader PRIVATE harken_wavpack)
+target_compile_features(TestVorbisMetadataReader PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestVorbisMetadataReader PRIVATE /utf-8)
+endif()
+add_test(NAME VorbisMetadataReader COMMAND TestVorbisMetadataReader)
+aura_set_test_labels(VorbisMetadataReader core)
 
 # WavPack decoding backend
 function(_harken_attach_wavpack_decoder target)

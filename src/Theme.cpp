@@ -16,6 +16,7 @@
 #include "DiagnosticsLogger.h"
 #include "Utils.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "nlohmann_json.hpp"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -1991,6 +1992,33 @@ std::string ThemeColors::exportToJSON(const ThemeColorScheme& s) {
     j << "  \"wwiseParentBadge\": \"" << toARGBHex(s.wwiseParentBadge) << "\"\n";
     j << "}";
     return j.str();
+}
+
+bool ThemeColors::filterImportColors(const std::string& jsonText, std::string& outFlatJson) {
+    const auto document = nlohmann::json::parse(jsonText, nullptr, false);
+    if (!document.is_object()) return false;
+    // 序列化后的方案是完整支持字段；可选覆盖项未配置时不会出现在导出里，需显式补上键名。
+    auto supported = nlohmann::json::parse(exportToJSON(ThemeColorScheme{}));
+    for (const auto* field : kOptionalThemeColors) supported[field->key] = "";
+    nlohmann::json colors = nlohmann::json::object();
+    for (auto field = supported.begin(); field != supported.end(); ++field) {
+        const auto value = document.find(field.key());
+        if (value == document.end()) continue;
+        if (!value->is_string()) return false;
+        const auto text = value->get<std::string>();
+        // colorMixing / resultsGradient 是开关，不是颜色：原样透传，不按十六进制校验。
+        if (field.key() == "colorMixing" || field.key() == "resultsGradient") {
+            if (text != "0" && text != "1") return false;
+            colors[field.key()] = text;
+            continue;
+        }
+        if ((text.size() != 6 && text.size() != 8) || text.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+            return false;
+        colors[field.key()] = text;
+    }
+    if (colors.empty()) return false;
+    outFlatJson = colors.dump();
+    return true;
 }
 
 bool ThemeColors::importFromJSON(const std::string& json, ThemeColorScheme& outScheme) {

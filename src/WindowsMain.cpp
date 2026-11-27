@@ -15,6 +15,7 @@
 #include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
+#include "BatchMetadataRuleEditUi.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/UiScale.h"
 #include "ui/EmptyStateVisualAudit.h"
@@ -124,6 +125,7 @@ inline void TickHarkenSearchSmokeWindow() {
 namespace { inline void TickHarkenSearchSmokeWindow() {} }
 #endif
 #include "CoverModule.h"
+#include "CoverKeyCachePersistenceWorkflow.h"
 #include "AvatarCropper.h"
 #include "AIEngine.h"
 #include "MetadataReader.h"
@@ -507,6 +509,7 @@ static void PumpCoverPrefetch(AppState& state, const BackgroundIoContext& coverI
 struct PlayedMetaCacheState {
     int64_t lastFileId = -1;
     std::string lastFilePath;
+    std::string lastFolderPath;
     std::unordered_set<std::string> cachedCoverPaths;
     std::unordered_set<std::string> cachedDetailPaths;
 };
@@ -519,6 +522,7 @@ static void PumpPlayedMetadataCache(AppState& state, bool isMouseIdle) {
         s.lastFileId = state.currentFileId;
         AudioRecord rec = state.database.getFileById(state.currentFileId);
         s.lastFilePath = rec.filePath;
+        s.lastFolderPath = rec.folderPath;
         if (!s.lastFilePath.empty()) {
             // If this file is played, request a higher-detail waveform (main view); delay 150ms
             ScheduleDeferredWaveformDetail(state, s.lastFilePath, AppState::WAVEFORM_DEFAULT_DETAIL_PEAKS);
@@ -556,12 +560,13 @@ static void PumpPlayedMetadataCache(AppState& state, bool isMouseIdle) {
         !IsRapidUiClickBurstActive() &&
         s.cachedCoverPaths.find(s.lastFilePath) == s.cachedCoverPaths.end()) {
         CoverModule::TextureHandle tex;
-        bool hasTex = CoverModule::GetEmbeddedCoverTextureByPath(s.lastFilePath, tex);
+        bool identityPending = false;
+        bool hasTex = CoverModule::GetEmbeddedCoverTextureByPath(s.lastFilePath, tex, &identityPending);
+        if (identityPending) return;
         if (!hasTex) {
             // Fallback to folder cover：只按 folderPath 请求，folderCoverKey 不做路径参数
-            AudioRecord rec = state.database.getFileById(state.currentFileId);
-            if (!rec.folderPath.empty()) {
-                CoverModule::GetFolderCoverTexture(rec.folderPath, tex);
+            if (!s.lastFolderPath.empty()) {
+                CoverModule::GetFolderCoverTexture(s.lastFolderPath, tex);
             }
         }
         s.cachedCoverPaths.insert(s.lastFilePath);
@@ -3040,6 +3045,10 @@ static void RefreshScanCompletionStateForQa(AppState& state) {
                             "ScanCompletionCoversSatisfied: session=%lld total=%d",
                             (long long)scanSessionId,
                             counts.total);
+            if (state.scanCoverResultsRefresh.scanGeneration == static_cast<uint64_t>(scanSessionId) &&
+                state.scanCompletionSessionId.load(std::memory_order_acquire) == scanSessionId) {
+                state.scanCoverResultsRefresh.sawCoverWork = true;
+            }
     }
     if (waveformsBefore && !waveformsPending) {
             DIAG_SYSTEM_FMT("Scan",
@@ -3118,6 +3127,7 @@ static bool BeginFolderScan(
     state.beginScanWorkflow(cacheWaveforms);
 
     const uint64_t scanGeneration = state.beginNewScanTask();
+    state.scanCoverResultsRefresh = {scanGeneration, state.backfillDbGeneration};
     std::shared_ptr<std::atomic<bool>> scanCancelToken = state.getActiveScanCancelToken();
     bool precomputeWaveforms = cacheWaveforms;
     const std::string waveformFolderScope =
@@ -3853,7 +3863,7 @@ struct MagicEqQaPointer {
 static MagicEqQaPointer s_magicEqQaPointer;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
-extern std::string SetupDockGestureFixtureForQa(AppState&);
+extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
 extern bool ResolveDockQaPointerPoint(const std::string&, const std::string&, float&, float&, unsigned int&);
 static bool s_dockQaPointerOwned = false;
 static int s_dockQaEscapePhase = 0;
@@ -4890,6 +4900,16 @@ static void PollQaCommandFile(AppState& state) {
             for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
             auto texts=nlohmann::json::array();
             for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
+            auto glyphSources=[](ImFont* font) {
+                auto names=nlohmann::json::array();
+                if(!font) return names;
+                auto* baked=font->GetFontBaked(font->LegacySize);
+                for(ImWchar c : {ImWchar(0x5E38), ImWchar('A'), ImWchar('0'), ImWchar(0x2192), ImWchar(0x3042)}) {
+                    const auto* glyph=baked->FindGlyphNoFallback(c);
+                    names.push_back(glyph ? font->Sources[glyph->SourceIdx]->Name : "");
+                }
+                return names;
+            };
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
                 {"preview_save_result",su::previewSaveResult},
@@ -4898,6 +4918,10 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"ui_glyph_sources",glyphSources(GetUIFontRegular())},
+                {"list_glyph_sources",glyphSources(GetUIListFont())},
+                {"list_mono_glyph_sources",glyphSources(GetUIListMono())},
+                {"waveform_timecode_glyph_sources",glyphSources(GetUIWaveformTimecodeFont())},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"list_mono_font_pixels",[]{ImGui::PushFont(GetUIListMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
@@ -5112,7 +5136,7 @@ static void PollQaCommandFile(AppState& state) {
             } else if (action == "open") {
                 if (module == "settings") state.showSettingsDialog = true;
                 else if (module == "library") state.showDbManagerDialog = true;
-                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "batch-rename") state.openBatchEdit();
                 else if (module == "naming") state.showNamingDialog = true;
                 else if (module == "theme-editor") state.showThemeEditor = true;
                 else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
@@ -5145,6 +5169,9 @@ static void PollQaCommandFile(AppState& state) {
             } else if (module == "transfer") {
                 panel = &state.panelTransfer;
                 show = &state.showTransferDialog;
+            } else if (module == "batch-edit") {
+                panel = &state.panelBatchEdit;
+                show = &state.panelBatchEdit.visible;
             }
             const std::string action = getStr(raw, "action");
             if (!panel || !show) {
@@ -5181,7 +5208,7 @@ static void PollQaCommandFile(AppState& state) {
 #else
         result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
-    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup") {
+    } else if (cmd == "dock_state" || cmd == "dock_pointer" || cmd == "dock_setup" || cmd == "dock_viewport") {
 #if ARIS_PREVIEW_ISOLATION
         if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire) ||
             (!state.currentDbPathUtf8.empty() &&
@@ -5189,9 +5216,21 @@ static void PollQaCommandFile(AppState& state) {
             result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
         } else if (cmd == "dock_state") {
             result = GetDockQaState();
+        } else if (cmd == "dock_viewport") {
+            const int width = getInt(raw, "width", 0);
+            const int height = getInt(raw, "height", 0);
+            if (s_magicEqQaPointer.active || width < 400 || width > 2400 || height < 400 || height > 1600) {
+                result = R"({"ok":false,"error":"invalid_dock_viewport_size"})";
+            } else if (SetWindowPos(g_hwnd, nullptr, 0, 0, width, height,
+                           SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER)) {
+                result = R"({"ok":true})";
+            } else {
+                result = R"({"ok":false,"error":"dock_viewport_resize_failed"})";
+            }
         } else if (cmd == "dock_setup") {
             result = s_magicEqQaPointer.active
-                ? R"({"ok":false,"error":"qa_pointer_active"})" : SetupDockGestureFixtureForQa(state);
+                ? R"({"ok":false,"error":"qa_pointer_active"})"
+                : SetupDockGestureFixtureForQa(state, getStr(raw, "resize_module"), getStr(raw, "resize_mode"));
         } else {
             const std::string phase = getStr(raw, "phase");
             float x = s_magicEqQaPointer.x;
@@ -5396,6 +5435,90 @@ static void PollQaCommandFile(AppState& state) {
         }
 #else
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+#endif
+
+    } else if (cmd == "batch_rule_edit") {
+#if ARIS_PREVIEW_ISOLATION
+        const nlohmann::json payload = nlohmann::json::parse(raw, nullptr, false);
+        if (!payload.is_object()) {
+            result = R"({"ok":false,"cmd":"batch_rule_edit","error":"invalid_payload"})";
+        } else {
+            const std::string action = payload.value("action", std::string());
+            auto previewJson = [&](const char* verb, bool applied) {
+                const auto& preview = state.batchRuleEditPreview;
+                nlohmann::json rows = nlohmann::json::array();
+                for (const auto& row : preview.rows) {
+                    rows.push_back({{"id", row.id}, {"file", row.fileName}, {"old", row.oldValue},
+                                    {"new", row.newValue}, {"changed", row.changed},
+                                    {"blocked", row.blockedEmpty}, {"error", row.error}});
+                }
+                return nlohmann::json({{"ok", true}, {"cmd", "batch_rule_edit"}, {"action", verb},
+                    {"applied", applied},
+                    {"column", aura::metadata::RuleEditColumnName(preview.column)},
+                    {"rows", rows}, {"change_count", preview.changeCount},
+                    {"unchanged_count", preview.unchangedCount},
+                    {"blocked_count", preview.blockedCount}, {"error_count", preview.errorCount},
+                    {"can_apply", preview.CanApply()}, {"stale", state.batchRuleEditStale},
+                    {"failed", state.batchRuleEditFailed},
+                    {"message", state.batchRuleEditMessage}}).dump();
+            };
+            if (action == "open") {
+                state.batchEditTarget = payload.value("target", 1);
+                state.batchRuleEditRules.clear();
+                if (payload.contains("rules") && payload["rules"].is_array()) {
+                    for (const auto& item : payload["rules"]) {
+                        aura::metadata::RuleEditRule rule;
+                        rule.mode = static_cast<aura::metadata::RuleEditMode>(item.value("mode", 0));
+                        rule.value = item.value("value", std::string());
+                        rule.replacement = item.value("replacement", std::string());
+                        rule.separator = item.value("separator", std::string());
+                        rule.enabled = item.value("enabled", true);
+                        state.batchRuleEditRules.push_back(rule);
+                    }
+                }
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                state.openBatchEdit();
+                result = previewJson("open", false);
+            } else if (action == "preview") {
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                result = previewJson("preview", false);
+            } else if (action == "apply") {
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                result = previewJson("apply", applied);
+            } else if (action == "race") {
+                // Preview, then let another writer change the same column, then
+                // apply: proves the guarded write refuses the stale batch.
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                bool changedOutside = false;
+                if (!state.batchRuleEditPreview.rows.empty()) {
+                    const std::string column =
+                        aura::metadata::RuleEditColumnName(state.batchRuleEditPreview.column);
+                    std::vector<int64_t> ids;
+                    for (const auto& row : state.batchRuleEditPreview.rows) ids.push_back(row.id);
+                    MetadataEditPatch outsidePatch;
+                    outsidePatch.set(column, std::string("outside race"));
+                    changedOutside = state.database.applyMetadataPatchBatch(ids, outsidePatch).success > 0;
+                }
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                nlohmann::json reply = nlohmann::json::parse(previewJson("race", applied), nullptr, false);
+                reply["changed_outside"] = changedOutside;
+                result = reply.dump();
+            } else if (action == "clear") {
+                state.batchRuleEditRules.clear();
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                result = previewJson("clear", false);
+            } else {
+                result = previewJson("state", false);
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
 
     } else if (cmd == "capture_preview_frame") {
@@ -6381,10 +6504,17 @@ static void PollQaCommandFile(AppState& state) {
     } else if (cmd == "search_enter_key") {
 #if ARIS_PREVIEW_ISOLATION
         const std::string phase = getStr(raw, "phase");
+        const std::string keyName = getStr(raw, "key");
+        const ImGuiKey key = keyName.empty() || keyName == "Enter" ? ImGuiKey_Enter :
+                             keyName == "Down" ? ImGuiKey_DownArrow :
+                             keyName == "Up" ? ImGuiKey_UpArrow : ImGuiKey_None;
         if (!MagicEqQaIsolationReady()) {
             result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+        } else if (key == ImGuiKey_None ||
+                   (key != ImGuiKey_Enter && GetHarkenSearchHarnessLaneKindUtf8() != "folder-search")) {
+            result = R"({"ok":false,"error":"unsupported_search_key"})";
         } else if (phase == "down" || phase == "up") {
-            ImGui::GetIO().AddKeyEvent(ImGuiKey_Enter, phase == "down");
+            ImGui::GetIO().AddKeyEvent(key, phase == "down");
             result = "{\"ok\":true,\"cmd\":\"search_enter_key\"}";
         } else {
             result = "{\"ok\":false,\"error\":\"invalid phase\"}";
@@ -6858,7 +6988,7 @@ static void PollQaCommandFile(AppState& state) {
                 int skippedCount = 0;
                 int failedCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = rows.size() > 1 ? "Batch edit metadata" : "Edit metadata";
+                undoOp->editKind = rows.size() > 1 ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
 
                 const bool useTxn = rows.size() > 1;
                 bool txnStarted = !useTxn || state.database.beginTransaction();
@@ -7004,6 +7134,7 @@ static void PollQaCommandFile(AppState& state) {
             const auto action = getStr(raw, "action");
             bool ok = action.empty() || action == "state";
             if (action == "clock") ok = harken::theme_schedule::SetQaClock(getInt(raw, "minute", -2));
+            if (action == "reveal_color") ok = ThemeEditorQaRevealColor(getStr(raw, "key"));
             if (action == "pointer") {
                 const auto phase = getStr(raw, "phase");
                 const float x = static_cast<float>(getDouble(raw, "x", -1));
@@ -8788,6 +8919,7 @@ void ApplyShowManagerGlobalHotkey(const AppSettings& settings) {
 static ImFont* g_uiFontRegular = nullptr;
 static ImFont* g_uiFontEmphasis = nullptr;
 static ImFont* g_uiFontMono = nullptr;
+static ImFont* g_uiWaveformTimecodeFont = nullptr;
 static ImFont* g_uiMeterFont = nullptr;  // F-018: 10px ASCII-only, for narrow meter bars
 
 // Reading group: built at the user's readingFontSize. Returned by the GetUIFont*()
@@ -8820,7 +8952,45 @@ static ImFont* AddFontFromCandidates(ImGuiIO& io,
     return nullptr;
 }
 
-void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
+struct BundledUiFont {
+    const char* filename;
+    const ImWchar* exclusions;
+    std::vector<char> bytes;
+    bool loaded = false;
+
+    ImFont* Add(ImFontAtlas* atlas, float pixels, const ImFontConfig& base, bool merge) {
+        if (!loaded) {
+            loaded = true;
+            const auto path = std::filesystem::u8path(GetExeDirUtf8()) / "assets" / "fonts" / filename;
+            std::ifstream file(path, std::ios::binary);
+            if (file) bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        if (bytes.empty()) return nullptr;
+        ImFontConfig config = base;
+        config.MergeMode = merge;
+        config.GlyphExcludeRanges = exclusions;
+        config.FontDataOwnedByAtlas = false;
+        std::snprintf(config.Name, sizeof(config.Name), "%s", filename);
+        return atlas->AddFontFromMemoryTTF(bytes.data(), static_cast<int>(bytes.size()), pixels, &config);
+    }
+};
+
+static void LoadUiFonts(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize,
+                        const UiFontFamilies& families) {
+    static const ImWchar chineseExclusions[] = {
+        0x0001, 0x2E7F, 0x3040, 0x30FF, 0x3130, 0x319F, 0x31C0, 0x33FF,
+        0xA000, 0xF8FF, 0xFB00, 0xFE0F, 0xFE20, 0xFE2F, 0xFE50, 0xFF00,
+        0xFF61, IM_UNICODE_CODEPOINT_MAX, 0,
+    };
+    static const ImWchar englishExclusions[] = {
+        0x0001, 0x0040, 0x005B, 0x0060, 0x007B, 0x00BF, 0x00D7, 0x00D7,
+        0x00F7, 0x00F7, 0x0250, 0x02FF, 0x0370, 0x1DFF, 0x1F00, IM_UNICODE_CODEPOINT_MAX, 0,
+    };
+    static const ImWchar numeralExclusions[] = {0x0001, 0x002F, 0x003A, IM_UNICODE_CODEPOINT_MAX, 0};
+    static BundledUiFont chinese{"SourceHanSansSC-Regular.otf", chineseExclusions};
+    static BundledUiFont english{"Inter.ttf", englishExclusions};
+    static BundledUiFont numerals{"JetBrainsMono-Regular.ttf", numeralExclusions};
+
     const char* uiRegularLatinBase[] = {
         "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Segoe UI Variable (Win11, closer to WebUI style)
         "C:\\Windows\\Fonts\\segoeui.ttf",   // Segoe UI fallback
@@ -8875,158 +9045,76 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
         0,
     };
 
-    // Base Latin/UI glyphs first (Segoe-like modern look), then merge Chinese glyphs
-    // to reduce CJK/Latin mismatch while keeping Chinese coverage complete.
-    // Build a {regular, emphasis, mono} triplet at a given pixel size. Reuses the
-    // candidate arrays declared above. Lucide icons are merged into the regular
-    // face so icon buttons resolve glyphs at this size.
-    auto buildTriplet = [&](float px,
-                            ImFont** outRegular,
-                            ImFont** outEmphasis,
-                            ImFont** outMono) {
-        // Regular: Latin base + CJK merge.
-        *outRegular = AddFontFromCandidates(
-            io, uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            px, uiConfig, kExtendedLatinRanges);
-        if (!*outRegular) {
-            *outRegular = AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, uiConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outRegular) *outRegular = io.Fonts->AddFontDefault();
-        } else {
-            ImFontConfig mergeCjk = uiConfig;
-            mergeCjk.MergeMode = true;
-            mergeCjk.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
+    auto preferred = [&](float pixels, const ImFontConfig& config) {
+        ImFont* font = nullptr;
+        if (families.numerals)
+            font = numerals.Add(io.Fonts, pixels, config, false);
+        if (families.english) {
+            if (auto* added = english.Add(io.Fonts, pixels, config, font != nullptr))
+                font = added;
         }
-        // Merge Lucide icons into THIS regular face at THIS size.
-        aura::ui::MergeLucideFont(io.Fonts, px);
-
-        // Emphasis: semibold Latin base + CJK merge.
-        ImFontConfig emphasisConfig = uiConfig;
-        *outEmphasis = AddFontFromCandidates(
-            io, uiEmphasisLatinBase,
-            (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-            px, emphasisConfig, kExtendedLatinRanges);
-        if (!*outEmphasis) {
-            *outEmphasis = AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, emphasisConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outEmphasis) *outEmphasis = *outRegular;
-        } else {
-            ImFontConfig mergeCjkEmphasis = emphasisConfig;
-            mergeCjkEmphasis.MergeMode = true;
-            mergeCjkEmphasis.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
+        if (families.chinese) {
+            if (auto* added = chinese.Add(io.Fonts, pixels, config, font != nullptr))
+                font = added;
         }
-
-        // Mono: +1px optical compensation.
-        ImFontConfig monoConfig;
-        monoConfig.MergeMode = false;
-        monoConfig.OversampleH = 2;
-        monoConfig.OversampleV = 1;
-        monoConfig.PixelSnapH = true;
-        *outMono = AddFontFromCandidates(
-            io, monoPaths,
-            (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-            px + 1.0f, monoConfig, kExtendedLatinRanges);
-        if (!*outMono) *outMono = *outRegular;
+        return font;
     };
 
-    buildTriplet(chromePixelSize, &g_uiFontRegular, &g_uiFontEmphasis, &g_uiFontMono);
-    buildTriplet(readingPixelSize, &g_readingRegular, &g_readingEmphasis, &g_readingMono);
+    auto buildText = [&](float pixels, const auto& latinPaths, const auto& cjkPaths) {
+        ImFont* font = preferred(pixels, uiConfig);
+        ImFontConfig latin = uiConfig;
+        latin.MergeMode = font != nullptr;
+        if (auto* added = AddFontFromCandidates(io, latinPaths, static_cast<int>(std::size(latinPaths)),
+                                                pixels, latin, kExtendedLatinRanges))
+            font = added;
 
-    // Dedicated list font (independent from system font size).
-    float listPx = listPixelSize;
-    ImFontConfig listConfig = uiConfig;
-    listConfig.MergeMode = false;
-    g_uiListFont = AddFontFromCandidates(
-        io,
-        uiRegularLatinBase,
-        (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-        listPx,
-        listConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListFont) {
-        g_uiListFont = AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            listConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkList = listConfig;
-        mergeCjkList.MergeMode = true;
-        mergeCjkList.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            mergeCjkList,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
+        ImFontConfig cjk = uiConfig;
+        cjk.MergeMode = font != nullptr;
+        if (cjk.MergeMode) cjk.RasterizerMultiply = 1.08f;
+        if (auto* added = AddFontFromCandidates(io, cjkPaths, static_cast<int>(std::size(cjkPaths)),
+                                                pixels, cjk, io.Fonts->GetGlyphRangesChineseFull()))
+            font = added;
+        return font;
+    };
+
+    auto buildMono = [&](float pixels, bool useFamilies) {
+        ImFontConfig config;
+        config.OversampleH = 2;
+        config.OversampleV = 1;
+        config.PixelSnapH = true;
+        ImFont* font = useFamilies ? preferred(pixels, config) : nullptr;
+        config.MergeMode = font != nullptr;
+        if (auto* added = AddFontFromCandidates(io, monoPaths, static_cast<int>(std::size(monoPaths)),
+                                                pixels, config, kExtendedLatinRanges))
+            font = added;
+        return font;
+    };
+
+    auto buildTriplet = [&](float pixels, ImFont*& regular, ImFont*& emphasis, ImFont*& mono) {
+        regular = buildText(pixels, uiRegularLatinBase, uiRegularCjkMerge);
+        if (!regular) regular = io.Fonts->AddFontDefault();
+        aura::ui::MergeLucideFont(io.Fonts, pixels);
+        emphasis = buildText(pixels, uiEmphasisLatinBase, uiEmphasisCjkMerge);
+        if (!emphasis) emphasis = regular;
+        mono = buildMono(pixels + 1.0f, true);
+        if (!mono) mono = regular;
+    };
+
+    buildTriplet(chromePixelSize, g_uiFontRegular, g_uiFontEmphasis, g_uiFontMono);
+    buildTriplet(readingPixelSize, g_readingRegular, g_readingEmphasis, g_readingMono);
+
+    g_uiListFont = buildText(listPixelSize, uiRegularLatinBase, uiRegularCjkMerge);
     if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
-
-    // Results-table header face at the list size: column titles must follow
-    // listFontSize together with the row text instead of staying at chrome size.
-    ImFontConfig listEmphasisConfig = uiConfig;
-    listEmphasisConfig.MergeMode = false;
-    g_uiListEmphasis = AddFontFromCandidates(
-        io,
-        uiEmphasisLatinBase,
-        (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-        listPx,
-        listEmphasisConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListEmphasis) {
-        g_uiListEmphasis = AddFontFromCandidates(
-            io,
-            uiEmphasisCjkMerge,
-            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-            listPx,
-            listEmphasisConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkListEmphasis = listEmphasisConfig;
-        mergeCjkListEmphasis.MergeMode = true;
-        mergeCjkListEmphasis.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiEmphasisCjkMerge,
-            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-            listPx,
-            mergeCjkListEmphasis,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
+    g_uiListEmphasis = buildText(listPixelSize, uiEmphasisLatinBase, uiEmphasisCjkMerge);
     if (!g_uiListEmphasis) g_uiListEmphasis = g_uiListFont;
-
-    // List mono: numeric cells (duration, size, sample rate, channels, BPM,
-    // key, date) share the list size, with the same +1px optical compensation
-    // the chrome/reading mono faces use.
-    ImFontConfig listMonoConfig;
-    listMonoConfig.MergeMode = false;
-    listMonoConfig.OversampleH = 2;
-    listMonoConfig.OversampleV = 1;
-    listMonoConfig.PixelSnapH = true;
-    g_uiListMono = AddFontFromCandidates(
-        io,
-        monoPaths,
-        (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-        listPx + 1.0f,
-        listMonoConfig,
-        kExtendedLatinRanges);
+    g_uiListMono = buildMono(listPixelSize + 1.0f, true);
     if (!g_uiListMono) g_uiListMono = g_uiListFont;
+
+    g_uiWaveformTimecodeFont = g_uiFontMono;
+    if (families.chinese || families.english || families.numerals) {
+        g_uiWaveformTimecodeFont = buildMono(chromePixelSize + 1.0f, false);
+        if (!g_uiWaveformTimecodeFont) g_uiWaveformTimecodeFont = io.Fonts->AddFontDefault();
+    }
 
     // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
     // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
@@ -9053,6 +9141,10 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
     io.FontDefault = g_uiFontRegular;
 }
 
+void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
+    LoadUiFonts(io, chromePixelSize, readingPixelSize, listPixelSize, {});
+}
+
 ImFont* GetUIFontRegular() {
     if (g_inReadingScope && g_readingRegular) return g_readingRegular;
     return g_uiFontRegular;
@@ -9071,6 +9163,10 @@ ImFont* GetUIFontMono() {
 ImFont* GetUIListFont() {
     // Reading-sized fallback (not chrome) so the list keeps reading metrics.
     return g_uiListFont ? g_uiListFont : g_readingRegular;
+}
+
+ImFont* GetUIWaveformTimecodeFont() {
+    return g_uiWaveformTimecodeFont ? g_uiWaveformTimecodeFont : GetUIFontMono();
 }
 
 ImFont* GetUIListEmphasis() {
@@ -9139,10 +9235,11 @@ MenuTextScope::~MenuTextScope() {
 
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
-static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
+static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx,
+                                      const UiFontFamilies& families) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
-    LoadChineseFont(io, chromePx, readingPx, listPx);
+    LoadUiFonts(io, chromePx, readingPx, listPx, families);
     io.Fonts->Build();
     // Recreate GPU resources (OpenGL backend). Fonts texture is part of device objects.
     ImGui_ImplOpenGL3_DestroyDeviceObjects();
@@ -9268,6 +9365,7 @@ static float MainWindowUiDpiScale() {
 static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static float s_lastRebuiltReadingPx = -1.0f;
     static float s_lastRebuiltListPx    = -1.0f;
+    static UiFontFamilies s_lastFontFamilies;
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
     static float s_lastDpiScale = 0.0f;
@@ -9299,11 +9397,14 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
-                                 (s_lastRebuiltListPx    != (float)requestedList);
+                                 (s_lastRebuiltListPx    != (float)requestedList) ||
+                                 !(s_lastFontFamilies == state.settings.uiFontFamilies);
     if (needFontRebuild) {
-        RebuildImGuiFontsForSizePx((float)kChromeFontPx, (float)requestedReading, (float)requestedList);
+        RebuildImGuiFontsForSizePx((float)kChromeFontPx, (float)requestedReading, (float)requestedList,
+                                   state.settings.uiFontFamilies);
         s_lastRebuiltReadingPx = (float)requestedReading;
         s_lastRebuiltListPx    = (float)requestedList;
+        s_lastFontFamilies = state.settings.uiFontFamilies;
     }
 
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
@@ -9552,6 +9653,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
                             else if (!metadata.comment.empty()) record.keywords = metadata.comment;
                             PopulateExtendedMeta(record.meta, metadata);
+                            if (metadata.customTextTagsRead) {
+                                record.id3TextTags = std::move(metadata.customTextTags);
+                                record.id3TextTagsRead = true;
+                            }
                         }
 
                         g_appState->database.probeAudioFileInfo(filePath,
@@ -10426,7 +10531,11 @@ static void AppendStartupAvatarCss(std::wstring& html) {
 static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const StartupThemeAccents themeAccents = ResolveStartupThemeAccents(settings);
     const ThemeColorScheme& startupTheme = ThemeColors::current();
-    const bool useLightStartupChrome = ThemeColors::isLightChromeTheme(startupTheme);
+    const ImVec4 welcomeBackground = kWelcomeBackgroundColor.Resolve(startupTheme);
+    const ImVec4 welcomeText = kWelcomeTextColor.Resolve(startupTheme);
+    const ImVec4 welcomeAccent = kWelcomeAccentColor.Resolve(startupTheme);
+    const bool useLightStartupChrome = DeriveWelcomeText(startupTheme).x == 0.0f;
+    const ImVec4 cardShade = ImVec4(1.0f - welcomeText.x, 1.0f - welcomeText.y, 1.0f - welcomeText.z, 1.0f);
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -10444,14 +10553,14 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring themePrimaryRgb = BuildCssRgbTriplet(startupTheme.waveformColor);
     const std::wstring themeSecondaryRgb = BuildCssRgbTriplet(startupTheme.waveformSecondaryColor);
     const std::wstring themedParticleChance = std::to_wstring(themeAccents.themedParticleChance);
-    const std::wstring tokenMainBg = BuildCssRgba(startupTheme.mainWindowBG, 1.0f);
+    const std::wstring tokenMainBg = BuildCssRgba(welcomeBackground, 1.0f);
     const std::wstring tokenCardBg = BuildCssRgba(startupTheme.dialogBG, 0.58f);
     const std::wstring tokenBorder = BuildCssRgba(startupTheme.chromeBorder, 0.34f);
     const std::wstring tokenBorderSoft = BuildCssRgba(startupTheme.waveformPanelBorder, 0.22f);
-    const std::wstring tokenText = BuildCssRgba(startupTheme.interfaceText, 0.96f);
-    const std::wstring tokenTextMuted = BuildCssRgba(startupTheme.resultsSecondaryText, 0.72f);
-    const std::wstring tokenWave = BuildCssRgba(startupTheme.waveformColor, 1.0f);
-    const std::wstring tokenWaveSoft = BuildCssRgba(startupTheme.waveformSecondaryColor, 1.0f);
+    const std::wstring tokenText = BuildCssRgba(welcomeText, 1.0f);
+    const std::wstring tokenTextMuted = tokenText;
+    const std::wstring tokenWave = BuildCssRgba(welcomeAccent, 1.0f);
+    const std::wstring tokenWaveSoft = BuildCssRgba(welcomeAccent, 0.65f);
     const std::wstring tokenCardShadow = BuildCssRgba(
         useLightStartupChrome
             ? mixColor(startupTheme.chromeBorder, startupTheme.mainWindowBG, 0.34f)
@@ -10465,20 +10574,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
     const std::wstring tokenCardSheen = BuildCssRgba(
         mixColor(startupTheme.interfaceText, startupTheme.dialogBG, 0.76f),
         useLightStartupChrome ? 0.10f : 0.04f);
-    const std::wstring tokenStatusText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.24f)
-                : mixColor(startupTheme.interfaceText, startupTheme.resultsSecondaryText, 0.52f)),
-        useLightStartupChrome ? 0.88f : 0.78f);
-    const std::wstring tokenDetailText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.20f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.28f)
-                : mixColor(startupTheme.resultsSecondaryText, startupTheme.chromeBorder, 0.18f)),
-        useLightStartupChrome ? 0.78f : 0.48f);
+    const std::wstring tokenStatusText = tokenText;
+    const std::wstring tokenDetailText = tokenText;
     const std::wstring tokenProgressTrack = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.chromeBorder, startupTheme.controlAccent, 0.18f)
@@ -10486,13 +10583,7 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.chromeBorder, startupTheme.controlAccent, 0.30f)
                 : mixColor(startupTheme.chromeBorder, startupTheme.dialogPanelBG, 0.20f)),
         useLightStartupChrome ? 0.40f : 0.22f);
-    const std::wstring tokenProgressCore = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.56f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.68f)
-                : mixColor(startupTheme.controlAccent, startupTheme.interfaceText, useLightStartupChrome ? 0.18f : 0.34f)),
-        useLightStartupChrome ? 0.94f : 0.66f);
+    const std::wstring tokenProgressCore = tokenWave;
     const std::wstring tokenCanvasWash = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.18f)
@@ -10500,24 +10591,8 @@ static std::wstring BuildFlashUiLoadingHtml(const AppSettings& settings) {
                 ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.22f)
                 : mixColor(startupTheme.mainWindowBG, startupTheme.dialogBG, 0.38f)),
         useLightStartupChrome ? 0.12f : 0.16f);
-    const std::wstring tokenCardTop = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.26f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.22f)
-                    : mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.14f)))
-            : mixColor(startupTheme.dialogBG, startupTheme.interfaceText, 0.05f),
-        1.0f);
-    const std::wstring tokenCardBottom = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.24f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.mainWindowBG, startupTheme.resultsSecondaryText, 0.18f)
-                    : mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.12f)))
-            : mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.04f),
-        1.0f);
+    const std::wstring tokenCardTop = tokenMainBg;
+    const std::wstring tokenCardBottom = BuildCssRgba(mixColor(welcomeBackground, cardShade, 0.06f), 1.0f);
     const std::wstring tokenBackdropCore = BuildCssRgba(
         useLightStartupChrome
             ? (isRoseCedarStartup
@@ -11957,7 +12032,11 @@ static void DisableWebShortcutsForStartupUi(ICoreWebView2Controller* controller,
 static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const std::string& userNameUtf8) {
     const StartupThemeAccents themeAccents = ResolveStartupThemeAccents(settings);
     const ThemeColorScheme& startupTheme = ThemeColors::current();
-    const bool useLightStartupChrome = ThemeColors::isLightChromeTheme(startupTheme);
+    const ImVec4 welcomeBackground = kWelcomeBackgroundColor.Resolve(startupTheme);
+    const ImVec4 welcomeText = kWelcomeTextColor.Resolve(startupTheme);
+    const ImVec4 welcomeAccent = kWelcomeAccentColor.Resolve(startupTheme);
+    const bool useLightStartupChrome = DeriveWelcomeText(startupTheme).x == 0.0f;
+    const ImVec4 cardShade = ImVec4(1.0f - welcomeText.x, 1.0f - welcomeText.y, 1.0f - welcomeText.z, 1.0f);
     auto mixColor = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
         return ImVec4(
             a.x + (b.x - a.x) * t,
@@ -11973,16 +12052,14 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
     const std::wstring themeChrome = BuildJsRgbaPrefix(startupTheme.chromeBorder);
     const std::wstring themeTextGlow = BuildJsRgbaPrefix(startupTheme.interfaceText);
     const std::wstring themedParticleChance = std::to_wstring(themeAccents.themedParticleChance);
-    const std::wstring tokenMainBg = BuildCssRgba(startupTheme.mainWindowBG, 1.0f);
+    const std::wstring tokenMainBg = BuildCssRgba(welcomeBackground, 1.0f);
     const std::wstring tokenAirBg = BuildCssRgba(startupTheme.resultsBG, 0.56f);
     const std::wstring tokenCardBg = BuildCssRgba(startupTheme.dialogBG, 0.62f);
     const std::wstring tokenBorder = BuildCssRgba(startupTheme.waveformPanelBorder, 0.26f);
-    const std::wstring tokenText = BuildCssRgba(startupTheme.interfaceText, 0.97f);
+    const std::wstring tokenText = BuildCssRgba(welcomeText, 1.0f);
     const std::wstring tokenMuted = BuildCssRgba(startupTheme.resultsSecondaryText, 0.74f);
-    const std::wstring tokenControl = BuildCssRgba(startupTheme.controlAccent, 1.0f);
-    const std::wstring tokenNameText = BuildCssRgba(
-        mixColor(startupTheme.interfaceText, startupTheme.controlAccent, useLightStartupChrome ? 0.24f : 0.38f),
-        useLightStartupChrome ? 0.92f : 0.82f);
+    const std::wstring tokenControl = BuildCssRgba(welcomeAccent, 1.0f);
+    const std::wstring tokenNameText = tokenText;
     const std::wstring tokenNameGlow = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.60f)
@@ -12005,24 +12082,8 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
                 ? mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.22f)
                 : mixColor(startupTheme.mainWindowBG, startupTheme.dialogBG, 0.38f)),
         useLightStartupChrome ? 0.12f : 0.16f);
-    const std::wstring tokenCardTop = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.28f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.20f)
-                    : mixColor(startupTheme.dialogBG, startupTheme.controlAccent, 0.15f)))
-            : mixColor(startupTheme.dialogBG, startupTheme.interfaceText, 0.05f),
-        1.0f);
-    const std::wstring tokenCardBottom = BuildCssRgba(
-        useLightStartupChrome
-            ? (isRoseCedarStartup
-                ? mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.26f)
-                : (isJadeMistStartup
-                    ? mixColor(startupTheme.mainWindowBG, startupTheme.resultsSecondaryText, 0.20f)
-                    : mixColor(startupTheme.mainWindowBG, startupTheme.toolbarAccent, 0.13f)))
-            : mixColor(startupTheme.mainWindowBG, startupTheme.controlAccent, 0.04f),
-        1.0f);
+    const std::wstring tokenCardTop = tokenMainBg;
+    const std::wstring tokenCardBottom = BuildCssRgba(mixColor(welcomeBackground, cardShade, 0.06f), 1.0f);
     const std::wstring tokenBackdropCore = BuildCssRgba(
         useLightStartupChrome
             ? (isRoseCedarStartup
@@ -12055,20 +12116,8 @@ static std::wstring BuildFlashUiWelcomeHtml(const AppSettings& settings, const s
                     : mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.18f)))
             : startupTheme.interfaceText,
         0.96f);
-    const std::wstring tokenLeadText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.22f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.interfaceText, startupTheme.controlAccent, 0.28f)
-                : mixColor(startupTheme.interfaceText, startupTheme.controlAccent, useLightStartupChrome ? 0.10f : 0.02f)),
-        useLightStartupChrome ? 0.94f : 0.90f);
-    const std::wstring tokenStatusText = BuildCssRgba(
-        isRoseCedarStartup
-            ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.22f)
-            : (isJadeMistStartup
-                ? mixColor(startupTheme.resultsSecondaryText, startupTheme.controlAccent, 0.32f)
-                : mixColor(startupTheme.resultsSecondaryText, startupTheme.interfaceText, 0.24f)),
-        useLightStartupChrome ? 0.90f : 0.76f);
+    const std::wstring tokenLeadText = tokenText;
+    const std::wstring tokenStatusText = tokenText;
     const std::wstring tokenCardBloomA = BuildCssRgba(
         isRoseCedarStartup
             ? mixColor(startupTheme.controlAccent, startupTheme.waveformColor, 0.62f)
@@ -13252,6 +13301,19 @@ static int RunHarkenSearchDemoCli(bool integrityFailed) {
 #endif
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    // The installer runs this windowless entry as the original (non-elevated)
+    // user right after an upgrade: an elevated setup process cannot be trusted
+    // to reach Explorer, and the pin must already be correct before the new
+    // version is started for the first time. Handled before the integrity check
+    // so the refresh takes milliseconds, not the hashing time of the whole EXE.
+    for (std::uint32_t argumentIndex = 1; argumentIndex <= 8; ++argumentIndex) {
+        const auto argument = Platform::ReadProcessArgument(argumentIndex);
+        if (argument.status != Platform::ProcessArgumentStatus::Success) break;
+        if (argument.value != L"--refresh-pinned-taskbar-icons") continue;
+        (void)Platform::RefreshPinnedTaskbarIcons();
+        return 0;
+    }
+
     Platform::HarkenUserData::ApplyPreviewIsolationProcessEnvironment();
     // Capture the one-shot bootstrap challenge before UI startup. The health
     // acknowledgement remains tied to the first presented main UI frame.
@@ -13437,6 +13499,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     if (wc.hIconSm) {
         SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(wc.hIconSm));
     }
+
+    // A taskbar pin is a per-user shortcut copy; Explorer can keep the icon
+    // bitmap it cached for it across an in-place upgrade. Ask Explorer to
+    // re-read only the pins that still use this executable's default icon, off
+    // the startup path so a slow or unresponsive shell never delays the UI.
+    // Preview and QA builds must not touch the real user's taskbar, so the
+    // automatic refresh stays out of isolated builds; the explicit installer
+    // entry above still works when it is invoked on purpose.
+#if !ARIS_PREVIEW_ISOLATION
+    std::thread([] { (void)Platform::RefreshPinnedTaskbarIcons(); }).detach();
+#endif
 
     // Setup OpenGL
     HDC hdc;
@@ -13679,10 +13752,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         }
     }
 
-    ApplyTheme(state.settings.theme);
-    if (state.settings.useCustomColors) {
-        ApplyCustomColors(state.settings);
-    }
+    ApplyThemeAndScaleForSettings(state, 1.0f);
     harken::theme_schedule::Tick(state, true);
     HarkenSearchSplash::ConfigureThemePalette(state.settings);
     ApplyShowManagerGlobalHotkey(state.settings);
@@ -13837,6 +13907,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
                 state.backfillQueue.onDbOpened(dbPathUtf8, ++state.backfillDbGeneration);
                 PushRecentDbPath(state, dbPathUtf8);
                 CoverModule::SetDatabase(&state.database);
+                aura::cover_cache::BindPersistence(state.database);
                 CoverModule::SetAppState(&state);  // 设置 AppState 指针，用于访问性能模式设置
                 state.database.setSettings(&state.settings);  // 设置性能模式访问器
                 state.musicQueue.init(state.database.db());
@@ -14151,10 +14222,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     });
 
     // 主题在进入主界面前再应用一次，确保 WebView 启动门面退场后样式已稳定。
-    ApplyTheme(state.settings.theme);
-    if (state.settings.useCustomColors) {
-        ApplyCustomColors(state.settings);
-    }
+    ApplyThemeAndScaleForSettings(state, 1.0f);
     harken::theme_schedule::Tick(state, true);
     s_mainUiReady.store(true, std::memory_order_release);
     DIAG_SYSTEM("App", "MainUIReady");
@@ -14495,6 +14563,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         PumpFolderSubtreeRemoval(state);
         PumpDatabaseSwitchIfPending(state);
         PumpInitRandomSamplingPoolIfPending(state);
+        const double watcherNow = ImGui::GetTime();
+        if (!s_isIngestMode && !state.dbSwitchInProgress && !state.isScanning.load() &&
+            watcherNow - state.lastWatcherRefreshTime >= 1.0) {
+            state.lastWatcherRefreshTime = watcherNow;
+            state.database.refreshFileSystemWatcher();
+        }
 
         // Complete pending audio loads before dependent UI updates.
         if (state.audioEngine.pumpLoadFileIfPending()) {
@@ -14680,18 +14754,21 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         const bool postProcessCoverRefresh =
             state.database.consumePostProcessCoverRefresh();
         const bool backfillCoverRefresh =
-            aura::ConsumeCoverBackfillUiRefresh();
+            aura::ConsumeCoverBackfillUiRefresh(state.backfillDbGeneration);
         if (postProcessCoverRefresh) {
             state.invalidateCoverWallAfterDatabaseContentChange();
             MarkScanReadyToWorkCoversSatisfiedForQa(state);
         }
-        if (backfillCoverRefresh) {
-            state.requestCoverWallBackfillDisplayRefresh();
+        if (backfillCoverRefresh && !state.dbSwitchInProgress) {
+            if (state.scanCoverResultsRefresh.scanGeneration == 0) {
+                state.requestCoverWallBackfillDisplayRefresh();
+            }
             MarkScanReadyToWorkCoversSatisfiedForQa(state);
         }
         PumpScanReadyToWorkFirstScreenCoversForQa(state);
         RefreshScanReadyToWorkStateForQa(state);
         RefreshScanCompletionStateForQa(state);
+        PumpScanCoverResultsRefresh(state, backfillCoverRefresh);
         DevTools_EndFramePhase();
 
         state.visibleFilePaths.clear();
@@ -15502,6 +15579,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
         g_coverTaskThread.join();
     }
     logShutdownStage("CoverTaskThreadJoinEnd");
+    CoverModule::ShutdownCoverWallPrecache();
 
     logShutdownStage("RelinkWorkflowShutdownBegin");
     aura::ui::ShutdownRelinkWorkflow(state);
@@ -15532,12 +15610,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     state.folderRemoval.Wait();
     state.database.close();
     logShutdownStage("DatabaseCloseEnd");
+    aura::cover_cache::FlushPersistence();
     logShutdownStage("AudioEngineShutdownBegin");
     state.audioEngine.shutdown();
     logShutdownStage("AudioEngineShutdownEnd");
 
     logShutdownStage("CoverCacheShutdownBegin");
-    CoverModule::ShutdownCoverWallPrecache();
     CoverModule::ClearAllCoverCaches();
     logShutdownStage("CoverCacheShutdownEnd");
 

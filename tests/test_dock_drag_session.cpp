@@ -2,8 +2,157 @@
 #include "ui/dock/DockPanelStateBridge.h"
 #include <cstdio>
 
+namespace {
+using namespace aura::ui::dock;
+
+DockRect EdgeProbe(const DockRect& rect, DockSide side) {
+    float pointerX = rect.x + rect.width * .5f;
+    float pointerY = rect.y + rect.height * .5f;
+    if (side == DockSide::Left) pointerX = rect.x + 6.0f;
+    if (side == DockSide::Right) pointerX = rect.x + rect.width - 6.0f;
+    if (side == DockSide::Top) pointerY = rect.y + 6.0f;
+    if (side == DockSide::Bottom) pointerY = rect.y + rect.height - 6.0f;
+    return {pointerX - .5f, pointerY - .5f, 1, 1};
+}
+
+bool CheckDrop(bool passed, const char* module, DockSide side,
+               const char* assertion, float actual = 0, float expected = 0) {
+    if (!passed) std::fprintf(stderr, "%s side=%d: %s; actual=%.2f expected=%.2f\n",
+        module, static_cast<int>(side), assertion, actual, expected);
+    return passed;
+}
+
+bool CheckFunctionDockPlacement() {
+    const char* modules[] = {"filter", "info", "similar-sounds", "mod-ucs-browser",
+                             "mod-tag-browser", "mod-workflow", "mod-transfer"};
+    const DockRect work{40, 20, 1960, 1260};
+    constexpr float centerFloor = 520.0f;
+    constexpr float columnTop = 100.0f;
+    constexpr float columnHeight = 1040.0f;
+    int cases = 0;
+    int failures = 0;
+    for (const char* incoming : modules) {
+        for (const bool panelEdge : {false, true}) {
+            for (const auto side : {DockSide::Left, DockSide::Right, DockSide::Top, DockSide::Bottom}) {
+                if (!panelEdge && side == DockSide::Top) continue;
+                ++cases;
+                DockLayout layout;
+                const char* target = std::string_view(incoming) == "filter" ? "info" : "filter";
+                const char* other = std::string_view(incoming) == "mod-transfer"
+                    ? "mod-ucs-browser" : "mod-transfer";
+                const auto otherSide = !panelEdge && side == DockSide::Right ? DockSide::Left : DockSide::Right;
+                layout.InsertModule(other, otherSide, .5f);
+                if (panelEdge) layout.InsertModule(target, DockSide::Left, .5f);
+                layout.EnsureFloat(incoming);
+                const bool horizontal = side == DockSide::Left || side == DockSide::Right;
+                const float leftWidth = panelEdge ? (horizontal ? 340.0f : 600.0f)
+                    : otherSide == DockSide::Left ? 500.0f : 460.0f;
+                const float rightWidth = otherSide == DockSide::Right ? 500.0f : 460.0f;
+                const float leftReserve = layout.RegionRoot(DockSide::Left) ? leftWidth + 12.0f : 0.0f;
+                const float rightReserve = layout.RegionRoot(DockSide::Right) ? rightWidth + 12.0f : 0.0f;
+                const float centerX = work.x + leftReserve;
+                const float centerWidth = work.width - leftReserve - rightReserve;
+                DockRootSlots slots{
+                    {work.x, columnTop, leftWidth, columnHeight},
+                    {work.x + work.width - rightWidth, columnTop, rightWidth, columnHeight},
+                    {centerX, columnTop, centerWidth, 220},
+                    {centerX, columnTop + columnHeight - 220, centerWidth, 220}};
+                const auto frame = BuildDockFrameGeometry(layout, work, 80, 0, slots);
+                const DockCenterDropTarget center{{centerX, columnTop + 60, centerWidth, columnHeight - 120},
+                    DockSide::Top, true, 220, 220};
+                const DockRect targetRect = panelEdge ? slots.left : DockSlotForSide(slots, side);
+                const DockHit hit = HitDockTarget(EdgeProbe(targetRect, side), work, kDockSnapDistance,
+                    frame.modules, frame.moduleCount, &frame.rootSlots, &layout, &center);
+                const auto expectedKind = panelEdge ? DockHitKind::Module : DockHitKind::Main;
+                if (!CheckDrop(hit.kind == expectedKind && hit.side == side &&
+                        (!panelEdge || hit.targetModuleId == target), incoming, side,
+                        panelEdge ? "panel edge must resolve to its leaf" : "workspace wall must resolve to its root",
+                        static_cast<float>(hit.kind), static_cast<float>(expectedKind))) {
+                    ++failures;
+                    continue;
+                }
+                const auto plan = PlanReadableDockDrop(layout, hit, incoming, work, 80, 0,
+                    frame.rootSlots, 1, centerFloor);
+                if (!CheckDrop(plan.accepted && !plan.tooSmall, incoming, side,
+                        "a readable drop fits without taking the other column", plan.rootRect.width,
+                        DockModuleMinimum(incoming).width)) {
+                    ++failures;
+                    continue;
+                }
+                const auto preview = PlanDockPreview(plan);
+                DockDragSession session(layout);
+                session.BeginDrag(incoming);
+                session.UpdatePreview(plan.hit);
+                session.CommitOnMouseUp(plan);
+                DockRect landed{}, otherRect{}, remainingTarget{};
+                const bool found = FindCommittedDockModuleRect(layout, incoming, work, 80, 0, plan.slots, landed);
+                const bool same = CheckDrop(found && preview.stripCount == 1 &&
+                    SameDockRect(preview.strips[0].rect, landed, 1.0f), incoming, side,
+                    "one blue preview must equal the committed leaf", landed.width, plan.hit.resultRect.width);
+                const bool unchanged = CheckDrop(FindCommittedDockModuleRect(
+                    layout, other, work, 80, 0, plan.slots, otherRect) &&
+                    SameDockRect(otherRect, DockSlotForSide(slots, otherSide), 1.0f), incoming, side,
+                    "an unrelated column must retain its rectangle", otherRect.width, 500.0f);
+                const bool targetKeepsWidth = !panelEdge || CheckDrop(FindCommittedDockModuleRect(
+                    layout, target, work, 80, 0, plan.slots, remainingTarget) &&
+                    std::fabs(remainingTarget.width - leftWidth) <= 1.0f, incoming, side,
+                    "the target panel must keep its width on insertion", remainingTarget.width, leftWidth);
+                if (!same || !unchanged || !targetKeepsWidth) ++failures;
+            }
+        }
+    }
+
+    DockLayout nested;
+    nested.InsertModule("filter", DockSide::Left, .5f);
+    nested.InsertAdjacent("filter", "info", DockSide::Right, .5f);
+    nested.InsertModule("mod-tag-browser", DockSide::Right, .5f);
+    nested.EnsureFloat("mod-workflow");
+    const DockRect nestedWork{0, 0, 2060, 1260};
+    const DockRootSlots nestedSlots{{0, 100, 600, 1040}, {1710, 100, 350, 1040},
+                                    {612, 100, 1086, 220}, {612, 920, 1086, 220}};
+    const auto nestedFrame = BuildDockFrameGeometry(nested, nestedWork, 100, 0, nestedSlots);
+    const DockHit nestedHit = HitDockTarget(EdgeProbe({300, 100, 300, 1040}, DockSide::Right),
+        nestedWork, kDockSnapDistance, nestedFrame.modules, nestedFrame.moduleCount, &nestedFrame.rootSlots, &nested);
+    const auto nestedPlan = PlanReadableDockDrop(nested, nestedHit, "mod-workflow", nestedWork, 100, 0,
+        nestedFrame.rootSlots, 1, centerFloor);
+    DockDragSession nestedSession(nested);
+    nestedSession.BeginDrag("mod-workflow");
+    nestedSession.UpdatePreview(nestedPlan.hit);
+    nestedSession.CommitOnMouseUp(nestedPlan);
+    DockRect sibling{}, landed{};
+    ++cases;
+    if (!CheckDrop(nestedPlan.accepted &&
+            FindCommittedDockModuleRect(nested, "filter", nestedWork, 100, 0, nestedPlan.slots, sibling) &&
+            FindCommittedDockModuleRect(nested, "mod-workflow", nestedWork, 100, 0, nestedPlan.slots, landed) &&
+            SameDockRect(landed, nestedPlan.hit.resultRect, 1.0f) && std::fabs(sibling.width - 300.0f) <= 1.0f,
+            "mod-workflow", DockSide::Right, "nested insertion must preserve its untouched sibling width",
+            sibling.width, 300.0f)) ++failures;
+
+    DockLayout cramped;
+    cramped.InsertModule("filter", DockSide::Left, .5f);
+    cramped.InsertModule("info", DockSide::Right, .5f);
+    cramped.EnsureFloat("mod-ucs-browser");
+    const auto crampedBefore = cramped;
+    const DockRect crampedWork{0, 0, 1840, 1260};
+    const DockRootSlots crampedSlots{{0, 100, 300, 1040}, {1120, 100, 720, 1040},
+                                     {312, 100, 796, 220}, {312, 920, 796, 220}};
+    const auto crampedFrame = BuildDockFrameGeometry(cramped, crampedWork, 100, 0, crampedSlots);
+    const DockHit crampedHit = HitDockTarget(EdgeProbe(crampedSlots.left, DockSide::Right),
+        crampedWork, kDockSnapDistance, crampedFrame.modules, crampedFrame.moduleCount, &crampedFrame.rootSlots, &cramped);
+    const auto crampedPlan = PlanReadableDockDrop(cramped, crampedHit, "mod-ucs-browser", crampedWork,
+        100, 0, crampedFrame.rootSlots, 1, centerFloor);
+    ++cases;
+    if (!CheckDrop(!crampedPlan.accepted && crampedPlan.tooSmall && cramped.Equals(crampedBefore),
+            "mod-ucs-browser", DockSide::Right, "no drop when only a different panel can pay for it",
+            crampedPlan.slots.right.width, 720.0f)) ++failures;
+    std::printf("Function panel placement: %d cases, %d failures\n", cases, failures);
+    return failures == 0;
+}
+}
+
 int main() {
     using namespace aura::ui::dock;
+    if (!CheckFunctionDockPlacement()) return 1;
     // Results live in the workspace, not in a fifth/narrow side leaf.
     {
         DockLayout layout;
@@ -485,8 +634,9 @@ int main() {
             DockDragSession session(layout);
             if (!session.BeginDrag(module)) return 311;
             session.UpdatePreview(plan.hit);
-            session.CommitOnMouseUp();
-            const auto landed = CommittedLeafRectForModule(layout, module, work, 80 * scale, 40 * scale, &slots, {});
+            session.CommitOnMouseUp(plan);
+            const auto landed = CommittedLeafRectForModule(
+                layout, module, work, 80 * scale, 40 * scale, &plan.slots, {});
             if (!SameDockRect(landed, plan.hit.resultRect, 0.01f)) return 312;
         }
     }
@@ -502,6 +652,47 @@ int main() {
         if (!plan.accepted || plan.tooSmall || plan.hit.kind != DockHitKind::Module ||
             plan.slots.left.width < 599.0f) return 313;
         if (!layout.Find("filter") || !layout.FindFloat("info")) return 314;
+    }
+    for (auto band : {DockSide::Top, DockSide::Bottom}) {
+        for (auto splitSide : {DockSide::Left, DockSide::Right}) {
+            DockLayout layout;
+            layout.InsertModule("similar-sounds", DockSide::Left, .24f);
+            layout.InsertModule("filter", band, .24f);
+            layout.InsertAdjacent("filter", "mod-transfer", DockSide::Right, .34f);
+            layout.EnsureFloat("info");
+            const DockRect work{0, 0, 2000, 1400};
+            DockRootSlots slots{};
+            slots.left = {0, 80, 440, 1280};
+            slots.top = {440, 80, 1560, 400};
+            slots.bottom = {440, 960, 1560, 400};
+            const auto anchor = CommittedLeafRectForModule(layout, "filter", work, 80, 40, &slots, {});
+            const auto transfer = CommittedLeafRectForModule(layout, "mod-transfer", work, 80, 40, &slots, {});
+            const auto similar = CommittedLeafRectForModule(layout, "similar-sounds", work, 80, 40, &slots, {});
+            DockHit hit;
+            hit.kind = DockHitKind::Module;
+            hit.side = splitSide;
+            hit.targetModuleId = "filter";
+            const auto plan = PlanReadableDockDrop(layout, hit, "info", work, 80, 40, slots);
+            if (!CheckDrop(plan.accepted && !plan.tooSmall && plan.hit.rootRegion == band,
+                           "info", splitSide, "fitting split inside a top or bottom band")) return 351;
+            const auto landed = CommittedLeafRectForModule(
+                *plan.candidate, "info", work, 80, 40, &plan.slots, {});
+            const auto resizedAnchor = CommittedLeafRectForModule(
+                *plan.candidate, "filter", work, 80, 40, &plan.slots, {});
+            if (!SameDockRect(landed, plan.hit.resultRect, .01f) ||
+                std::fabs(landed.width + resizedAnchor.width - anchor.width) > .01f ||
+                std::fabs(std::min(landed.x, resizedAnchor.x) - anchor.x) > .01f ||
+                (landed.x < resizedAnchor.x) != (splitSide == DockSide::Left)) return 352;
+            if (!SameDockRect(transfer, CommittedLeafRectForModule(
+                    *plan.candidate, "mod-transfer", work, 80, 40, &plan.slots, {}), .01f) ||
+                !SameDockRect(similar, CommittedLeafRectForModule(
+                    *plan.candidate, "similar-sounds", work, 80, 40, &plan.slots, {}), .01f)) return 353;
+            auto narrowSlots = slots;
+            narrowSlots.top.width = narrowSlots.bottom.width = 520;
+            const auto tooNarrow = PlanReadableDockDrop(
+                layout, hit, "info", {0, 0, 960, 1400}, 80, 40, narrowSlots);
+            if (tooNarrow.accepted || !tooNarrow.tooSmall) return 354;
+        }
     }
     // Empty side roots use their entire slot, expand only to the incoming
     // content floor, and do not steal the central results' readable space.
@@ -554,6 +745,116 @@ int main() {
         if (!DragAdjacentLeafGrip(layout, "info", "similar-sounds", 10000.0f, extent, 1)) return 322;
         if (std::fabs((1.0f - split->ratio) * extent - 220.0f) > .001f) return 324;
     }
+    for (float scale : {1.0f, 1.25f}) {
+        for (DockSide region : {DockSide::Left, DockSide::Right}) {
+            for (DockSide edge : {DockSide::Top, DockSide::Bottom}) {
+                DockLayout layout;
+                const bool right = region == DockSide::Right;
+                const char* target = right ? "info" : "filter";
+                const char* other = right ? "filter" : "info";
+                const char* incoming = "mod-ucs-browser";
+                layout.InsertModule(target, region, .24f);
+                layout.InsertModule(other, right ? DockSide::Left : DockSide::Right, .24f);
+                layout.EnsureFloat(incoming);
+                const DockRect work{0, 0, 1800 * scale, 1000 * scale};
+                DockRootSlots slots{};
+                slots.left = {0, 80 * scale, 300 * scale, 800 * scale};
+                slots.right = {1500 * scale, 80 * scale, 300 * scale, 800 * scale};
+                DockHit hit;
+                hit.kind = DockHitKind::Module;
+                hit.targetModuleId = target;
+                hit.side = edge;
+                const auto plan = PlanReadableDockDrop(
+                    layout, hit, incoming, work, 80 * scale, 40 * scale, slots, scale, 520 * scale);
+                if (!plan.accepted || plan.rootRect.width != 480 * scale) return 334;
+                const auto preview = PlanDockPreview(plan);
+                DockDragSession session(layout);
+                if (!session.BeginDrag(incoming)) return 335;
+                session.UpdatePreview(plan.hit);
+                session.CommitOnMouseUp(plan);
+                const auto existing = CommittedLeafRectForModule(
+                    layout, target, work, 80 * scale, 40 * scale, &plan.slots, {});
+                const auto landed = CommittedLeafRectForModule(
+                    layout, incoming, work, 80 * scale, 40 * scale, &plan.slots, {});
+                const auto unaffected = CommittedLeafRectForModule(
+                    layout, other, work, 80 * scale, 40 * scale, &plan.slots, {});
+                if (std::fabs(existing.width - 480 * scale) > .01f ||
+                    std::fabs(landed.width - existing.width) > .01f ||
+                    std::fabs(unaffected.width - 300 * scale) > .01f) return 336;
+                const float wall = right ? work.width : work.x;
+                if (std::fabs((right ? existing.x + existing.width : existing.x) - wall) > .01f ||
+                    std::fabs((right ? landed.x + landed.width : landed.x) - wall) > .01f) return 337;
+                if (preview.stripCount != 1 || !SameDockRect(preview.strips[0].rect, landed, .01f) ||
+                    (edge == DockSide::Top ? landed.y >= existing.y : landed.y <= existing.y)) return 338;
+            }
+        }
+    }
+    {
+        DockLayout layout;
+        layout.InsertModule("info", DockSide::Right, .24f);
+        layout.InsertAdjacent("info", "mod-tag-browser", DockSide::Bottom, .5f);
+        DockRect work{0, 0, 1920, 1080};
+        DockRootSlots slots{}; slots.right = {1600, 80, 320, 900};
+        DockHit hit;
+        hit.kind = DockHitKind::Module;
+        hit.targetModuleId = "info";
+        hit.side = DockSide::Right;
+        const auto plan = PlanReadableDockDrop(layout, hit, "filter", work, 80, 40, slots, 1, 520);
+        if (!plan.accepted || std::fabs(plan.rootRect.width - 600) > .01f) return 339;
+        const auto info = CommittedLeafRectForModule(
+            *plan.candidate, "info", work, 80, 40, &plan.slots, {});
+        const auto tags = CommittedLeafRectForModule(
+            *plan.candidate, "mod-tag-browser", work, 80, 40, &plan.slots, {});
+        if (std::fabs(info.width - 320) > .01f ||
+            !SameDockRect(tags, {1600, 530, 320, 450}, .01f) ||
+            !SameDockRect(plan.hit.resultRect, {1640, 80, 280, 450}, .01f)) return 340;
+    }
+    for (float scale : {1.0f, 1.25f}) {
+        for (DockSide side : {DockSide::Left, DockSide::Right}) {
+            DockLayout layout;
+            const bool right = side == DockSide::Right;
+            const char* inward = right ? "info" : "filter";
+            layout.InsertModule(inward, side, .24f);
+            layout.InsertAdjacent(inward, "mod-transfer", side, .6f);
+            float width = 800 * scale;
+            const float available = 920 * scale;
+            const auto unchangedTransfer = [&]() {
+                DockModuleTarget leaves[4]{};
+                const DockRect slot{right ? 2500 * scale - width : 0, 0, width, 700 * scale};
+                const int count = CollectLeafRects(layout.RegionRoot(side), slot, leaves, 4, 0, 0.0f, right);
+                for (int index = 0; index < count; ++index)
+                    if (leaves[index].id == "mod-transfer")
+                        return std::fabs(leaves[index].rect.width - 480 * scale) < .01f &&
+                            std::fabs(leaves[index].rect.x - (right ? 2020 * scale : 0)) < .01f;
+                return false;
+            };
+            if (!unchangedTransfer()) return 341;
+            if (!ResizeDockColumnFromCenter(layout, side, width, -80 * scale, 0, available, scale) ||
+                std::fabs(width - 720 * scale) > .01f || !unchangedTransfer()) return 342;
+            const float lower = (right ? 630 : 640) * scale;
+            if (!ResizeDockColumnFromCenter(layout, side, width, -400 * scale, 0, available, scale) ||
+                std::fabs(width - lower) > .01f || !unchangedTransfer()) return 343;
+            if (ResizeDockColumnFromCenter(layout, side, width, -20 * scale, 0, available, scale) ||
+                !ResizeDockColumnFromCenter(layout, side, width, 30 * scale, 0, available, scale) ||
+                std::fabs(width - lower - 30 * scale) > .01f || !unchangedTransfer()) return 344;
+            if (!ResizeDockColumnFromCenter(layout, side, width, 800 * scale, 0, available, scale) ||
+                std::fabs(width - available) > .01f || !unchangedTransfer()) return 345;
+        }
+    }
+    {
+        DockLayout layout;
+        layout.InsertModule("filter", DockSide::Left, .24f);
+        layout.InsertAdjacent("filter", "mod-ucs-browser", DockSide::Bottom, .5f);
+        layout.RegionAsSplit(DockSide::Left)->firstWidthShare = .625f;
+        float width = 480.0f;
+        if (ResizeDockColumnFromCenter(layout, DockSide::Left, width, -40.0f, 0, 800, 1)) return 346;
+        if (!ResizeDockColumnFromCenter(layout, DockSide::Left, width, 80.0f, 0, 800, 1)) return 347;
+        DockModuleTarget leaves[4]{};
+        const int count = CollectLeafRects(layout.RegionRoot(DockSide::Left), {0, 0, width, 600}, leaves, 4, 0);
+        if (count != 2 || leaves[0].id != "filter" || leaves[1].id != "mod-ucs-browser" ||
+            std::fabs(leaves[0].rect.width - 300) > .01f || std::fabs(leaves[1].rect.width - 560) > .01f)
+            return 348;
+    }
     {
         DockLayout layout;
         layout.InsertModule("filter", DockSide::Left, .24f);
@@ -564,6 +865,143 @@ int main() {
         if (std::fabs(split->ratio * extent - 190.0f) > .001f) return 326;
         if (!DragAdjacentLeafGrip(layout, "filter", "info", -30.0f, extent, 1)) return 327;
         if (std::fabs(split->ratio * extent - 160.0f) > .001f) return 328;
+    }
+    for (const auto incomingSide : {DockSide::Top, DockSide::Bottom}) {
+        DockLayout layout;
+        if (!layout.InsertModule("filter", DockSide::Left, .24f) ||
+            !layout.InsertAdjacent("filter", "info", DockSide::Right, .5f)) return 349;
+        const DockRect work{0, 0, 2560, 1000};
+        DockRootSlots slots;
+        slots.left = {0, 0, 600, 880};
+        DockHit drop;
+        drop.kind = DockHitKind::Module;
+        drop.side = incomingSide;
+        drop.targetModuleId = "filter";
+        const auto plan = PlanReadableDockDrop(layout, drop, "mod-transfer", work, 0, 0, slots, 1, 520);
+        if (!plan.accepted || !plan.candidate) return 359;
+        layout = *plan.candidate;
+        slots = plan.slots;
+
+        const auto sharedWidthsAre = [&](float stackWidth, float infoWidth, float stackHeight) {
+            DockRect filter{}, transfer{}, info{};
+            return FindCommittedDockModuleRect(layout, "filter", work, 0, 0, slots, filter) &&
+                FindCommittedDockModuleRect(layout, "mod-transfer", work, 0, 0, slots, transfer) &&
+                FindCommittedDockModuleRect(layout, "info", work, 0, 0, slots, info) &&
+                std::fabs(filter.width - stackWidth) < .01f &&
+                std::fabs(transfer.width - stackWidth) < .01f &&
+                std::fabs(info.width - infoWidth) < .01f &&
+                std::fabs(filter.x - transfer.x) < .01f &&
+                std::fabs(filter.x + filter.width - info.x) < .01f &&
+                std::fabs(filter.height + transfer.height - stackHeight) < .01f;
+        };
+        if (!CheckDrop(sharedWidthsAre(480, 300, 880), "mod-transfer", incomingSide,
+                       "stacked panes share one full column without changing Info width")) return 360;
+
+        auto* columnSplit = layout.RegionAsSplit(DockSide::Left);
+        if (!columnSplit || columnSplit->axis != Axis::Horizontal ||
+            columnSplit->first->Kind() != NodeKind::Split) return 350;
+        auto* stackSplit = static_cast<SplitNode*>(columnSplit->first.get());
+        const float originalWidthRatio = columnSplit->ratio;
+        const float originalHeightRatio = stackSplit->ratio;
+        const DockModuleTarget legacyColumn{"filter", slots.left};
+        const auto frame = BuildDockFrameGeometry(layout, work, 0, 0, slots, &legacyColumn, 1);
+        if (frame.gripCount != 2) return 351;
+        const AdjacentLeafGrip* heightGrip = nullptr;
+        const AdjacentLeafGrip* widthGrip = nullptr;
+        for (int index = 0; index < frame.gripCount; ++index) {
+            const auto& grip = frame.grips[index];
+            const auto* owner = FindSplitContainingLeaves(layout, grip.firstId, grip.secondId);
+            if (owner == stackSplit && grip.axis == Axis::Vertical) heightGrip = &grip;
+            if (owner == columnSplit && grip.axis == Axis::Horizontal) widthGrip = &grip;
+        }
+        if (!heightGrip || !widthGrip || !PlanDockColumnOuterGrip(frame, DockSide::Left).visible)
+            return 352;
+        if (std::fabs(widthGrip->rect.height - slots.left.height) > .01f)
+            return 357;
+        if (!widthGrip->indicatorAlong) return 358;
+        if (std::fabs(*widthGrip->indicatorAlong - (slots.left.y + slots.left.height * .5f)) > .01f)
+            return 353;
+
+        if (!DragAdjacentLeafGrip(layout, widthGrip->firstId, widthGrip->secondId, 24, slots.left.width, 1) ||
+            !sharedWidthsAre(504, 276, 880) || stackSplit->ratio != originalHeightRatio ||
+            !DragAdjacentLeafGrip(layout, widthGrip->firstId, widthGrip->secondId, -24, slots.left.width, 1) ||
+            !sharedWidthsAre(480, 300, 880)) return 354;
+        const float heightStep = incomingSide == DockSide::Top ? 24.0f : -24.0f;
+        if (!DragAdjacentLeafGrip(layout, heightGrip->firstId, heightGrip->secondId, heightStep, 880, 1) ||
+            (stackSplit->ratio - originalHeightRatio) * heightStep <= 0 ||
+            std::fabs(columnSplit->ratio - originalWidthRatio) > .001f ||
+            !DragAdjacentLeafGrip(layout, heightGrip->firstId, heightGrip->secondId, -heightStep, 880, 1) ||
+            std::fabs(stackSplit->ratio - originalHeightRatio) > .001f ||
+            !sharedWidthsAre(480, 300, 880)) return 355;
+    }
+    {
+        DockLayout layout;
+        layout.InsertModule("filter", DockSide::Left, .24f);
+        layout.InsertAdjacent("filter", "info", DockSide::Bottom, .5f);
+        layout.InsertAdjacent("filter", "mod-transfer", DockSide::Right, .5f);
+        layout.InsertAdjacent("info", "similar-sounds", DockSide::Right, .5f);
+        DockRootSlots slots;
+        slots.left = {0, 0, 984, 880};
+        const auto frame = BuildDockFrameGeometry(layout, {0, 0, 2560, 1000}, 0, 0, slots);
+        int widthGripCount = 0;
+        for (int index = 0; index < frame.gripCount; ++index)
+            if (frame.grips[index].axis == Axis::Horizontal) ++widthGripCount;
+        if (frame.gripCount != 3 || widthGripCount != 2) return 356;
+    }
+    for (float scale : {1.0f, 1.25f}) {
+        for (auto band : {DockSide::Top, DockSide::Bottom}) {
+            for (auto target : {DockSide::Left, DockSide::Right}) {
+                for (bool oppositeOccupied : {false, true}) {
+                    const bool targetLeft = target == DockSide::Left;
+                    const auto opposite = targetLeft ? DockSide::Right : DockSide::Left;
+                    const char* targetId = targetLeft ? "filter" : "info";
+                    const char* oppositeId = targetLeft ? "info" : "filter";
+                    const float splitterWidth = 4.0f * scale;
+                    const float targetWidth = 560.0f * scale;
+                    const float oppositeWidth = 360.0f * scale;
+                    const float leftWidth = targetLeft ? targetWidth : oppositeWidth;
+                    const float rightWidth = targetLeft ? oppositeWidth : targetWidth;
+                    const DockRect work{0.0f, 0.0f, 1920.0f * scale, 1280.0f * scale};
+                    const float toolbar = 80.0f * scale;
+                    const float status = 40.0f * scale;
+                    const float columnHeight = work.height - toolbar - status;
+                    const float bandWidth = work.width - targetWidth - splitterWidth -
+                        (oppositeOccupied ? oppositeWidth + splitterWidth : 0.0f);
+                    const float bandX = (targetLeft || oppositeOccupied) ? leftWidth + splitterWidth : 0.0f;
+                    const float bandHeight = 300.0f * scale;
+                    DockLayout layout;
+                    if (!layout.InsertModule(targetId, target, .25f) ||
+                        (oppositeOccupied && !layout.InsertModule(oppositeId, opposite, .25f)) ||
+                        !layout.InsertModule("mod-ucs-browser", band, .25f)) return 359;
+                    DockRootSlots slots{};
+                    slots.left = {0.0f, toolbar, leftWidth, columnHeight};
+                    slots.right = {work.width - rightWidth, toolbar, rightWidth, columnHeight};
+                    slots.top = {bandX, toolbar, bandWidth, bandHeight};
+                    slots.bottom = {bandX, work.height - status - bandHeight, bandWidth, bandHeight};
+                    slots.visibleSideGapPx = splitterWidth;
+                    const auto& targetSlot = DockSlotForSide(slots, target);
+                    const DockModuleTarget leaf{targetId, targetSlot};
+                    const auto hit = HitDockTarget(EdgeProbe(targetSlot, DockSide::Bottom),
+                        work, 40.0f * scale, &leaf, 1, &slots, &layout);
+                    if (!CheckDrop(hit.kind == DockHitKind::Module && hit.side == DockSide::Bottom,
+                                   "mod-transfer", target, "target inner bottom edge")) return 360;
+                    const auto plan = PlanReadableDockDrop(
+                        layout, hit, "mod-transfer", work, toolbar, status, slots, scale, 520.0f * scale);
+                    if (!CheckDrop(plan.accepted && !plan.tooSmall && plan.candidate,
+                                   "mod-transfer", target, "same-width drop with existing band",
+                                   plan.accepted ? 1.0f : 0.0f, 1.0f)) return 361;
+                    const auto& originalBand = band == DockSide::Top ? slots.top : slots.bottom;
+                    const auto& plannedBand = band == DockSide::Top ? plan.slots.top : plan.slots.bottom;
+                    if (!CheckDrop(SameDockRect(plannedBand, originalBand) &&
+                                   std::fabs(plan.hit.resultRect.width - targetWidth) < .01f,
+                                   "mod-transfer", target, "drop preserves the band and the column")) return 362;
+                    const auto tooTight = PlanReadableDockDrop(
+                        layout, hit, "mod-transfer", work, toolbar, status, slots, scale, bandWidth + scale);
+                    if (!CheckDrop(!tooTight.accepted && tooTight.tooSmall,
+                                   "mod-transfer", target, "minimum center width still enforced")) return 363;
+                }
+            }
+        }
     }
     if (!opened.opened) return 71;
     if (!opened.visible || !opened.floating) return 72;

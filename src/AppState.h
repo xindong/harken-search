@@ -53,6 +53,7 @@ typedef unsigned int GLuint;
 #include "AIEngine.h"
 #include "NamingScript.h"
 #include "BatchRenamePolicy.h"
+#include "BatchMetadataRuleEdit.h"
 #include "SendToTargetSurfaceModel.h"
 #include "ScanWorkflow.h"
 #include "ScanDialogPresentation.h"
@@ -790,6 +791,20 @@ struct SavedSearchEntry {
     bool pinned = false;
 };
 
+struct UiFontFamilies {
+    static constexpr const char* SourceHanSans = "source-han-sans-sc";
+    static constexpr const char* Inter = "inter";
+    static constexpr const char* JetBrainsMono = "jetbrains-mono";
+
+    bool chinese = false;
+    bool english = false;
+    bool numerals = false;
+
+    bool operator==(const UiFontFamilies& other) const {
+        return chinese == other.chinese && english == other.english && numerals == other.numerals;
+    }
+};
+
 // Application Settings
 
 struct AppSettings {
@@ -855,6 +870,7 @@ struct AppSettings {
     int fontSize = 13;
     int listFontSize = kDefaultListFontPx;
     int readingFontSize = kDefaultReadingFontPx;   // unified reading-surface font size (replaces listFontSize for reading)
+    UiFontFamilies uiFontFamilies;
     // Application-level interface scale (80-200). Multiplies the monitor DPI so the
     // whole UI can grow or shrink without changing Windows scaling.
     int uiScalePercent = 100;
@@ -1025,6 +1041,7 @@ struct AppSettings {
     int fpsLimit = 0;                 // 0=不限制, 30, 60, 120, 144
     int thumbnailMaxResolution = 512; // 封面缩略图精度：128, 256, 512
     int threadLimit = -1;             // 后台线程策略：0=自动, 1=单线程, -1=满载
+    int similarityAnalysisConcurrency = 4; // 相似分析/索引构建并发数 1-16，下次运行生效
 
     // --- Send to DAW ---
     std::vector<DawTarget> dawTargets;  // 数据层不限数量，UI/快捷键只暴露前 3 槽位
@@ -1350,6 +1367,7 @@ struct CoverWallState {
     bool globalPageHasMore = false;
     bool globalPageLoadingNext = false;
     std::string globalPageDbPath;
+    size_t scanBackfillReloadItemCount = 0;
 
     // Snapshot of the cover wall item the user clicked to activate the
     // specific-cover-key filter. Persisted here (instead of being looked up
@@ -1450,7 +1468,7 @@ struct CoverWallState {
         // global first-page preload remains valid for this database generation.
     }
 
-    void invalidateAfterDatabaseContentChange() {
+    void invalidateGlobalCoverData() {
         ++generation;
         loaded = false;
         loading = false;
@@ -1458,11 +1476,29 @@ struct CoverWallState {
         discoveryKnown.clear();
         discoveryDone = false;
         loadTotal = 0;
-        displaySnapshot.clear();
-        lastDisplaySnapshotCursor = 0;
         entriesRequestedCursor.clear();
         entriesRequestedAppend = false;
         entriesRequestBaseItemCount = 0;
+        preloadFullList.clear();
+        preloadFirstPage.clear();
+        preloadDbPath.clear();
+        preloadCursor = 0;
+        globalPageNextCursor.clear();
+        globalPageHasMore = false;
+        globalPageLoadingNext = false;
+        globalPageDbPath.clear();
+        scanBackfillReloadItemCount = 0;
+        globalItemsCache.clear();
+        globalItemsCacheValid = false;
+        globalItemsCacheDbPath.clear();
+        globalItemsCacheTotalFileCount = 0;
+        globalItemsCacheGeneration = 0;
+    }
+
+    void invalidateAfterDatabaseContentChange() {
+        invalidateGlobalCoverData();
+        displaySnapshot.clear();
+        lastDisplaySnapshotCursor = 0;
         qaDisplayCount = 0;
         qaPrefetchTileCount = 0;
         qaVisibleTileCount = 0;
@@ -1476,22 +1512,6 @@ struct CoverWallState {
         qaHiddenFailedItemCount = 0;
         qaHiddenPendingItemCount = 0;
         failedTexCache.clear();
-        preloadFullList.clear();
-        preloadFirstPage.clear();
-        preloadDbPath.clear();
-        preloadCursor = 0;
-        globalPageNextCursor.clear();
-        globalPageHasMore = false;
-        globalPageLoadingNext = false;
-        globalPageDbPath.clear();
-        entriesRequestedCursor.clear();
-        entriesRequestedAppend = false;
-        entriesRequestBaseItemCount = 0;
-        globalItemsCache.clear();
-        globalItemsCacheValid = false;
-        globalItemsCacheDbPath.clear();
-        globalItemsCacheTotalFileCount = 0;
-        globalItemsCacheGeneration = 0;
         lastTotalItems = -1;
         preRequestCursor = 0;
         lastPreRequestTotalItems = -1;
@@ -1538,6 +1558,7 @@ struct CoverWallState {
         globalPageHasMore = false;
         globalPageLoadingNext = false;
         globalPageDbPath.clear();
+        scanBackfillReloadItemCount = 0;
         globalItemsCache.clear();
         globalItemsCacheValid = false;
         globalItemsCacheDbPath.clear();
@@ -1946,6 +1967,12 @@ struct AppState {
     std::atomic<bool> scanCompletionPending{false};
     std::atomic<bool> scanCompletionWaveformsPending{false};
     std::atomic<bool> scanCompletionCoversPending{false};
+    struct ScanCoverResultsRefreshState {
+        uint64_t scanGeneration = 0;
+        int64_t dbGeneration = 0;
+        bool sawCoverWork = false;
+        std::chrono::steady_clock::time_point nextPoll{};
+    } scanCoverResultsRefresh;
     std::atomic<int> scanCompletionTotal{0};
     std::atomic<int> scanCompletionPendingFiles{0};
     std::atomic<int> scanCompletionMiniUnresolved{0};
@@ -2276,6 +2303,22 @@ struct AppState {
         needsCoverWallReload = true;
         // Keep the current wall stable during incremental backfill refreshes.
         coverWall.failedTexCache.clear();
+    }
+
+    void requestCoverWallScanBackfillRefresh() {
+        const std::string dbPath = database.getMainDbPath();
+        const size_t loadedItems =
+            coverWall.source == CoverWallSource::Global && coverWall.globalPageDbPath == dbPath
+                ? coverWall.items.size()
+                : 0;
+        coverWallDatabaseInvalidationRequested = true;
+        needsCoverWallReload = true;
+        preloadedCoverWallEntries.clear();
+        preloadedCoverWallFullyDiscovered = false;
+        coverWall.invalidateGlobalCoverData();
+        coverWall.failedTexCache.clear();
+        coverWall.scanBackfillReloadItemCount = loadedItems;
+        if (loadedItems > 0) coverWall.preloadDbPath = dbPath;
     }
 
 // Relink session state (F-034)
@@ -2842,6 +2885,17 @@ struct AppState {
         panel.floatH = 600.0f;
         return panel;
     }();
+    PanelState panelBatchEdit = [] {
+        PanelState panel;
+        panel.visible = false;
+        panel.floating = true;
+        panel.dockSide = DockSide::Right;
+        panel.dockedWidth = 560.0f;
+        panel.dockedHeight = 480.0f;
+        panel.floatW = 1040.0f;
+        panel.floatH = 700.0f;
+        return panel;
+    }();
     std::vector<ModulePanelInstanceState> modulePanels;
     ModulePanelLayoutState modulePanelLayout;
     
@@ -2975,8 +3029,37 @@ struct AppState {
     std::string browserMetaCacheDir;   // which directory the cache was built for
     
     // Batch rename dialog
-    bool showBatchRenameDialog = false;
-    int batchDialogTab = 0;
+    void openBatchEdit() {
+        if (!panelBatchEdit.visible) {
+            renamePreviewList.clear();
+            batchRuleEditPreview = {};
+            batchRuleEditStale = false;
+            batchRuleEditMessage.clear();
+        }
+        panelBatchEdit.visible = true;
+        if (const auto* group = dockTabGroups.Find("mod-batch-edit")) {
+            dockTabGroups.Select(group->id, "mod-batch-edit");
+        }
+        batchEditFocusRequested = true;
+    }
+    bool batchEditFocusRequested = false;
+    // Unified batch edit (REQ-20261126-UNIFIED-BATCH-EDIT)
+    int batchEditTarget = 0;           // 0 file name, 1 title, 2 description, 3 keywords, 4 category
+    int batchRuleEditModeIndex = 0;
+    int batchRuleEditSelectedIndex = -1;
+    char batchRuleEditSearch[256] = "";
+    char batchRuleEditReplace[256] = "";
+    char batchRuleEditSeparator[64] = "";
+    std::vector<aura::metadata::RuleEditRule> batchRuleEditRules;
+    aura::metadata::RuleEditPreview batchRuleEditPreview;
+    std::string batchRuleEditPreviewDbPath;
+    std::set<int> batchRuleEditPreviewSelection;
+    uint64_t batchRuleEditPreviewResultsGeneration = 0;
+    uint64_t batchRuleEditPreviewDataRevision = 0;
+    bool batchRuleEditPreviewAllSelected = false;
+    std::string batchRuleEditMessage;
+    bool batchRuleEditFailed = false;
+    bool batchRuleEditStale = false;
     
     // Batch metadata editing
     char batchMetaDescription[512] = "";
@@ -2992,6 +3075,7 @@ struct AppState {
     int renameDeleteToEndOccurrence = 0; // 0 = first match, 1 = last match
     int renameRuleSelectedIndex = -1;
     std::vector<RenamePreview> renamePreviewList;
+    std::string renamePreviewDbPath;
 
     // F-012: 重命名历史（最多保留 20 批次）
     std::deque<RenameHistoryBatch> renameHistory;

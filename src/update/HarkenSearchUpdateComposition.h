@@ -1,6 +1,9 @@
 #pragma once
 
+#include "update/UpdateApplicationService.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace aris::update {
@@ -15,6 +18,8 @@ enum class HarkenSearchUpdateUiPhase {
     Error,
 };
 
+enum class HarkenSearchUpdateCheckOrigin { None, Automatic, Manual };
+
 struct HarkenSearchUpdateUiState {
     HarkenSearchUpdateUiPhase phase = HarkenSearchUpdateUiPhase::Idle;
     std::string currentVersion;
@@ -25,7 +30,87 @@ struct HarkenSearchUpdateUiState {
     std::string lastError;
     std::string candidateReleaseNotes;
     bool candidateReleaseNotesFailed = false;
+    HarkenSearchUpdateCheckOrigin failedCheckOrigin = HarkenSearchUpdateCheckOrigin::None;
+
+    void ClearDownloadProgress() {
+        candidateVersion.clear();
+        downloadedBytes = 0;
+        totalBytes = 0;
+    }
+
+    void BeginCheckPresentation() {
+        phase = HarkenSearchUpdateUiPhase::Checking;
+        failedCheckOrigin = HarkenSearchUpdateCheckOrigin::None;
+        lastError.clear();
+        ClearDownloadProgress();
+        candidateReleaseNotes.clear();
+        candidateReleaseNotesFailed = false;
+    }
+
+    bool SuppressesDownloadNotice() const {
+        return phase == HarkenSearchUpdateUiPhase::Checking ||
+               failedCheckOrigin != HarkenSearchUpdateCheckOrigin::None;
+    }
 };
+
+inline void ApplyHarkenSearchUpdateSnapshot(
+    HarkenSearchUpdateUiState& state,
+    const UpdateSnapshot& snapshot,
+    std::optional<HarkenSearchUpdateCheckOrigin> newFailureOrigin = std::nullopt) {
+    state.checkInFlight = false;
+    if (snapshot.phase != UpdatePhase::Error) {
+        state.failedCheckOrigin = HarkenSearchUpdateCheckOrigin::None;
+    } else if (newFailureOrigin) {
+        state.failedCheckOrigin = *newFailureOrigin;
+    }
+    if (state.failedCheckOrigin != HarkenSearchUpdateCheckOrigin::None) {
+        state.ClearDownloadProgress();
+    } else {
+        state.downloadedBytes = snapshot.downloadedBytes;
+        if (const auto& candidate = snapshot.readyPatch ? snapshot.readyPatch : snapshot.candidate) {
+            state.candidateVersion = candidate->version;
+            state.totalBytes = candidate->assetSize;
+        }
+    }
+    switch (snapshot.phase) {
+        case UpdatePhase::Checking:
+            state.phase = HarkenSearchUpdateUiPhase::Checking;
+            break;
+        case UpdatePhase::Available:
+        case UpdatePhase::Downloading:
+            state.phase = HarkenSearchUpdateUiPhase::Downloading;
+            break;
+        case UpdatePhase::Ready:
+        case UpdatePhase::Superseding:
+            state.phase = HarkenSearchUpdateUiPhase::Ready;
+            break;
+        case UpdatePhase::Error:
+            state.phase = HarkenSearchUpdateUiPhase::Error;
+            state.lastError = snapshot.lastError;
+            break;
+        case UpdatePhase::Idle:
+            state.phase = HarkenSearchUpdateUiPhase::Idle;
+            break;
+    }
+}
+
+inline void ApplyHarkenSearchUpdateOperationResult(
+    HarkenSearchUpdateUiState& state,
+    const UpdateApplicationResult& result,
+    HarkenSearchUpdateCheckOrigin checkOrigin) {
+    if (result.checkFailed) {
+        state.phase = HarkenSearchUpdateUiPhase::Error;
+        state.checkInFlight = false;
+        state.failedCheckOrigin = checkOrigin;
+        state.lastError = result.detail;
+        state.ClearDownloadProgress();
+    } else if (result.disposition == UpdateApplicationDisposition::TerminalError) {
+        ApplyHarkenSearchUpdateSnapshot(state, result.snapshot,
+            HarkenSearchUpdateCheckOrigin::None);
+    } else {
+        ApplyHarkenSearchUpdateSnapshot(state, result.snapshot);
+    }
+}
 
 // What actually went wrong, derived from the raw failure detail.
 //

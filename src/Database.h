@@ -143,6 +143,8 @@ struct AudioRecord {
     //    Key = DB column name (e.g., "subcategory", "library", "designer", "composer")
     //    All extended professional-audio/BWF/iXML fields stored here; kept off hot path.
     std::unordered_map<std::string, std::string> meta;
+    std::unordered_map<std::string, std::string> id3TextTags;
+    bool id3TextTagsRead = false;
 
     // Convenience accessor for extended meta (returns empty string if missing)
     const std::string& getMeta(const std::string& key) const {
@@ -150,6 +152,12 @@ struct AudioRecord {
         auto it = meta.find(key);
         return it != meta.end() ? it->second : kEmpty;
     }
+};
+
+struct SearchMetadataFieldMatch {
+    std::string field;
+    std::string value;
+    bool custom = false;
 };
 
 // F-006 metadata patch: only fields present in the maps are updated.
@@ -561,6 +569,7 @@ public:
     // Initialize database.  Pass isPrimary=true for the single app-owned connection;
     // worker-thread local connections leave it false to skip one-time migrations.
     bool open(const std::string& dbPath, bool isPrimary = false);
+    bool openForCoverKeyCachePersistence(const std::string& dbPath);
     // 打开只读连接（WAL 模式下不阻塞写操作，用于 SearchWorker 等纯读场景）
     bool openReadOnly(const std::string& dbPath);
     void close();
@@ -618,6 +627,7 @@ public:
     bool clearBackfillPending(int64_t fileId, int kind);
     int  countBackfillPending();
     int  countBackfillPendingKind(int kind);
+    std::optional<bool> hasBackfillPendingKind(int kind);
     int  countBackfillPendingKindInFolder(int kind, const std::string& folderPathPrefix);
     bool hasBackfillPending(int64_t fileId, int kind);
     bool resetScanForegroundCompletionSession(int64_t scanSessionId);
@@ -659,6 +669,13 @@ public:
     /// 每条记录可使用不同 patch；按「更新字段掩码」分组，每组仅 prepare 一次再 bind/step
     BatchMetadataApplyResult applyMetadataPatchMany(
         const std::vector<std::pair<int64_t, MetadataEditPatch>>& items);
+    /// 单列原值复核后整批写入：每条 patch 只能含 expectedColumn 一个字段，
+    /// 且该记录当前值必须仍等于 expectedValues；任一不符则整批不写（独立事务）。
+    /// expectedColumn 必须是 EditableTextColumns() 中的列。
+    BatchMetadataApplyResult applyMetadataPatchManyGuarded(
+        const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+        const std::string& expectedColumn,
+        const std::unordered_map<int64_t, std::string>& expectedValues);
 
     bool removeFile(int64_t id);
     bool removeFileByPath(const std::string& filePath);
@@ -688,6 +705,8 @@ public:
 
     // Search and query
     std::vector<AudioRecord> searchFiles(const SearchFilter& filter, int limit = 1000, int offset = 0);
+    static std::vector<SearchMetadataFieldMatch> findOptionalMetadataMatches(
+        const AudioRecord& record, const std::string& query);
     int64_t searchFilesCount(const SearchFilter& filter);
     std::vector<AudioRecord> searchFilesRandom(const SearchFilter& filter, int limit = 500);
     std::vector<AudioRecord> getAllFiles(int limit = 10000, int offset = 0);
@@ -745,6 +764,18 @@ public:
     int countAudioCoverKeyCandidates();
     bool isCoverTileMembershipMaintenancePending();
     int repairCoverTileMembershipBatch(int batchSize);
+    // One-time FLAC/OGG backfill: returns >0 processed rows, 0 when idle
+    // without progress, -1 when it has completed or cannot run.
+    int refreshLegacyVorbisMetadataBatch(int batchSize);
+    // Fill-only write used by the backfill: a target column is written only
+    // while it is still empty, in the same statement, so a concurrent manual
+    // edit survives. Values left empty and a null tag pointer are not written.
+    bool fillLegacyVorbisColumns(int64_t fileId,
+                                 const std::string& composer,
+                                 const std::string& bpm,
+                                 const std::string& musicalKey,
+                                 const std::string& trackYear,
+                                 const std::unordered_map<std::string, std::string>* customTags);
     int64_t countAudioCoverPresenceCandidates();
     int countCoverRegistryEntries();
     int pruneOrphanCoverCaches();
@@ -1166,7 +1197,8 @@ public:
     bool isCoverWallOrderIndexReady() const;
     static bool flushCoverWallOrderIndexDirtyAtPath(const std::string& dbPath, int maxTiles = 4096);
     std::vector<CoverWallEntry> getGlobalCoverWallEntries();
-    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200);
+    std::vector<CoverFacetEntry> getCoverFacets(const SearchFilter& filter, int limit = 200,
+                                              bool allowCachedFacets = true);
     std::vector<PathFacetEntry> getPathFacets(const SearchFilter& filter, int limit = 200);
     bool persistCoverFacetCache(const SearchFilter& filter,
                                 int limit,
@@ -1189,7 +1221,7 @@ public:
     std::vector<std::string> getDistinctFolderPaths();
 
     /** 极速搜索联想词，基于 FTS5 Vocab 树状索引，百万级库 <1ms */
-    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit = 10);
+    std::vector<std::string> getSearchSuggestions(const std::string& query, int limit, int maxTermBytes);
 
     /** 设置 AppSettings 指针，用于访问性能模式设置 */
     void setSettings(struct AppSettings* settings);
@@ -1206,6 +1238,10 @@ public:
     bool rebuildFolderIndex();
     /** 删除/移动文件后调用，使 facet 总数与文件夹树数量下次从数据库重算 */
     bool invalidateFacetQueryCache();
+    void clearSearchCountMemoryCache() {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        m_countMemCache.clear();
+    }
     bool rebuildTagFacetIndex();
     bool invalidateTagFacetIndex();
     bool isTagFacetIndexValid() const;
@@ -1276,6 +1312,7 @@ public:
 
 // 文件系统监听（VFS监听）
     void startFileSystemWatcher(const std::vector<std::string>& watchDirectories);
+    void refreshFileSystemWatcher();
     void stopFileSystemWatcher();
     void handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified);
 
@@ -1416,6 +1453,11 @@ private:
     static bool startsWithPathPrefix(const std::string& pathNorm, const std::string& prefixNorm);
     void pruneFsDedupeLocked(uint64_t nowMs);
     bool shouldSuppressWatcherEvent(const FileSystemWatcher::FileEvent& event);
+    AudioRecord getWatcherFileByPath(const std::string& filePath);
+    bool upsertFile(const AudioRecord& record, bool refreshFolderCount);
+    void refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder = {});
+    void refreshWavPackCorrection(const std::string& correctionPath);
+    void notifyWatcherChange(WatcherChangeType type, const std::string& path);
 
     std::vector<std::string> getNetworkLibraryRoots() const;
     bool setFileTagsInTransaction(int64_t fileId, const std::vector<std::string>& tagNames);
@@ -1667,6 +1709,7 @@ public:
     std::atomic<uint64_t> m_dataRevision{1};
     std::string m_lastError;
     std::string m_mainDbPath;  // 主数据库路径（meta.db）
+    bool m_hasId3TextTags = false;
     bool m_isPrimaryConnection = false;  // true only for the single app-owned DB connection
     // True only for databases created fresh under the adaptive mini-waveform regime
     // (app_meta 'mini_waveform_density' == "adaptive"). Legacy DBs stay on the fixed
@@ -1682,13 +1725,17 @@ public:
     // Cleared by invalidateFacetQueryCache().
     struct CountMemCacheEntry { int64_t count; int64_t expirySec; };
     std::unordered_map<std::string, CountMemCacheEntry> m_countMemCache;
+    std::mutex m_searchCountCacheMutex;
     int64_t m_cachedFileCount = -1;
     uint64_t m_cachedFileCountRevision = 0;
     std::chrono::steady_clock::time_point m_cachedFileCountTime{};
     std::string m_blobsDbPath; // 封面数据库路径（blobs.db）
     std::string m_waveformsDbPath; // 波形数据库路径（waveforms.db）
 
-    FileSystemWatcher* m_fileSystemWatcher = nullptr;
+    std::unique_ptr<FileSystemWatcher> m_fileSystemWatcher;
+    std::vector<std::string> m_watcherLibraryRoots;
+    std::thread m_watcherRootRefreshThread;
+    std::atomic<bool> m_watcherRootsRefreshing{false};
     WatcherChangeCallback m_watcherChangeCallback;
 
     struct AppSettings* m_settings = nullptr;  // 指向 AppSettings 的指针，用于访问性能模式设置

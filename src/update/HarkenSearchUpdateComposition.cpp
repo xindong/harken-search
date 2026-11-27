@@ -21,6 +21,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -28,6 +29,8 @@
 
 namespace aris::update {
 namespace {
+
+using CheckOrigin = HarkenSearchUpdateCheckOrigin;
 
 std::mutex g_updateUiMutex;
 HarkenSearchUpdateUiState g_updateUiState{HarkenSearchUpdateUiPhase::Disabled, SOUNDMANAGER_VERSION_STRING, {}, 0, 0, false, {}};
@@ -52,44 +55,10 @@ HarkenSearchUpdateUiState SnapshotUiState() {
     return g_updateUiState;
 }
 
-void MergeSnapshot(const UpdateSnapshot& snapshot) {
+void MergeSnapshot(const UpdateSnapshot& snapshot,
+                   std::optional<CheckOrigin> newFailureOrigin = std::nullopt) {
     std::lock_guard<std::mutex> lock(g_updateUiMutex);
-    g_updateUiState.downloadedBytes = snapshot.downloadedBytes;
-    if (snapshot.candidate) {
-        g_updateUiState.candidateVersion = snapshot.candidate->version;
-        g_updateUiState.totalBytes = snapshot.candidate->assetSize;
-    }
-    if (snapshot.readyPatch) {
-        g_updateUiState.candidateVersion = snapshot.readyPatch->version;
-        g_updateUiState.totalBytes = snapshot.readyPatch->assetSize;
-    }
-    if (snapshot.phase == UpdatePhase::Error) {
-        g_updateUiState.lastError = snapshot.lastError;
-    }
-    switch (snapshot.phase) {
-        case UpdatePhase::Checking:
-            g_updateUiState.phase = HarkenSearchUpdateUiPhase::Checking;
-            break;
-        case UpdatePhase::Available:
-        case UpdatePhase::Downloading:
-            g_updateUiState.phase = HarkenSearchUpdateUiPhase::Downloading;
-            break;
-        case UpdatePhase::Ready:
-        case UpdatePhase::Superseding:
-            g_updateUiState.phase = HarkenSearchUpdateUiPhase::Ready;
-            break;
-        case UpdatePhase::Error:
-            g_updateUiState.phase = HarkenSearchUpdateUiPhase::Error;
-            break;
-        case UpdatePhase::Idle:
-            g_updateUiState.phase = HarkenSearchUpdateUiPhase::Idle;
-            break;
-    }
-}
-
-void SetCheckInFlight(bool value) {
-    std::lock_guard<std::mutex> lock(g_updateUiMutex);
-    g_updateUiState.checkInFlight = value;
+    ApplyHarkenSearchUpdateSnapshot(g_updateUiState, snapshot, newFailureOrigin);
 }
 
 bool ConsumeManualCheckRequest() {
@@ -276,13 +245,11 @@ void StartHarkenSearchAutomaticUpdate() {
                 }
             };
             enqueue(started);
-            const auto runOperation = [&](const UpdateApplicationScheduleIntent* scheduled) {
-                if (!scheduled || scheduled->kind() == UpdateApplicationScheduleKind::Check) {
+            const auto runOperation = [&](const UpdateApplicationScheduleIntent* scheduled,
+                                          CheckOrigin checkOrigin) {
+                if (checkOrigin != CheckOrigin::None) {
                     auto state = SnapshotUiState();
-                    state.phase = HarkenSearchUpdateUiPhase::Checking;
-                    state.lastError.clear();
-                    state.candidateReleaseNotes.clear();
-                    state.candidateReleaseNotesFailed = false;
+                    state.BeginCheckPresentation();
                     SetUiState(state);
                 }
                 const auto result = scheduled
@@ -304,16 +271,18 @@ void StartHarkenSearchAutomaticUpdate() {
                     withNotes.candidateReleaseNotesFailed = !read;
                     SetUiState(withNotes);
                 }
-                MergeSnapshot(result.snapshot);
-                SetCheckInFlight(false);
+                {
+                    std::lock_guard<std::mutex> lock(g_updateUiMutex);
+                    ApplyHarkenSearchUpdateOperationResult(g_updateUiState, result, checkOrigin);
+                }
                 enqueue(result);
             };
-            const auto runManualCheck = [&] {
+            const auto runImmediateCheck = [&](CheckOrigin origin) {
                 pending.erase(std::remove_if(pending.begin(), pending.end(),
                     [](const ScheduledWork& work) {
                         return work.intent.kind() == UpdateApplicationScheduleKind::Check;
                     }), pending.end());
-                runOperation(nullptr);
+                runOperation(nullptr, origin);
             };
             bool handoffFailed = false;
             bool retryHandoff = false;
@@ -336,7 +305,7 @@ void StartHarkenSearchAutomaticUpdate() {
                 return false;
             };
             if (started.snapshot.phase != UpdatePhase::Downloading && BeginScheduledWork()) {
-                runManualCheck();
+                runImmediateCheck(CheckOrigin::Automatic);
             }
             while (true) {
                 if (ConsumeRestartConfirmation()) {
@@ -346,7 +315,7 @@ void StartHarkenSearchAutomaticUpdate() {
                         if (runHandoff()) return;
                     } else {
                         handoffFailed = false;
-                        runManualCheck();
+                        runImmediateCheck(CheckOrigin::Manual);
                     }
                 } else if (!handoffFailed) {
                     const auto next = std::min_element(pending.begin(), pending.end(),
@@ -357,7 +326,8 @@ void StartHarkenSearchAutomaticUpdate() {
                         BeginScheduledWork()) {
                         const auto intent = next->intent;
                         pending.erase(next);
-                        runOperation(&intent);
+                        runOperation(&intent, intent.kind() == UpdateApplicationScheduleKind::Check
+                            ? CheckOrigin::Automatic : CheckOrigin::None);
                     }
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(250));

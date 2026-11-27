@@ -132,16 +132,12 @@ void DrawSidebarActivityBar(AppState& state) {
     if (window->SkipItems) return;
 
     const float sizeFactor = SidebarSizeFactor(state.settings.sidebarSize) * aura::ui::dpi::UiScale();
-    const float bar_width = 52.0f * sizeFactor;
+    const float bar_width = std::min(52.0f * sizeFactor, ImGui::GetContentRegionAvail().x);
     const float item_h    = 52.0f * sizeFactor;
     const float icon_size = 20.0f * sizeFactor;
 
     const ImVec2 pos = window->DC.CursorPos;
     ImDrawList* draw_list = ImGui::GetWindowDrawList();
-    const float footerBottomY = window->InnerRect.Max.y - window->WindowPadding.y;
-    const float menuY = std::max(window->InnerRect.Min.y + window->WindowPadding.y, footerBottomY - item_h);
-    const float menuHeight = footerBottomY - menuY;
-    if (menuHeight <= 0.0f) return;
 
     // Rail is chrome-less by design: no background fill, no right-edge divider.
     // The icons float directly on the outer LeftDockColumn gradient so the rail
@@ -153,6 +149,23 @@ void DrawSidebarActivityBar(AppState& state) {
 
     auto& ord = state.settings.sidebarSectionOrder;
     const int n = AppSettings::kSidebarSectionCount;
+    const auto visibleSectionFlag = [&](int sectionId) -> bool* {
+        if (sectionId < 0 || sectionId >= n) return nullptr;
+        bool* visible = GetSidebarSectionVisibleFlag(state, sectionId);
+        if (!visible || !*visible) return nullptr;
+        if (sectionId == 2 && !ProductEdition::hasFeature("metadata_filter")) return nullptr;
+        if (sectionId == 4 && !ProductEdition::hasFeature("tag_cloud")) return nullptr;
+        return visible;
+    };
+    int visibleSections = 0;
+    for (int index = 0; index < n; ++index)
+        if (visibleSectionFlag(ord[index])) ++visibleSections;
+    const float groupGap = 12.0f * sizeFactor;
+    const float sectionHeight = visibleSections * item_h + (visibleSections > 3 ? groupGap : 0.0f);
+    const float menuY = std::max(pos.y + sectionHeight,
+        window->InnerRect.Max.y - window->WindowPadding.y - item_h);
+    const float footerBottomY = menuY + item_h;
+    const float menuHeight = item_h;
 
     float cursorY = pos.y;
     int visibleCount = 0;  // Counts icons actually rendered, drives the 3+3 group divider.
@@ -160,24 +173,18 @@ void DrawSidebarActivityBar(AppState& state) {
         ImVec2(window->ClipRect.Max.x, std::max(window->ClipRect.Min.y, menuY)), true);
     for (int pos_idx = 0; pos_idx < n; ++pos_idx) {
         int sectionId = ord[pos_idx];
-        if (sectionId < 0 || sectionId >= n) continue;
-        bool* visiblePtr = GetSidebarSectionVisibleFlag(state, sectionId);
-        if (!visiblePtr || !*visiblePtr) continue; // hidden by user
-
-        // Feature-gated sections: hide icon when edition lacks feature.
-        if (sectionId == 2 && !ProductEdition::hasFeature("metadata_filter")) continue;
-        if (sectionId == 4 && !ProductEdition::hasFeature("tag_cloud")) continue;
+        bool* visiblePtr = visibleSectionFlag(sectionId);
+        if (!visiblePtr) continue;
 
         // Separate the navigation and data groups after the third visible icon.
         // A small divider preserves the rail hierarchy.
         if (visibleCount == 3) {
-            const float gap = 12.0f * sizeFactor;
-            const float lineY = cursorY + gap * 0.5f;
+            const float lineY = cursorY + groupGap * 0.5f;
             draw_list->AddLine(
                 ImVec2(pos.x + 14.0f * sizeFactor, lineY),
                 ImVec2(pos.x + bar_width - 14.0f * sizeFactor, lineY),
                 ImGui::GetColorU32(modules.sidebar.railDivider), 1.0f);
-            cursorY += gap;
+            cursorY += groupGap;
         }
         ++visibleCount;
 

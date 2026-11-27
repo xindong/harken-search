@@ -20,6 +20,9 @@ Harken Search public-release builds bundle, link, or intentionally reference the
 | REAPER Plug-in API header subset | `reaper_extension/reaper_plugin.h` | REAPER SDK zlib-style notice | Altered minimal ABI declarations used by the Harken Search REAPER extension; the source header retains the upstream notice and marks the alteration |
 | TweetNaCl verify-only subset | `src/ed25519/tweetnacl.c` + `.h` | Public domain | Ed25519 signature verification; Harken Search removed keypair generation and signing and retains the original author attribution |
 | Lucide icon font | `thirdparty/lucide/lucide.ttf` + generated `IconsLucide.h` | ISC | Shipped icon font used by the desktop UI |
+| Source Han Sans SC 2.005 | `assets/fonts/SourceHanSansSC-Regular.otf` | SIL OFL 1.1 | Optional Chinese UI font; see `LICENSES/SourceHanSans-OFL-1.1.txt` |
+| Inter 4.001 | `assets/fonts/Inter.ttf` | SIL OFL 1.1 | Optional English UI font; see `LICENSES/Inter-OFL-1.1.txt` |
+| JetBrains Mono 2.305 | `assets/fonts/JetBrainsMono-Regular.ttf` | SIL OFL 1.1 | Optional numeral UI font; see `LICENSES/JetBrainsMono-OFL-1.1.txt` |
 | Hugeicons folder outlines | https://api.iconify.design/hugeicons/folder-01.svg and https://api.iconify.design/hugeicons/folder-open.svg | MIT | Database tree only. The original 24-unit SVG centerlines are flattened into local draw paths (0.05-unit tolerance); the viewport and 1.5-unit stroke scale together. See `LICENSES/Hugeicons-MIT.txt`. |
 | DiceBear Lorelei Neutral avatar pool | `assets/avatars/dicebear/lorelei-neutral/*.svg` | DiceBear core MIT; generated style assets described below | Local avatar pool shipped beside `HarkenSearch.exe`; startup must not call the public DiceBear API |
 | Unicode Unihan kMandarin | generated `src/generated/mandarin_pinyin_table.inc` | Unicode Terms of Use | Mandarin syllable lookup for Chinese filename search; generated from Unicode 18.0.0, file date 2026-07-31, first listed reading only |

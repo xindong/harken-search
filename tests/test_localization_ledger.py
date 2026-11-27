@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -24,9 +25,56 @@ FROZEN_ZH = {
 
 
 class LocalizationLedgerContractTests(unittest.TestCase):
+    def test_workflow_nodes_and_help_follow_ui_language(self) -> None:
+        entries = {
+            entry["id"]: entry
+            for entry in json.loads(LEDGER_PATH.read_text(encoding="utf-8"))["entries"]
+        }
+        engine = (ROOT / "src" / "WorkflowEngine.cpp").read_text(encoding="utf-8")
+        module = (ROOT / "src" / "ModuleUI.cpp").read_text(encoding="utf-8")
+        supported_nodes = set(re.findall(
+            r'case WorkflowNodeType::(\w+):\s*return "[^"]+";',
+            engine.split("WorkflowEngine::getNodeTypeName(", 1)[1].split("\n}", 1)[0],
+        ))
+        labels = dict(re.findall(
+            r"case WorkflowNodeType::(\w+):\s*return L\((Wf_Node\w+Name)\);", module
+        ))
+        help_text = dict(re.findall(
+            r"case WorkflowNodeType::(\w+):\s*return L\((Wf_Node\w+Help)\);", module
+        ))
+        self.assertEqual(set(labels), supported_nodes)
+        self.assertEqual(set(help_text), {
+            "SetField", "CopyField", "FindAndReplace", "ChangeCase", "RemoveMultipleSpaces",
+            "TakeFirstWords", "TakeLastWords", "CopyFolderName", "Number", "ProcessIf", "Comment",
+        })
+        for key in [*labels.values(), *help_text.values(), "Wf_NodeUnknownName"]:
+            with self.subTest(key=key):
+                text = entries[key]
+                self.assertTrue(all(text.get(language, "").strip() for language in ("zh", "en", "ja")))
+                self.assertNotEqual(text["en"], text["zh"])
+                self.assertNotEqual(text["en"], text["ja"])
+        self.assertIn("GetWorkflowNodeName(nt)", module)
+        self.assertIn("GetWorkflowNodeName(node.type)", module)
+        self.assertIn("GetWorkflowNodeHelp(nt)", module)
+        self.assertNotIn("getNodeTypeNameZh", module)
+
     def test_ledger_and_generator_exist(self) -> None:
         self.assertTrue(GENERATOR_PATH.is_file(), "tools/generate_localization.py is required")
         self.assertTrue(LEDGER_PATH.is_file(), "locale/harken.ui.strings.json is the only copy ledger")
+
+    def test_transfer_and_export_use_the_same_localized_choices(self) -> None:
+        ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        entries = [entry for entry in ledger["entries"] if entry["id"].startswith("TransferOption_")]
+        self.assertEqual(len(entries), 26)
+        for entry in entries:
+            for language in ("zh", "en", "ja"):
+                with self.subTest(key=entry["id"], language=language):
+                    self.assertTrue(entry[language].strip())
+        for source_name in ("ModuleUI.cpp", "main.cpp"):
+            with self.subTest(source=source_name):
+                source = (ROOT / "src" / source_name).read_text(encoding="utf-8")
+                self.assertEqual(source.count("TransferOptionPreview("), 3)
+                self.assertEqual(source.count("TransferOptionLabel("), 3)
 
     def test_missing_key_fails(self) -> None:
         import generate_localization

@@ -1,4 +1,6 @@
 #include "Database.h"
+
+#include <functional>
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
 // Display sites (reverse map): getLastError -> main.cpp 10484 switchError /
 // 31884 newDbError, AsyncSearchRefreshCompletionStateAdapter, BackfillWorkerPool
@@ -29,6 +31,7 @@
 #include "Utils.h"     // Unicode search-data helpers.
 #include "PathUtils.h" // Canonical folder-path migration.
 #include "../thirdparty/sqlite/sqlite3.h"
+#include "../thirdparty/nlohmann_json.hpp"
 #define XXH_INLINE_ALL
 #include "../thirdparty/xxhash.h"
 
@@ -118,6 +121,31 @@ static std::string FormatDbError(const char* fmt, const char* detail) {
 #endif
 
 // Register the C++ text helpers used by SQLite search expressions.
+static std::unordered_map<std::string, std::string> DecodeId3TextTags(const char* encoded) {
+    std::unordered_map<std::string, std::string> tags;
+    if (!encoded || !encoded[0]) return tags;
+    const auto decoded = nlohmann::json::parse(encoded, nullptr, false);
+    if (!decoded.is_object()) return tags;
+    for (const auto& [name, value] : decoded.items()) {
+        if (value.is_string()) tags.emplace(name, value.get<std::string>());
+    }
+    return tags;
+}
+
+static void AppendId3TextValues(std::string& text,
+                                const std::unordered_map<std::string, std::string>& tags) {
+    std::vector<std::string_view> ordered;
+    ordered.reserve(tags.size());
+    for (const auto& [name, value] : tags) {
+        if (!value.empty()) ordered.push_back(value);
+    }
+    std::sort(ordered.begin(), ordered.end());
+    for (const auto value : ordered) {
+        text.push_back(' ');
+        text.append(value);
+    }
+}
+
 static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
     if (!db) return;
     sqlite3_create_function(db, "aura_search_data", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
@@ -134,6 +162,25 @@ static void RegisterHarkenSearchSqliteFunctions(sqlite3* db) {
             std::string input(text);
             std::string res = HarkenSearch::Search::BuildSearchDataForFts(input);
             sqlite3_result_text(ctx, res.c_str(), -1, SQLITE_TRANSIENT);
+        }, nullptr, nullptr);
+    sqlite3_create_function(db, "aura_id3_text_values", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+        [](sqlite3_context* context, int, sqlite3_value** values) {
+            if (sqlite3_value_type(values[0]) == SQLITE_NULL) {
+                sqlite3_result_text(context, "", 0, SQLITE_STATIC);
+                return;
+            }
+            try {
+                std::string text;
+                AppendId3TextValues(text, DecodeId3TextTags(
+                    reinterpret_cast<const char*>(sqlite3_value_text(values[0]))));
+                sqlite3_result_text(context, text.c_str(), -1, SQLITE_TRANSIENT);
+            } catch (...) {
+                sqlite3_result_error_nomem(context);
+            }
+        }, nullptr, nullptr);
+    sqlite3_create_function(db, "aura_utf8_bytes", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+        [](sqlite3_context* context, int, sqlite3_value** values) {
+            sqlite3_result_int(context, sqlite3_value_bytes(values[0]));
         }, nullptr, nullptr);
     sqlite3_create_function(db, "phash_hamming", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
         [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
@@ -627,6 +674,13 @@ static bool WriteAppMetaString(sqlite3* db, const char* key, const std::string& 
 namespace fs = std::filesystem;
 
 namespace {
+constexpr int kSearchDataMigrationVersion = 3;
+// One-time pass that fills the music columns for FLAC/OGG rows indexed before
+// the Vorbis comment reader understood composer/BPM/key. Only empty columns are
+// written, so manual edits survive; the marker stops it from running again.
+constexpr int kLegacyVorbisMetadataRefreshVersion = 1;
+constexpr const char* kLegacyVorbisMetadataRefreshKey = "legacy_vorbis_metadata_refresh";
+constexpr const char* kLegacyVorbisMetadataCursorKey = "legacy_vorbis_metadata_refresh_cursor";
 constexpr const char* kLibraryRootsMetaKey = "library_roots_v1";
 constexpr const char* kWaveformCacheModeMetaKey = "waveform_cache_mode_v1";
 constexpr const char* kMiniWaveformFormatV2MetaKey = "mini_waveform_format_v2";
@@ -736,6 +790,14 @@ static bool TryExtractTemporaryFolderIdentityPath(const std::string& coverKey,
                                                   std::string* outCanonicalFolderPath);
 static bool TryExtractCanonicalFolderCoverSourcePath(const std::string& coverKey,
                                                      std::string* outCanonicalSourcePath);
+
+static std::string TemporaryCoverFolderSql(const std::string& column) {
+#ifdef _WIN32
+    return "lower(replace(" + column + ", '/', '\\'))";
+#else
+    return "replace(" + column + ", '\\', '/')";
+#endif
+}
 
 struct ExactCoverWallSelectionMembers {
     std::vector<std::string> keys;
@@ -852,15 +914,15 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"conductor",          true,  false},
     {"performer",          true,  false},
     {"publisher",          true,  false},
-    {"bpm",                true,  false},
-    {"musical_key",        true,  false},
+    {"bpm",                true,  true },
+    {"musical_key",        true,  true },
     {"tempo",              true,  false},
     {"mood",               false, true },
     {"usage",              false, false},
     {"featured_instrument",true,  false},
     {"version_tag",        true,  false},
     {"era",                true,  false},
-    {"track_year",         true,  false},
+    {"track_year",         true,  true },
     {"isrc",               true,  false},
     {"iswc",               true,  false},
     {"lyrics",             true,  false},
@@ -899,6 +961,25 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"track_colour",       false, false},
 };
 static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
+
+static constexpr const char* kOptionalMetadataSearchColumns[] = {
+    "composer", "track_year", "bpm", "musical_key", "mood"
+};
+
+static std::string PreserveExistingMp3Metadata(const std::string& column, const std::string& otherFormat) {
+    return "CASE WHEN lower(excluded.extension) IN ('mp3','.mp3') THEN "
+           "COALESCE(NULLIF(audio_files." + column + ",''), excluded." + column +
+           ") ELSE " + otherFormat + " END";
+}
+
+static std::string SearchableMetadataSql(bool includeId3) {
+    std::string suffix;
+    for (const auto& metadata : kExtMetaCols) {
+        if (metadata.searchable) suffix += " || ' ' || IFNULL(" + std::string(metadata.col) + ",'')";
+    }
+    if (includeId3) suffix += " || ' ' || aura_id3_text_values(id3_text_tags)";
+    return suffix;
+}
 
 // Columns that MetadataEditPatch may update after whitelist validation.
 static const std::unordered_set<std::string>& EditableTextColumns() {
@@ -1032,7 +1113,8 @@ static const std::set<std::string> AUDIO_EXTENSIONS = {
 
 static bool isAudioFile(const std::string& ext) {
     std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     return AUDIO_EXTENSIONS.find(lower) != AUDIO_EXTENSIONS.end();
 }
 
@@ -1319,6 +1401,12 @@ static bool ReplaceSearchIndexTriggers(sqlite3* db, const char* sql, std::string
     return false;
 }
 
+static bool ensureSearchSuggestionVocabulary(sqlite3* db, std::string* error) {
+    const char* sql =
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.audio_files_suggestion_vocab USING fts5vocab(main, audio_files_fts, col);";
+    return execSqlite(db, sql, error);
+}
+
 bool Database::ensureFtsSchema() {
     if (!m_db) return false;
     if (!requireFts5()) return false;
@@ -1376,12 +1464,7 @@ bool Database::ensureFtsSchema() {
         return false;
     }
 
-    // Build an fts5vocab shadow table for global search suggestions.
-    // type='row' records each term and the number of documents containing it for ranking.
-    const char* createVocab = R"(
-        CREATE VIRTUAL TABLE IF NOT EXISTS audio_files_vocab USING fts5vocab(audio_files_fts, row);
-    )";
-    if (!execSqlite(m_db, createVocab, &err)) {
+    if (!ensureSearchSuggestionVocabulary(m_db, &err)) {
         m_lastError = FormatDbError(L(Db_FtsVocabFailFmt), err.c_str());
         return false;
     }
@@ -1571,6 +1654,10 @@ static void ApplyAudioMetadataToRecord(AudioRecord& record, const AudioMetadata&
         record.keywords = metadata.comment;
     }
     PopulateExtendedMeta(record.meta, metadata);
+    if (metadata.customTextTagsRead) {
+        record.id3TextTags = metadata.customTextTags;
+        record.id3TextTagsRead = true;
+    }
 }
 
 bool Database::probeAudioFileInfo(const std::string& filePath,
@@ -1867,6 +1954,11 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             DIAG_ACTION_FMT("Database",
                 "BackfillPendingIndexCreateFailed: %s", m_lastError.c_str());
         }
+        if (!executeSQL("CREATE INDEX IF NOT EXISTS idx_backfill_pending_kind "
+                        "ON backfill_pending(kind)")) {
+            DIAG_ACTION_FMT("Database",
+                "BackfillPendingKindIndexCreateFailed: %s", m_lastError.c_str());
+        }
     }
 
     if (!executeSQL(
@@ -1914,13 +2006,20 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
             const bool wallOrderReady =
                 ReadAppMetaInt(m_db, kCoverWallOrderIndexVersionKey) == kCoverWallOrderIndexVersion &&
                 ReadAppMetaString(m_db, kCoverWallOrderIndexStateKey) == "ready";
-            char* disableWallOrderBuild = nullptr;
-            size_t disableWallOrderBuildLen = 0;
-            _dupenv_s(&disableWallOrderBuild, &disableWallOrderBuildLen,
-                      "HARKEN_DISABLE_COVER_WALL_ORDER_BACKGROUND_BUILD");
-            const bool wallOrderBuildDisabled =
-                disableWallOrderBuild && disableWallOrderBuild[0] == '1';
-            std::free(disableWallOrderBuild);
+            const bool wallOrderBuildDisabled = [] {
+                const char* name = "HARKEN_DISABLE_COVER_WALL_ORDER_BACKGROUND_BUILD";
+#ifdef _WIN32
+                char* value = nullptr;
+                size_t length = 0;
+                _dupenv_s(&value, &length, name);
+                const bool disabled = value && value[0] == '1';
+                std::free(value);
+                return disabled;
+#else
+                const char* value = std::getenv(name);
+                return value && value[0] == '1';
+#endif
+            }();
             if (!wallOrderReady && !wallOrderBuildDisabled) {
                 DIAG_ACTION("Database", "Cover wall file-order index building in background.");
                 StartCoverWallOrderIndexBuild(dbPath);
@@ -1939,6 +2038,34 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
     m_waveformFailureWritesAllowed = sidecarAttached &&
         sqlite3_db_readonly(m_db, "main") == 0 &&
         sqlite3_db_readonly(m_db, "waveforms_db") == 0;
+    if (m_isPrimaryConnection && sqlite3_db_readonly(m_db, "main") == 0 &&
+        (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion ||
+         ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) != kLegacyVorbisMetadataRefreshVersion)) {
+        startCoverPhashBackfillWorker();
+    }
+    return true;
+}
+
+bool Database::openForCoverKeyCachePersistence(const std::string& dbPath) {
+    if (m_db || dbPath.empty() ||
+        !Platform::HarkenUserData::PreviewIsolationAllowsDataPathUtf8(dbPath)) {
+        m_lastError = "Cover key cache writer rejected the database path";
+        return false;
+    }
+
+    sqlite3* opened = nullptr;
+    const int result = sqlite3_open_v2(
+        dbPath.c_str(), &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_NOMUTEX, nullptr);
+    std::unique_ptr<sqlite3, decltype(&sqlite3_close)> connection(opened, sqlite3_close);
+    if (result != SQLITE_OK || sqlite3_db_readonly(opened, "main") != 0) {
+        m_lastError = result == SQLITE_OK ? "Cover key cache database is read-only" :
+            (opened ? sqlite3_errmsg(opened) : "Could not open the cover key cache database");
+        return false;
+    }
+    RegisterHarkenSearchSqliteFunctions(opened);
+    sqlite3_busy_timeout(opened, 250);
+    m_mainDbPath = dbPath;
+    m_db = connection.release();
     return true;
 }
 
@@ -2268,6 +2395,19 @@ int Database::countBackfillPendingKind(int kind) {
     return count;
 }
 
+std::optional<bool> Database::hasBackfillPendingKind(int kind) {
+    if (!m_db || kind < 0) return std::nullopt;
+    static const std::string sql = "SELECT 1 FROM backfill_pending WHERE kind = ? LIMIT 1";
+    sqlite3_stmt* stmt = checkoutStmt(sql);
+    if (!stmt) return std::nullopt;
+    sqlite3_bind_int(stmt, 1, kind);
+    const int result = sqlite3_step(stmt);
+    returnStmt(sql, stmt);
+    if (result == SQLITE_ROW) return true;
+    if (result == SQLITE_DONE) return false;
+    return std::nullopt;
+}
+
 bool Database::hasBackfillPending(int64_t fileId, int kind) {
     if (!m_db || fileId <= 0 || kind < 0) return false;
     static const std::string sql =
@@ -2524,13 +2664,10 @@ void Database::preheat() {
                 needsAutomaticLegacyRegistryRepair = exactMaintenancePending;
             }
         }
-        const bool searchDataStillPending =
-            primaryWritableConnection &&
-            ReadAppMetaInt(m_db, "search_data_migrated") != 2;
         const auto decision =
             ResolveAutomaticCoverMaintenanceDecision(
                 maintenanceCtx,
-                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair || searchDataStillPending);
+                explicitCoverMaintenance || needsAutomaticLegacyRegistryRepair);
         if (decision.allowed) {
             startCoverPhashBackfillWorker();
         } else {
@@ -2630,6 +2767,10 @@ bool Database::openReadOnly(const std::string& dbPath) {
     }
     sqlite3_finalize(mainSchema);
 
+    const auto audioColumns = getTableColumns(m_db, "audio_files");
+    m_hasId3TextTags = std::find(audioColumns.begin(), audioColumns.end(), "id3_text_tags") != audioColumns.end();
+    ensureSearchSuggestionVocabulary(m_db, nullptr);
+
     // Read-only connections must not create missing sidecars beside the source DB.
     m_mainDbPath = dbPath;
     m_blobsDbPath = getBlobsDbPath(dbPath);
@@ -2665,11 +2806,7 @@ void Database::close() {
         m_coverPhashBackfillThread.join();
     }
     m_coverPhashBackfillRunning.store(false, std::memory_order_release);
-    // T-296: stop the watcher rescan worker before nulling m_db, otherwise
-    // a queued scanDirectoryEx() can dereference a dangling sqlite handle.
-    // Independent of stopFileSystemWatcher() because reconciliation can be
-    // dispatched without the FS watcher ever being started.
-    stopWatcherRescanWorker();
+    stopFileSystemWatcher();
     // T-297: same reasoning for the waveform precompute worker.
     stopPrecomputeWorker();
     std::lock_guard<std::mutex> writerLock(m_writerSerializeMutex);
@@ -2690,7 +2827,7 @@ void Database::close() {
     clearPreparedCoverFilterKeys();
     // These caches belong to the closed library. A newly opened library may
     // have the same revision, so the two-second cache must not survive close.
-    m_countMemCache.clear();
+    clearSearchCountMemoryCache();
     m_cachedFileCount = -1;
     m_cachedFileCountRevision = 0;
     m_cachedFileCountTime = {};
@@ -2938,6 +3075,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "version_tag", "TEXT");
     ensureColumn(m_db, "audio_files", "era", "TEXT");
     ensureColumn(m_db, "audio_files", "track_year", "TEXT");
+    if (!ensureColumn(m_db, "audio_files", "id3_text_tags", "TEXT")) return false;
+    m_hasId3TextTags = true;
     ensureColumn(m_db, "audio_files", "isrc", "TEXT");
     ensureColumn(m_db, "audio_files", "iswc", "TEXT");
     ensureColumn(m_db, "audio_files", "lyrics", "TEXT");
@@ -3011,9 +3150,6 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "vocal_type",         "TEXT DEFAULT ''");
     ensureColumn(m_db, "audio_files", "snoozed_until",      "INTEGER DEFAULT 0");
 
-    // Version 2 recomputes every existing row. Version 1 only filled NULLs, so
-    // bumping the marker alone left old pinyin tokens in place.
-    const int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
         DIAG_ACTION("Database", "SearchDataBackfillDeferred: remaining rows continue in the background");
     }
@@ -3617,6 +3753,7 @@ bool Database::saveFacetQueryCache(const std::string& cacheKey,
 
 bool Database::invalidateFacetQueryCache() {
     if (!m_db) return false;
+    std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
     m_countMemCache.clear();  // also clear in-memory count cache
     if (sqlite3_db_readonly(m_db, "main") == 1) return true;
     bool ok = executeSQL("DELETE FROM facet_query_cache;");
@@ -4146,10 +4283,11 @@ static const std::string& GetAddFileSql() {
             cols += ", ";
             cols += kExtMetaCols[i].col;
         }
+        cols += ", id3_text_tags";
 
         // VALUES placeholders
         std::string vals;
-        int totalParams = baseCount + (int)kExtMetaCount;
+        int totalParams = baseCount + (int)kExtMetaCount + 1;
         for (int i = 1; i <= totalParams; ++i) {
             if (i > 1) vals += ", ";
             vals += "?";
@@ -4168,9 +4306,6 @@ static const std::string& GetAddFileSql() {
             "duration = excluded.duration, "
             "format = excluded.format, "
             "wavpack_lossless = excluded.wavpack_lossless, "
-            "title = excluded.title, "
-            "artist = excluded.artist, "
-            "album = excluded.album, "
             "folder_path = excluded.folder_path, "
             "file_mtime = excluded.file_mtime, "
             "last_indexed = excluded.last_indexed, "
@@ -4196,12 +4331,24 @@ static const std::string& GetAddFileSql() {
             "norm_mood_tags = excluded.norm_mood_tags, "
             "vocal_type = excluded.vocal_type";
 
-        // Extended: rescanOverwrite columns get overwritten, others stay as-is
+        for (const char* field : {"title", "artist", "album"}) {
+            upsert += ", " + std::string(field) + " = " +
+                PreserveExistingMp3Metadata(field, "excluded." + std::string(field));
+        }
+        for (const char* field : {"description", "category", "keywords"}) {
+            upsert += ", " + std::string(field) + " = " +
+                PreserveExistingMp3Metadata(field, "audio_files." + std::string(field));
+        }
+        upsert += ", id3_text_tags = COALESCE(excluded.id3_text_tags, audio_files.id3_text_tags)";
         for (size_t i = 0; i < kExtMetaCount; ++i) {
             if (kExtMetaCols[i].rescanOverwrite) {
                 const char* col = kExtMetaCols[i].col;
-                if (strcmp(col, "bpm") == 0) {
-                    upsert += std::string(", bpm = COALESCE(excluded.bpm, audio_files.bpm)");
+                if (strcmp(col, "composer") == 0 || strcmp(col, "track_year") == 0 ||
+                    strcmp(col, "musical_key") == 0 || strcmp(col, "bpm") == 0) {
+                    const std::string field(col);
+                    const std::string existingPolicy = field == "bpm"
+                        ? "COALESCE(excluded.bpm, audio_files.bpm)" : "excluded." + field;
+                    upsert += ", " + field + " = " + PreserveExistingMp3Metadata(field, existingPolicy);
                 } else {
                     upsert += std::string(", ") + col + " = excluded." + col;
                 }
@@ -4209,18 +4356,24 @@ static const std::string& GetAddFileSql() {
         }
 
         // search_data on upsert: use new file_name/title + preserved desc/cat/kw + searchable extended
-        std::string searchExpr =
-            "excluded.file_name || ' ' || IFNULL(excluded.title,'') || ' ' || "
-            "IFNULL(audio_files.description,'') || ' ' || "
-            "IFNULL(audio_files.category,'') || ' ' || "
-            "IFNULL(audio_files.keywords,'')";
+        std::string searchExpr = "excluded.file_name";
+        for (const char* field : {"title", "description", "category", "keywords"}) {
+            const std::string column(field);
+            searchExpr += " || ' ' || IFNULL(" + PreserveExistingMp3Metadata(
+                column, (column == "title" ? "excluded." : "audio_files.") + column) + ",'')";
+        }
         for (size_t i = 0; i < kExtMetaCount; ++i) {
             if (kExtMetaCols[i].searchable) {
-                searchExpr += std::string(" || ' ' || IFNULL(") +
-                    (kExtMetaCols[i].rescanOverwrite ? "excluded." : "audio_files.") +
-                    kExtMetaCols[i].col + ",'')";
+                const std::string field = kExtMetaCols[i].col;
+                std::string value = (kExtMetaCols[i].rescanOverwrite ? "excluded." : "audio_files.") + field;
+                if (field == "composer" || field == "track_year" || field == "musical_key" || field == "bpm") {
+                    if (field == "bpm") value = "COALESCE(excluded.bpm, audio_files.bpm)";
+                    value = PreserveExistingMp3Metadata(field, value);
+                }
+                searchExpr += " || ' ' || IFNULL(" + value + ",'')";
             }
         }
+        searchExpr += " || ' ' || aura_id3_text_values(COALESCE(excluded.id3_text_tags, audio_files.id3_text_tags))";
         upsert += ", search_data = aura_search_data(" + searchExpr + ")";
 
         return "INSERT INTO audio_files (" + cols + ") VALUES (" + vals +
@@ -4230,6 +4383,10 @@ static const std::string& GetAddFileSql() {
 }
 
 bool Database::addFile(const AudioRecord& record) {
+    return upsertFile(record, false);
+}
+
+bool Database::upsertFile(const AudioRecord& record, bool refreshFolderCount) {
     if (!m_db) return false;
 
     // The extension column is a canonical type key: filters compare it with
@@ -4345,6 +4502,7 @@ bool Database::addFile(const AudioRecord& record) {
             searchDataText += " " + it->second;
         }
     }
+    AppendId3TextValues(searchDataText, record.id3TextTags);
     std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchDataText);
     sqlite3_bind_text(stmt, 30, searchData.c_str(), -1, SQLITE_TRANSIENT);
 
@@ -4375,6 +4533,11 @@ bool Database::addFile(const AudioRecord& record) {
             sqlite3_bind_null(stmt, paramIdx);
         }
     }
+    if (record.id3TextTagsRead || !record.id3TextTags.empty()) {
+        const auto encoded = nlohmann::json(record.id3TextTags).dump(
+            -1, ' ', false, nlohmann::json::error_handler_t::replace);
+        sqlite3_bind_text(stmt, 46 + static_cast<int>(kExtMetaCount), encoded.c_str(), -1, SQLITE_TRANSIENT);
+    }
 
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     if (!success) m_lastError = sqlite3_errmsg(m_db);
@@ -4383,7 +4546,10 @@ bool Database::addFile(const AudioRecord& record) {
     // Every successful insert or upsert advances the revision observed by tabs.
     // Scan-time increments are absorbed while result polling is gated by isScanning.
 
-    if (success) bumpDataRevision();
+    if (success) {
+        if (refreshFolderCount) refreshIndexedFolderCounts(folderPath);
+        bumpDataRevision();
+    }
     return success;
 }
 
@@ -4414,9 +4580,7 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     std::string setClauses;
 
     // Rebuild search_data from the replacement values when any source field changes.
-    std::string searchDescExpr = "IFNULL(description,'')";
-    std::string searchKwExpr   = "IFNULL(keywords,'')";
-    std::string searchCatExpr  = "IFNULL(category,'')";
+    std::unordered_map<std::string, int> searchParams;
 
     int paramIdx = 1;
 
@@ -4432,10 +4596,7 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
         if (!setClauses.empty()) setClauses += ", ";
         setClauses += col + " = ?" + std::to_string(paramIdx);
         plan.bindOrder.push_back({col, false});
-        // Update search_data expressions for the big 3
-        if (col == "description") searchDescExpr = "?" + std::to_string(paramIdx);
-        else if (col == "keywords") searchKwExpr = "?" + std::to_string(paramIdx);
-        else if (col == "category") searchCatExpr = "?" + std::to_string(paramIdx);
+        searchParams.emplace(col, paramIdx);
         paramIdx++;
     }
 
@@ -4456,17 +4617,21 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
 
     if (setClauses.empty()) return false;
 
-    // Build search_data expression including searchable extended fields
-    std::string searchExtra;
-    for (size_t i = 0; i < kExtMetaCount; ++i) {
-        if (!kExtMetaCols[i].searchable) continue;
-        searchExtra += " || ' ' || IFNULL(" + std::string(kExtMetaCols[i].col) + ",'')";
+    const auto expression = [&searchParams](const char* column) {
+        const auto bound = searchParams.find(column);
+        const std::string value = bound == searchParams.end()
+            ? column : "?" + std::to_string(bound->second);
+        return " || ' ' || IFNULL(" + value + ",'')";
+    };
+    std::string searchData = "file_name";
+    for (const char* column : {"title", "description", "category", "keywords"}) searchData += expression(column);
+    for (const auto& metadata : kExtMetaCols) {
+        if (metadata.searchable) searchData += expression(metadata.col);
     }
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
-        ", search_data = aura_search_data(file_name || ' ' || IFNULL(title,'') || ' ' || " +
-        searchDescExpr + " || ' ' || " + searchCatExpr + " || ' ' || " + searchKwExpr +
-        searchExtra + ")";
+        ", search_data = aura_search_data(" + searchData +
+        " || ' ' || aura_id3_text_values(id3_text_tags))";
 
     plan.idIdx = paramIdx;
     plan.sql += " WHERE id = ?" + std::to_string(paramIdx);
@@ -4872,6 +5037,125 @@ BatchMetadataApplyResult Database::applyMetadataPatchMany(
     return result;
 }
 
+// Single-column guarded batch write (REQ-20261126-UNIFIED-BATCH-EDIT).
+// Verification and update run in one IMMEDIATE transaction, so a row edited by
+// someone else after the preview aborts the whole batch instead of overwriting.
+BatchMetadataApplyResult Database::applyMetadataPatchManyGuarded(
+    const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+    const std::string& expectedColumn,
+    const std::unordered_map<int64_t, std::string>& expectedValues) {
+    BatchMetadataApplyResult result;
+    result.total = static_cast<int>(items.size());
+    auto rejectAll = [&result](const std::string& reason) {
+        result.success = 0;
+        result.failed = result.total;
+        result.errors.push_back(reason);
+        const std::string diag = "GuardedPatchManyRejected: " + reason;
+        LogMetadataPatchDiag(diag.c_str());
+        return result;
+    };
+    if (!m_db) return rejectAll("database not open");
+    if (items.empty()) return rejectAll("empty batch");
+    if (EditableTextColumns().count(expectedColumn) == 0)
+        return rejectAll("invalid guard column");
+    if (expectedValues.empty() || expectedValues.size() != items.size())
+        return rejectAll("guard batch mismatch");
+
+    {
+        std::unordered_set<int64_t> seen;
+        seen.reserve(items.size());
+        for (const auto& entry : items) {
+            if (entry.first <= 0 || !seen.insert(entry.first).second ||
+                expectedValues.count(entry.first) != 1 ||
+                entry.second.fields.size() != 1 ||
+                entry.second.fields.count(expectedColumn) != 1 ||
+                !entry.second.intFields.empty()) {
+                return rejectAll("invalid guarded batch");
+            }
+        }
+    }
+    if (sqlite3_get_autocommit(m_db) == 0)
+        return rejectAll("guarded batch requires its own transaction");
+    if (!executeSQL("BEGIN IMMEDIATE TRANSACTION")) {
+        m_lastError = sqlite3_errmsg(m_db);
+        return rejectAll("failed to begin transaction: " +
+                         (m_lastError.empty() ? std::string("unknown") : m_lastError));
+    }
+
+    std::vector<int64_t> staleIds;
+    {
+        const std::string sql =
+            "SELECT file_path FROM audio_files WHERE id = ?1 AND COALESCE(" +
+            expectedColumn + ", '') = ?2 COLLATE BINARY";
+        sqlite3_stmt* stmt = nullptr;
+        if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            rollbackTransaction();
+            return rejectAll("failed to prepare guard verification");
+        }
+        for (const auto& entry : items) {
+            const std::string& expected = expectedValues.at(entry.first);
+            sqlite3_bind_int64(stmt, 1, entry.first);
+            sqlite3_bind_text(stmt, 2, expected.data(), static_cast<int>(expected.size()),
+                              SQLITE_TRANSIENT);
+            const int step = sqlite3_step(stmt);
+            const char* path = step == SQLITE_ROW
+                ? reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0))
+                : nullptr;
+            if (!path) {
+                staleIds.push_back(entry.first);
+                result.errors.push_back("preview no longer matches fileId=" +
+                                        std::to_string(entry.first));
+            } else if (Platform::FileSystem::IsNetworkPath(path)) {
+                staleIds.push_back(entry.first);
+                result.errors.push_back(L(Write_BlockedNetworkLibrary));
+            }
+            sqlite3_reset(stmt);
+        }
+        sqlite3_finalize(stmt);
+    }
+    if (!staleIds.empty()) {
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.failedFileIds = staleIds;
+        DIAG_ACTION_FMT("Metadata",
+                        "GuardedPatchManyRejected: reason=preview_mismatch count=%zu",
+                        staleIds.size());
+        return result;
+    }
+
+    BatchMetadataApplyResult applied = applyMetadataPatchMany(items);
+    if (applied.failed != 0) {
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.failedFileIds = applied.failedFileIds;
+        result.errors = applied.errors;
+        result.errors.push_back("Transaction rolled back due to failures.");
+        return result;
+    }
+    if (!commitTransaction()) {
+        m_lastError = sqlite3_errmsg(m_db);
+        rollbackTransaction();
+        result.success = 0;
+        result.failed = result.total;
+        result.errors.push_back("failed to commit transaction: " +
+                                (m_lastError.empty() ? std::string() : m_lastError));
+        return result;
+    }
+
+    invalidateFacetQueryCache();
+    result.success = applied.success;
+    result.failed = applied.failed;
+    result.errors = applied.errors;
+    DIAG_ACTION_FMT("Metadata",
+                    "GuardedPatchManyComplete: total=%d success=%d",
+                    result.total,
+                    result.success);
+    return result;
+}
+
 bool Database::applyMetadataPatch(int64_t fileId, const MetadataEditPatch& patch) {
     BatchMetadataApplyResult res = applyMetadataPatchBatch({fileId}, patch);
     return res.success == 1;
@@ -5011,6 +5295,8 @@ bool Database::removeFileByPath(const std::string& filePath) {
     bool success = sqlite3_step(stmt) == SQLITE_DONE;
     sqlite3_finalize(stmt);
     if (success) {
+        refreshIndexedFolderCounts(
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(filePath)));
         pruneOrphanCoverCaches();
         bumpDataRevision();  // Invalidate tab snapshots.
     }
@@ -5169,6 +5455,7 @@ enum class ColId : uint8_t {
     PlayCount, DateAdded, LastPlayed, HasCover,
     EmbeddedCoverKey, EmbeddedCoverKeyMtime, FolderCoverKey, FolderCoverSrcPath, FolderCoverSrcMtime, CoverSuppressed,
     MatchSnippet,
+    Id3TextTags,
     // F-033 music-analysis fields live directly on AudioRecord rather than ExtMeta.
     MusicalKey, MusicalKeyCamelot, KeyConfidence, KeySource,
     Bpm, BpmConfidence, BpmSource,
@@ -5200,6 +5487,7 @@ static std::vector<ColMapEntry> buildColumnMap(sqlite3_stmt* stmt, int colCount)
         {"folder_cover_key", ColId::FolderCoverKey}, {"folder_cover_src_path", ColId::FolderCoverSrcPath},
         {"folder_cover_src_mtime", ColId::FolderCoverSrcMtime}, {"cover_suppressed", ColId::CoverSuppressed},
         {"match_snippet", ColId::MatchSnippet},
+        {"id3_text_tags", ColId::Id3TextTags},
 // Music analysis direct fields (F-033).
         {"musical_key",         ColId::MusicalKey},
         {"musical_key_camelot", ColId::MusicalKeyCamelot},
@@ -5389,6 +5677,11 @@ static AudioRecord recordFromStatement(sqlite3_stmt* stmt) {
             r.normMoodTags = safeGetText(stmt, i); break;
         case ColId::VocalType:
             r.vocalType = safeGetText(stmt, i); break;
+        case ColId::Id3TextTags: {
+            r.id3TextTagsRead = sqlite3_column_type(stmt, i) != SQLITE_NULL;
+            r.id3TextTags = DecodeId3TextTags(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)));
+            break;
+        }
         case ColId::ExtMeta: {
             const char* v = (const char*)sqlite3_column_text(stmt, i);
             if (v && v[0]) r.meta[s_colMap[(size_t)i].name] = v;
@@ -5438,6 +5731,28 @@ static bool ContainsAnyFieldTerm(const std::string& field, const std::vector<std
         if (ContainsFieldTerm(field, term)) return true;
     }
     return false;
+}
+
+std::vector<SearchMetadataFieldMatch> Database::findOptionalMetadataMatches(
+    const AudioRecord& record, const std::string& query) {
+    std::vector<std::string> terms;
+    for (const auto& chip : BuildSearchQueryChips(query)) {
+        if (chip.kind != SearchQueryChipKind::Keyword || chip.label.empty()) continue;
+        const auto lower = toLowerAsciiCopy(chip.label);
+        if (lower != "and" && lower != "or" && lower != "not") terms.push_back(chip.label);
+    }
+    if (terms.empty()) return {};
+    std::vector<SearchMetadataFieldMatch> matches;
+    const auto add = [&](const std::string& field, const std::string& value, bool custom) {
+        if (value.empty()) return;
+        if (ContainsAnyFieldTerm(value, terms) ||
+            ContainsAnyFieldTerm(HarkenSearch::Search::BuildSearchDataForFts(value), terms)) {
+            matches.push_back({field, value, custom});
+        }
+    };
+    for (const char* field : kOptionalMetadataSearchColumns) add(field, record.getMeta(field), false);
+    for (const auto& [field, value] : record.id3TextTags) add(field, value, true);
+    return matches;
 }
 
 static std::vector<std::string> CollectSnippetHighlightTerms(const std::string& snippet) {
@@ -5520,6 +5835,9 @@ static SearchMatchSource DeriveSearchMatchSource(const AudioRecord& record,
         }
         if (ContainsFieldTerm(record.filePath, normalizedKeyword) || ContainsFieldTerm(record.folderPath, normalizedKeyword)) {
             return SearchMatchSource::Path;
+        }
+        if (!filter.exactMode && !Database::findOptionalMetadataMatches(record, filter.keyword).empty()) {
+            return SearchMatchSource::Metadata;
         }
     }
 
@@ -5796,7 +6114,8 @@ AudioRecord Database::getFileByPath(const std::string& filePath) {
     AudioRecord r;
     if (!m_db) return r;
 
-    std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE file_path = ?";
+    std::string sql = std::string("SELECT ") + kRecordColumns +
+        (m_hasId3TextTags ? ", id3_text_tags" : "") + " FROM audio_files WHERE file_path = ?";
 
     // High-frequency single-row reads use the prepared-statement pool.
     sqlite3_stmt* stmt = checkoutStmt(sql);
@@ -5816,7 +6135,8 @@ AudioRecord Database::getFileById(int64_t id) {
     AudioRecord r;
     if (!m_db) return r;
 
-    std::string sql = std::string("SELECT ") + kRecordColumns + " FROM audio_files WHERE id = ?";
+    std::string sql = std::string("SELECT ") + kRecordColumns +
+        (m_hasId3TextTags ? ", id3_text_tags" : "") + " FROM audio_files WHERE id = ?";
     sqlite3_stmt* stmt = checkoutStmt(sql);
     if (!stmt) return r;
 
@@ -6308,6 +6628,13 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
             "file_name", "file_path", "folder_path",
             "title", "artist", "album", "category", "description", "keywords"
         };
+        std::string optionalMetaSearch;
+        if (!filter.exactMode) {
+            for (const char* field : kOptionalMetadataSearchColumns) {
+                optionalMetaSearch += " || ' ' || IFNULL(" + col(field) + ",'')";
+            }
+            if (m_hasId3TextTags) optionalMetaSearch += " || ' ' || aura_id3_text_values(af.id3_text_tags)";
+        }
         for (const auto& term : explainableTerms) {
             bq.whereClause += " AND (";
             const std::string pattern = "%" + EscapeLikePatternLiteral(term) + "%";
@@ -6327,7 +6654,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                 "IFNULL(af.folder_path,'') || ' ' || IFNULL(af.title,'') || ' ' || "
                 "IFNULL(af.artist,'') || ' ' || IFNULL(af.album,'') || ' ' || "
                 "IFNULL(af.category,'') || ' ' || IFNULL(af.description,'') || ' ' || "
-                "IFNULL(af.keywords,'')) LIKE ? ESCAPE '\\'";
+                "IFNULL(af.keywords,'')" + optionalMetaSearch + ") LIKE ? ESCAPE '\\'";
             bq.bindValues.push_back(pattern);
             bq.whereClause += ")";
         }
@@ -6549,8 +6876,8 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     "WHERE has_cover = 1 "
                     "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                     "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
-                    "AND lower(replace(folder_path, '/', '\\')) "
-                    "IN (SELECT value FROM json_each(?))";
+                    "AND " + TemporaryCoverFolderSql("folder_path") +
+                    " IN (SELECT value FROM json_each(?))";
                 bq.coverKeyBindValues.push_back(CoverWallSelectionJsonArray(exactMembers.temporaryFolders));
             }
             bq.coverKeyClauseKind = 3;
@@ -6601,7 +6928,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                     "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
                     "AND folder_path IS NOT NULL AND folder_path <> '' "
-                    "AND lower(replace(folder_path, '/', '\\')) = ?";
+                    "AND " + TemporaryCoverFolderSql("folder_path") + " = ?";
                 bq.coverKeyBindValues.push_back(temporaryFolderPath);
                 bq.coverKeyClauseKind = 3;
             } else {
@@ -6618,7 +6945,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                     " AND (" + col("folder_cover_key") + " IS NULL OR " + col("folder_cover_key") + " = '')"
                     " AND " + col("folder_path") + " IS NOT NULL"
                     " AND " + col("folder_path") + " <> ''"
-                    " AND lower(replace(" + col("folder_path") + ", '/', '\\')) = ?";
+                    " AND " + TemporaryCoverFolderSql(col("folder_path")) + " = ?";
                 bq.bindValues.push_back(temporaryFolderPath);
                 bq.coverKeyClauseKind = 3;
             } else {
@@ -6743,10 +7070,23 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
         return getFileCount();
     }
 
+    const auto countRevision = dataRevision();
     const std::string persistentCacheKey = BuildPersistentFacetCacheKey(filter, -1, "count");
+    auto storeCount = [&](int64_t count, bool persist) {
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
+        if (countRevision != dataRevision()) return;
+        if (m_countMemCache.size() >= 16) m_countMemCache.clear();
+        m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
+        if (persist) {
+            std::vector<uint8_t> payload(sizeof(count));
+            std::memcpy(payload.data(), &count, sizeof(count));
+            saveFacetQueryCache(persistentCacheKey, payload, 1);
+        }
+    };
     {
         // 2a) In-memory cache: zero SQLite I/O, avoids WAL contention during active scans
         const int64_t nowSec = static_cast<int64_t>(std::time(nullptr));
+        std::lock_guard<std::mutex> lock(m_searchCountCacheMutex);
         auto it = m_countMemCache.find(persistentCacheKey);
         if (it != m_countMemCache.end() && nowSec < it->second.expirySec) {
             if (it->second.count > 0 || allowZeroCountCache) {
@@ -6765,8 +7105,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 if (cachedCount > 0 || allowZeroCountCache) {
                     DIAG_ACTION_FMT("Search", "SearchCountPersistentCacheHit: count=%lld", (long long)cachedCount);
                     // Promote to in-memory cache for subsequent frames
-                    if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                    m_countMemCache[persistentCacheKey] = {cachedCount, static_cast<int64_t>(std::time(nullptr)) + 30};
+                    storeCount(cachedCount, false);
                     return cachedCount;
                 }
             }
@@ -6819,11 +7158,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
                 count = (std::max<int64_t>)(0, count);
             }
             if (count > 0 || allowZeroCountCache) {
-                if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-                m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-                std::vector<uint8_t> payload(sizeof(int64_t));
-                std::memcpy(payload.data(), &count, sizeof(int64_t));
-                saveFacetQueryCache(persistentCacheKey, payload, 1);
+                storeCount(count, true);
             }
             DIAG_ACTION_FMT("Search", "SearchCountFileTypeFastPath: count=%lld",
                             (long long)count);
@@ -6881,14 +7216,7 @@ int64_t Database::searchFilesCount(const SearchFilter& filter) {
     // Write the count back so revisiting this filter does not repeat COUNT.
     {
         if (count > 0 || allowZeroCountCache) {
-            // 3a) Populate in-memory cache first (fast path for next call)
-            if (m_countMemCache.size() >= 16) m_countMemCache.clear();
-            m_countMemCache[persistentCacheKey] = {count, static_cast<int64_t>(std::time(nullptr)) + 30};
-
-            // Store the count in the persistent SQLite cache.
-            std::vector<uint8_t> payload(sizeof(int64_t));
-            std::memcpy(payload.data(), &count, sizeof(int64_t));
-            saveFacetQueryCache(persistentCacheKey, payload, 1);
+            storeCount(count, true);
         }
     }
 
@@ -7056,9 +7384,11 @@ std::vector<AudioRecord> Database::searchFiles(const SearchFilter& filter, int l
         // and sorting a million candidates in a temp B-tree.
         fromClauseForSearch = "FROM audio_files af INDEXED BY idx_files_name_natural";
     }
+    const std::string searchColumns = std::string(kRecordColumnsAf) +
+        (m_hasId3TextTags ? ", af.id3_text_tags" : "");
     if (bq.canUseFtsSnippet) {
         sql =
-            "SELECT " + std::string(kRecordColumnsAf) + ", temp.match_snippet "
+            "SELECT " + searchColumns + ", temp.match_snippet "
             "FROM audio_files af "
             "JOIN ("
             "  SELECT af.id AS id, "
@@ -7075,7 +7405,7 @@ std::vector<AudioRecord> Database::searchFiles(const SearchFilter& filter, int l
         // which matches both FTS and trigram) silently dropped the cover-key
         // filter from the SQL, returning all keyword hits regardless of the
         // user's clicked cover.
-        sql = "SELECT " + std::string(kRecordColumnsAf) + " FROM audio_files af "
+        sql = "SELECT " + searchColumns + " FROM audio_files af "
               "JOIN ("
               "  SELECT af.id AS id " + fromClauseForSearch + " " + bq.whereClause + coverInClause +
               "  ORDER BY " + orderClause + direction +
@@ -8917,6 +9247,225 @@ bool Database::isCoverTileMembershipMaintenancePending() {
     return CountRows64FromTable(m_db, "cover_tile_membership") == 0;
 }
 
+/**
+ * One-time backfill for FLAC/OGG rows indexed before the Vorbis comment reader
+ * understood composer, BPM, key and custom tags. It re-reads the source file and
+ * only writes columns that are still empty, so manual edits and previously
+ * indexed values are preserved. A cursor keeps the pass resumable; the marker
+ * set at completion prevents it from ever running again.
+ *
+ * Returns >0 processed rows, -1 when the pass is finished, cannot run on this
+ * connection, or stopped early and must be retried. A row whose write fails or
+ * that arrives after a cancel keeps its place: the cursor only advances over
+ * rows that really finished, and the completion marker is written only after a
+ * clean empty read.
+ */
+int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
+    if (!m_db || batchSize <= 0) return -1;
+    if (sqlite3_db_readonly(m_db, "main") == 1) return -1;
+    if (ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) == kLegacyVorbisMetadataRefreshVersion) {
+        return -1;
+    }
+
+    std::vector<int64_t> ids;
+    const int64_t cursor = ReadAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey);
+    {
+        sqlite3_stmt* stmt = nullptr;
+        // Any still-empty target column qualifies: a row where the user already
+        // filled the composer must still gain BPM, key or custom tags.
+        const char* sql =
+            "SELECT id FROM audio_files "
+            "WHERE id > ?1 "
+            "  AND lower(extension) IN ('flac','.flac','ogg','.ogg') "
+            "  AND (IFNULL(composer,'') = '' OR IFNULL(bpm,'') = '' "
+            "       OR IFNULL(musical_key,'') = '' OR IFNULL(track_year,'') = '' "
+            "       OR IFNULL(id3_text_tags,'') = '') "
+            "ORDER BY id LIMIT ?2;";
+        if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            return -1;
+        }
+        sqlite3_bind_int64(stmt, 1, cursor);
+        sqlite3_bind_int(stmt, 2, batchSize);
+        int step = SQLITE_ROW;
+        while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
+            ids.push_back(sqlite3_column_int64(stmt, 0));
+        }
+        const bool queryComplete = step == SQLITE_DONE;
+        if (!queryComplete) m_lastError = sqlite3_errmsg(m_db);
+        sqlite3_finalize(stmt);
+        // A failed read is not the end of the data: never mark the pass done.
+        if (!queryComplete) return -1;
+    }
+
+    if (ids.empty()) {
+        WriteAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey, kLegacyVorbisMetadataRefreshVersion);
+        execSqlite(m_db, "DELETE FROM app_meta WHERE key = 'legacy_vorbis_metadata_refresh_cursor';", nullptr);
+        DIAG_ACTION("Database", "LegacyVorbisMetadataRefresh finished");
+        return -1;
+    }
+
+    int64_t lastCompletedId = cursor;
+    int processed = 0;
+    for (int64_t fileId : ids) {
+        // Closing the library or switching databases stops the pass between
+        // files instead of waiting for the rest of a 256-row batch.
+        if (m_coverPhashBackfillCancel.load(std::memory_order_acquire)) break;
+
+        AudioRecord record = getFileById(fileId);
+        if (record.id <= 0) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
+        }
+
+        AudioMetadata metadata;
+        const bool foundMetadata = MetadataReader::readMetadata(record.filePath, metadata);
+        if (!foundMetadata && !metadata.customTextTagsRead) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
+        }
+
+        // Values the row still needs; empty means "leave the stored column alone".
+        const std::string composer = record.getMeta("composer").empty() ? metadata.composer : std::string();
+        const std::string bpm = record.getMeta("bpm").empty() ? metadata.bpm : std::string();
+        const std::string musicalKey = record.getMeta("musical_key").empty() ? metadata.musicalKey : std::string();
+        const std::string trackYear = (record.getMeta("track_year").empty() && metadata.year > 0)
+                                          ? std::to_string(metadata.year)
+                                          : std::string();
+        const bool writeCustomTags = record.id3TextTags.empty() && metadata.customTextTagsRead &&
+                                     !metadata.customTextTags.empty();
+        if (composer.empty() && bpm.empty() && musicalKey.empty() && trackYear.empty() &&
+            !writeCustomTags) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
+        }
+
+        // One guarded statement: a column is written only while it is still
+        // empty, so an edit saved while the file was being read survives.
+        if (!fillLegacyVorbisColumns(fileId, composer, bpm, musicalKey, trackYear,
+                                     writeCustomTags ? &metadata.customTextTags : nullptr)) {
+            // Keep the cursor before this row so the next pass retries it.
+            break;
+        }
+        // The UI reloads its rows from this counter, so a filled row becomes
+        // searchable in the running session without a restart.
+        bumpDataRevision();
+        lastCompletedId = fileId;
+        ++processed;
+    }
+
+    if (lastCompletedId > cursor) {
+        WriteAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey, static_cast<int>(lastCompletedId));
+    }
+    DIAG_ACTION_FMT("Database", "LegacyVorbisMetadataRefresh batch: cursor=%lld scanned=%d",
+                    (long long)lastCompletedId, processed);
+    return processed > 0 ? processed : -1;
+}
+
+namespace {
+
+// Fill-only update for the legacy Vorbis backfill. Each target column keeps its
+// current value unless it is empty, evaluated inside the same statement as the
+// write, so a concurrent manual edit cannot be overwritten by a stale copy.
+const std::string& LegacyVorbisFillSql() {
+    static const std::string sql =
+        "UPDATE audio_files SET "
+        "composer = COALESCE(NULLIF(composer,''), ?1, ''), "
+        "bpm = COALESCE(NULLIF(bpm,''), ?2, ''), "
+        "musical_key = COALESCE(NULLIF(musical_key,''), ?3, ''), "
+        "track_year = COALESCE(NULLIF(track_year,''), ?4, ''), "
+        "id3_text_tags = COALESCE(NULLIF(id3_text_tags,''), ?5, ''), "
+        "last_indexed = ?6 "
+        "WHERE id = ?7 AND ("
+        "(IFNULL(composer,'') = '' AND ?1 IS NOT NULL) OR "
+        "(IFNULL(bpm,'') = '' AND ?2 IS NOT NULL) OR "
+        "(IFNULL(musical_key,'') = '' AND ?3 IS NOT NULL) OR "
+        "(IFNULL(track_year,'') = '' AND ?4 IS NOT NULL) OR "
+        "(IFNULL(id3_text_tags,'') = '' AND ?5 IS NOT NULL));";
+    return sql;
+}
+
+// Rebuild search_data from the row as it is now, using the same shared
+// expression as every other writer so a new searchable column needs no change
+// here.
+const std::string& LegacyVorbisSearchDataSql() {
+    static const std::string sql = [] {
+        std::string expression = "file_name";
+        for (const char* column : {"title", "description", "category", "keywords"}) {
+            expression += " || ' ' || IFNULL(" + std::string(column) + ",'')";
+        }
+        expression += SearchableMetadataSql(true);
+        return "UPDATE audio_files SET search_data = aura_search_data(" + expression +
+               ") WHERE id = ?1;";
+    }();
+    return sql;
+}
+
+bool StepSqlite(sqlite3* db, const char* sql, const std::function<void(sqlite3_stmt*)>& bind,
+                std::string* error) {
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        if (error) *error = sqlite3_errmsg(db);
+        return false;
+    }
+    if (bind) bind(stmt);
+    const int step = sqlite3_step(stmt);
+    const bool ok = step == SQLITE_DONE;
+    if (!ok && error) *error = sqlite3_errmsg(db);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+}  // namespace
+
+bool Database::fillLegacyVorbisColumns(int64_t fileId,
+                                       const std::string& composer,
+                                       const std::string& bpm,
+                                       const std::string& musicalKey,
+                                       const std::string& trackYear,
+                                       const std::unordered_map<std::string, std::string>* customTags) {
+    if (!m_db || fileId <= 0) return false;
+    const std::string tags = customTags
+        ? nlohmann::json(*customTags).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)
+        : std::string();
+    const auto bindText = [](sqlite3_stmt* stmt, int index, const std::string& value) {
+        if (value.empty()) {
+            sqlite3_bind_null(stmt, index);
+        } else {
+            sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+        }
+    };
+
+    // Fill and search_data update share one transaction: a failure rolls the
+    // row back to "still empty" so the next pass retries it as a whole.
+    if (!beginTransaction()) return false;
+    bool ok = StepSqlite(m_db, LegacyVorbisFillSql().c_str(), [&](sqlite3_stmt* stmt) {
+        bindText(stmt, 1, composer);
+        bindText(stmt, 2, bpm);
+        bindText(stmt, 3, musicalKey);
+        bindText(stmt, 4, trackYear);
+        if (tags.empty()) sqlite3_bind_null(stmt, 5);
+        else sqlite3_bind_text(stmt, 5, tags.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(std::time(nullptr)));
+        sqlite3_bind_int64(stmt, 7, fileId);
+    }, &m_lastError);
+    const bool filled = ok && sqlite3_changes(m_db) > 0;
+    if (ok && filled) {
+        ok = StepSqlite(m_db, LegacyVorbisSearchDataSql().c_str(), [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_int64(stmt, 1, fileId);
+        }, &m_lastError);
+    }
+    if (ok) {
+        ok = commitTransaction();
+    } else {
+        rollbackTransaction();
+    }
+    return ok;
+}
+
 int Database::repairCoverTileMembershipBatch(int batchSize) {
     if (!m_db || batchSize <= 0 || sqlite3_db_readonly(m_db, "main") == 1) return 0;
 
@@ -9930,9 +10479,27 @@ void Database::coverPhashBackfillWorkerMain() {
         getFileCount() > kGlobalCoverWallFallbackMaxFiles &&
         isCoverRegistryMaintenancePending();
 
+    bool legacyVorbisRefreshPending =
+        m_isPrimaryConnection &&
+        sqlite3_db_readonly(m_db, "main") != 1 &&
+        ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) != kLegacyVorbisMetadataRefreshVersion;
+
     int idleRounds = 0, totalUpdated = 0;
     while (!m_coverPhashBackfillCancel.load(std::memory_order_acquire)) {
         if (!m_db) break;
+        if (legacyVorbisRefreshPending) {
+            const int refreshed =
+                (ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) == kLegacyVorbisMetadataRefreshVersion)
+                    ? -1
+                    : refreshLegacyVorbisMetadataBatch(256);
+            if (refreshed > 0) {
+                totalUpdated += refreshed;
+                idleRounds = 0;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            if (refreshed < 0) legacyVorbisRefreshPending = false;
+        }
         if (legacyMembershipRepairPending) {
             const int repairedMembership = repairCoverTileMembershipBatch(512);
             if (repairedMembership > 0) {
@@ -10122,7 +10689,7 @@ static HarkenSearch::Search::SearchDataRecomputeStep PublishSearchDataRecompute(
         ok = execSqlite(db, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
     }
     if (ok) {
-        ok = WriteAppMetaInt(db, "search_data_migrated", 2);
+        ok = WriteAppMetaInt(db, "search_data_migrated", kSearchDataMigrationVersion);
     }
     if (ok) {
         ok = execSqlite(db, "DELETE FROM app_meta WHERE key = 'search_data_recompute_cursor';", &err);
@@ -10168,7 +10735,6 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     if (batchSize <= 0 || !ensureSearchRecomputeConnection()) return SearchDataRecomputeStep::Failed;
     sqlite3* db = m_searchRecomputeDb;
     if (sqlite3_get_autocommit(db) == 0) return SearchDataRecomputeStep::Failed;
-    constexpr int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(db, "search_data_migrated") == kSearchDataMigrationVersion) {
         return SearchDataRecomputeStep::Finished;
     }
@@ -10211,13 +10777,13 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     }
 
     sqlite3_stmt* stmt = nullptr;
-    const char* sql =
+    const std::string sql =
         "INSERT INTO temp.search_data_recompute_work (id, old_search_data, new_search_data) "
         "SELECT id, search_data, aura_search_data("
         "file_name || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || "
-        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')) "
+        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')" + SearchableMetadataSql(true) + ") "
         "FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         DiscardSearchDataRecomputeScratch(db);
         return SearchDataRecomputeStep::Failed;
     }
@@ -10273,7 +10839,7 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
             if (progress) progress->store(-1.0f);
             return false;
         }
-        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2) {
+        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion) {
             std::string err;
             const bool success = !(cancel && cancel->load()) &&
                 execSqlite(m_searchRecomputeDb, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
@@ -10312,7 +10878,8 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
         bool migrated = false;
         {
             std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
-            migrated = m_searchRecomputeDb && ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2;
+            migrated = m_searchRecomputeDb &&
+                ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion;
         }
         if (step != HarkenSearch::Search::SearchDataRecomputeStep::Finished || !migrated) {
             DIAG_ACTION("Database", "SearchDataRecompute stopped before replacing the FTS index");
@@ -12469,26 +13036,16 @@ bool Database::updateFilePath(
         }
     }
 
-    std::string newFolderPath;
-    try {
-        fs::path p = Utf8ToPath(newPath);
-        fs::path parent = p.parent_path();
-        if (parent != p) newFolderPath = PathToUtf8(parent);
-        // Match scan normalization: remove the trailing separator so equivalent paths share one key.
-        while (!newFolderPath.empty() && (newFolderPath.back() == '/' || newFolderPath.back() == '\\'))
-            newFolderPath.pop_back();
-    } catch (...) {
-    }
-    // T2.1: canonicalize folder_path before bind so updateFilePath stays
-    // consistent with addFile (T1.0 v2 §5.1). file_path keeps raw form.
-    newFolderPath = HarkenSearch::CanonicalFolderPath(newFolderPath);
+    const auto newFolderPath =
+        HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(newPath));
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
-    const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
+    const std::string sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
                       "folder_path = ?, folder_cover_key = NULL, folder_cover_src_path = NULL, folder_cover_src_mtime = 0, "
-                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')) WHERE file_path = ?;";
+                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')" +
+                      SearchableMetadataSql(true) + ") WHERE file_path = ?;";
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         m_lastError = sqlite3_errmsg(m_db);
         return false;
     }
@@ -12521,6 +13078,11 @@ bool Database::updateFilePath(
     }
     sqlite3_finalize(stmt);
     if (ok) {
+        const auto oldFolderPath =
+            HarkenSearch::CanonicalFolderPath(HarkenSearch::DisplayFolderFromFilePath(oldPath));
+        if (oldFolderPath != newFolderPath) {
+            refreshIndexedFolderCounts(oldFolderPath, newFolderPath);
+        }
         std::vector<std::string> changedPaths;
         changedPaths.reserve(2);
         if (!oldPath.empty()) changedPaths.push_back(oldPath);
@@ -14721,7 +15283,7 @@ bool Database::prepareScanRollbackJournal() {
 
     const auto createAudioSnapshotSql =
         std::string("CREATE TEMP TABLE temp.scan_cancel_audio AS SELECT ") +
-        kRecordColumns +
+        kRecordColumns + ", id3_text_tags, search_data" +
         " FROM audio_files WHERE 0;";
 
     std::vector<std::string> ddl = {
@@ -14845,7 +15407,7 @@ bool Database::snapshotPathForScanRollback(const std::string& filePath) {
 
     const std::string snapshotAudioSql =
         std::string("INSERT OR IGNORE INTO temp.scan_cancel_audio SELECT ") +
-        kRecordColumns +
+        kRecordColumns + ", id3_text_tags, search_data" +
         " FROM audio_files WHERE file_path = ?;";
     const std::vector<std::string> snapshotSql = {
         snapshotAudioSql,
@@ -14943,8 +15505,8 @@ bool Database::rollbackScanRollbackJournal(const std::string& scopePath,
         "WHERE file_id IN (SELECT file_id FROM temp.scan_cancel_current_ids);",
         "DELETE FROM audio_files "
         "WHERE file_path IN (SELECT file_path FROM temp.scan_cancel_touched);",
-        std::string("INSERT INTO audio_files(") + kRecordColumns + ") "
-            "SELECT " + kRecordColumns + " FROM temp.scan_cancel_audio;",
+        std::string("INSERT INTO audio_files(") + kRecordColumns + ", id3_text_tags, search_data) "
+            "SELECT " + kRecordColumns + ", id3_text_tags, search_data FROM temp.scan_cancel_audio;",
         "INSERT OR REPLACE INTO playlist_items(playlist_id, file_id, position) "
         "SELECT playlist_id, file_id, position FROM temp.scan_cancel_playlist_items;",
         "INSERT OR REPLACE INTO file_tags(file_id, tag_id) "
@@ -17838,9 +18400,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
                         static_cast<long long>(liveFolderCount),
                         static_cast<long long>(indexedFolderCount));
         if (sqlite3_db_readonly(m_db, "main") == 1) {
-            EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-            SortFolderTree(root);
-            return root;
+            return getFolderHierarchy(pathMode);
         }
         if (!rebuildFolderIndex()) {
             DIAG_ACTION("Database", "FolderIndexStale rebuild failed");
@@ -17849,9 +18409,7 @@ FolderInfo Database::getFolderHierarchyFromIndex(aura::folder_tree::PathMode pat
 
     auto entries = getFolderIndex();
     if (entries.empty()) {
-        EnsureLibraryRootsInFolderTree(root, libraryRoots, pathMode);
-        SortFolderTree(root);
-        return root;
+        return getFolderHierarchy(pathMode);
     }
 
     // folder_index has no file_path column, so map each canonical folder
@@ -17995,6 +18553,34 @@ bool Database::clearFolderIndex() {
     if (!m_db) return false;
     return executeSQL("DELETE FROM folder_index;");
 }
+
+void Database::refreshIndexedFolderCounts(const std::string& folder, const std::string& otherFolder) {
+    if (folder.empty() && otherFolder.empty()) return;
+
+    const auto run = [&](const char* sql) {
+        auto* stmt = checkoutStmt(sql);
+        if (!stmt) return false;
+        sqlite3_bind_text(stmt, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(stmt, 2, otherFolder.c_str(), -1, SQLITE_TRANSIENT);
+        const bool ok = sqlite3_step(stmt) == SQLITE_DONE;
+        returnStmt(sql, stmt);
+        return ok;
+    };
+    const char* refreshSql =
+        "WITH affected(path) AS (SELECT ?1 UNION SELECT ?2) "
+        "INSERT OR REPLACE INTO folder_index (folder_path, file_count, last_updated) "
+        "SELECT path, (SELECT COUNT(*) FROM audio_files WHERE folder_path = affected.path), "
+        "CAST(strftime('%s', 'now') AS INTEGER) FROM affected "
+        "WHERE path <> '' AND EXISTS (SELECT 1 FROM folder_index)";
+    const char* removeEmptySql =
+        "DELETE FROM folder_index WHERE folder_path IN (?1, ?2) AND file_count = 0";
+    if (!run(refreshSql) || !run(removeEmptySql)) {
+        const bool invalidated = clearFolderIndex();
+        DIAG_ACTION_FMT("Database", "FolderIndex incremental refresh failed; cleared=%d",
+                        static_cast<int>(invalidated));
+    }
+}
+
 bool Database::rebuildFolderIndex() {
     if (!m_db) return false;
     if (!executeSQL("DELETE FROM folder_index")) return false;
@@ -18278,7 +18864,7 @@ FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibrary(const std::s
 }
 
 void Database::discardFolderRemovalReadCaches() {
-    m_countMemCache.clear();
+    clearSearchCountMemoryCache();
 }
 
 FolderSubtreeRemovalResult Database::removeFolderSubtreeFromLibraryOnWorker(const std::string& folderPath) {
@@ -20208,14 +20794,14 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
             EnsureCoverTileMembershipForKeys(m_db, exactMembers.keys, &out);
         }
         if (!exactMembers.temporaryFolders.empty()) {
-            const char* sql =
+            const std::string sql =
                 "SELECT id FROM audio_files WHERE has_cover = 1 "
                 "AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
                 "AND (folder_cover_key IS NULL OR folder_cover_key = '') "
-                "AND lower(replace(folder_path, '/', '\\')) "
-                "IN (SELECT value FROM json_each(?))";
+                "AND " + TemporaryCoverFolderSql("folder_path") +
+                " IN (SELECT value FROM json_each(?))";
             sqlite3_stmt* stmt = nullptr;
-            if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
+            if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) == SQLITE_OK) {
                 const std::string paths = CoverWallSelectionJsonArray(exactMembers.temporaryFolders);
                 sqlite3_bind_text(stmt, 1, paths.c_str(), (int)paths.size(), SQLITE_TRANSIENT);
                 while (sqlite3_step(stmt) == SQLITE_ROW) out.push_back(sqlite3_column_int64(stmt, 0));
@@ -20229,17 +20815,17 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
     const std::string lookupKey = CanonicalizeCoverLookupKey(tileIdentityKey);
     std::string temporaryFolderPath;
     if (TryExtractTemporaryFolderIdentityPath(lookupKey, &temporaryFolderPath)) {
-        const char* sqlTemporary =
+        const std::string sqlTemporary =
             "SELECT id FROM audio_files "
             "WHERE has_cover = 1 "
             "  AND (embedded_cover_key IS NULL OR embedded_cover_key = '') "
             "  AND (folder_cover_key IS NULL OR folder_cover_key = '') "
             "  AND folder_path IS NOT NULL "
             "  AND folder_path <> '' "
-            "  AND lower(replace(folder_path, '/', '\\')) = ? "
+            "  AND " + TemporaryCoverFolderSql("folder_path") + " = ? "
             "ORDER BY id";
         sqlite3_stmt* tempStmt = nullptr;
-        if (sqlite3_prepare_v2(m_db, sqlTemporary, -1, &tempStmt, nullptr) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(m_db, sqlTemporary.c_str(), -1, &tempStmt, nullptr) != SQLITE_OK) {
             m_lastError = sqlite3_errmsg(m_db);
             return out;
         }
@@ -20274,7 +20860,8 @@ std::vector<int64_t> Database::getFileIdsForCoverTileMembership(const std::strin
     return out;
 }
 
-std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilter& filter, int limit) {
+std::vector<Database::CoverFacetEntry> Database::getCoverFacets(
+    const SearchFilter& filter, int limit, bool allowCachedFacets) {
     DIAG_SCOPED("Database.getCoverFacets");
     std::vector<CoverFacetEntry> results;
     if (!m_db || limit <= 0) return results;
@@ -20340,7 +20927,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                         readiness.minimumExpectedRegistry);
     }
 
-    if (!registrySparse) {
+    if (allowCachedFacets && !registrySparse) {
         std::vector<uint8_t> payload;
         if (loadFacetQueryCache(persistentCacheKey, payload)) {
             if (DeserializeCoverFacetEntries(payload, results)) {
@@ -20348,7 +20935,7 @@ std::vector<Database::CoverFacetEntry> Database::getCoverFacets(const SearchFilt
                 return results;
             }
         }
-    } else {
+    } else if (registrySparse) {
         DIAG_ACTION("Search", "CoverFacetPersistentCacheBypass: registry sparse");
     }
 
@@ -21106,25 +21693,17 @@ Database::SqlResult Database::executeRawQuery(const std::string& sql) {
 // File-system watcher integration.
 
 // 支持的音频文件扩展名
-static bool IsAudioExtension(const std::string& ext) {
-    static const std::unordered_set<std::string> kAudioExts = {
-        ".wav", ".mp3", ".flac", ".ogg", ".aiff", ".aif", ".m4a", ".wma",
-        ".opus", ".ape", ".wv", ".ac3", ".aac"
-    };
-    std::string lower = ext;
-    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-    return kAudioExts.count(lower) > 0;
-}
-
 static std::string GetExtensionUtf8(const std::string& pathUtf8) {
+    std::string extension;
     try {
         fs::path p = Utf8ToPath(pathUtf8);
-        return PathToUtf8(p.extension());
+        extension = PathToUtf8(p.extension());
     } catch (...) {
-        auto dot = pathUtf8.rfind('.');
-        if (dot != std::string::npos) return pathUtf8.substr(dot);
-        return "";
+        return {};
     }
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return extension;
 }
 
 namespace {
@@ -21677,13 +22256,40 @@ void Database::watcherRescanWorkerThread() {
     }
 }
 
+void Database::refreshFileSystemWatcher() {
+    if (!m_db || !m_isPrimaryConnection || sqlite3_db_readonly(m_db, "main") != 0 ||
+        m_watcherRootsRefreshing.load(std::memory_order_acquire))
+        return;
+
+    auto roots = getLibraryRoots();
+    if (roots == m_watcherLibraryRoots &&
+        (roots.empty() || (m_fileSystemWatcher && m_fileSystemWatcher->isRunning())))
+        return;
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_watcherLibraryRoots = roots;
+    m_watcherRootsRefreshing.store(true, std::memory_order_release);
+    try {
+        m_watcherRootRefreshThread = std::thread([this, roots = std::move(roots)] {
+            try {
+                startFileSystemWatcher(roots);
+            } catch (...) {
+                DIAG_ACTION_FMT("Watcher", "Unable to start live library watcher (%zu roots)", roots.size());
+            }
+            m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        });
+    } catch (...) {
+        m_watcherRootsRefreshing.store(false, std::memory_order_release);
+        DIAG_ACTION_FMT("Watcher", "Unable to create library watcher thread (%zu roots)", m_watcherLibraryRoots.size());
+    }
+}
+
 void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirectories) {
-    // 停止已有的监听器
-    stopFileSystemWatcher();
+    m_fileSystemWatcher.reset();
 
     if (watchDirectories.empty()) return;
 
-    m_fileSystemWatcher = new FileSystemWatcher();
+    m_fileSystemWatcher = std::make_unique<FileSystemWatcher>();
+    m_fileSystemWatcher->setCoalesceWindowMs(150);
 
     // 添加监听目录
     for (const auto& dir : watchDirectories) {
@@ -21705,8 +22311,10 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             return;
         }
 
-        const bool newIsAudio = IsAudioExtension(GetExtensionUtf8(event.path));
-        const bool oldIsAudio = IsAudioExtension(GetExtensionUtf8(event.oldPath));
+        const auto newExtension = GetExtensionUtf8(event.path);
+        const auto oldExtension = GetExtensionUtf8(event.oldPath);
+        const bool newIsAudio = isAudioFile(newExtension);
+        const bool oldIsAudio = isAudioFile(oldExtension);
 
         switch (event.type) {
             case FileSystemWatcher::EventType::FileAdded:
@@ -21729,20 +22337,14 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
 
             case FileSystemWatcher::EventType::FileRenamed:
                 if (oldIsAudio && newIsAudio) {
-                    std::string newFileName;
-                    try {
-                        newFileName = PathToUtf8(Utf8ToPath(event.path).filename());
-                    } catch (...) {
-                        newFileName.clear();
-                    }
-
-                    if (!updateFilePath(event.oldPath, event.path, newFileName)) {
-                        DIAG_ACTION_FMT("Watcher",
-                                        "Watcher rename DB update failed: %s -> %s",
-                                        event.oldPath.c_str(),
-                                        event.path.c_str());
-                    } else if (m_watcherChangeCallback) {
-                        m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    const auto previous = getWatcherFileByPath(event.oldPath);
+                    if (previous.id > 0 && updateFilePath(previous.filePath, event.path, {})) {
+                        handleFileSystemEvent(event.path, false, false, true);
+                        if (m_watcherChangeCallback)
+                            m_watcherChangeCallback(WatcherChangeType::Renamed, event.path);
+                    } else {
+                        handleFileSystemEvent(event.oldPath, false, true, false);
+                        handleFileSystemEvent(event.path, true, false, false);
                     }
                 } else if (oldIsAudio && !newIsAudio) {
                     handleFileSystemEvent(event.oldPath, false, true, false);
@@ -21754,158 +22356,119 @@ void Database::startFileSystemWatcher(const std::vector<std::string>& watchDirec
             default:
                 break;
         }
+        if (oldExtension == ".wvc") refreshWavPackCorrection(event.oldPath);
+        if (newExtension == ".wvc") refreshWavPackCorrection(event.path);
     });
 
     // 启动监听
-    m_fileSystemWatcher->start();
+    if (!m_fileSystemWatcher->start())
+        DIAG_ACTION_FMT("Watcher", "No live watch started (%zu roots)", watchDirectories.size());
 }
 
 void Database::stopFileSystemWatcher() {
-    if (m_fileSystemWatcher) {
-        m_fileSystemWatcher->stop();
-        delete m_fileSystemWatcher;
-        m_fileSystemWatcher = nullptr;
-    }
+    if (m_watcherRootRefreshThread.joinable()) m_watcherRootRefreshThread.join();
+    m_fileSystemWatcher.reset();
+    m_watcherLibraryRoots.clear();
     stopWatcherRescanWorker();
+}
+
+AudioRecord Database::getWatcherFileByPath(const std::string& filePath) {
+    auto record = getFileByPath(filePath);
+#ifdef _WIN32
+    if (record.id <= 0) {
+        const fs::path path = Utf8ToPath(filePath);
+        const auto folder = HarkenSearch::CanonicalFolderPath(PathToUtf8(path.parent_path()));
+        const auto name = PathToUtf8(path.filename());
+        const char* query =
+            "SELECT file_path FROM audio_files WHERE folder_path = ? AND file_name = ? COLLATE NOCASE LIMIT 1";
+        auto* statement = checkoutStmt(query);
+        if (!statement) return record;
+        sqlite3_bind_text(statement, 1, folder.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, name.c_str(), -1, SQLITE_TRANSIENT);
+        std::string storedPath;
+        if (sqlite3_step(statement) == SQLITE_ROW) storedPath = safeGetText(statement, 0);
+        returnStmt(query, statement);
+        if (!storedPath.empty()) record = getFileByPath(storedPath);
+    }
+#endif
+    return record;
+}
+
+void Database::refreshWavPackCorrection(const std::string& correctionPath) {
+    auto mainPath = Utf8ToPath(correctionPath);
+    auto refresh = [this](const std::string& path) {
+        auto record = getWatcherFileByPath(path);
+        if (record.id <= 0) return;
+        uint32_t sampleRate = 0;
+        uint32_t channels = 0;
+        uint64_t frames = 0;
+        float duration = 0;
+        std::optional<bool> lossless;
+        if (!readAudioFileInfo(Utf8ToPath(record.filePath), sampleRate, channels, frames, duration, &lossless) ||
+            lossless == record.wavPackLossless)
+            return;
+        record.wavPackLossless = lossless;
+        if (updateFile(record))
+            notifyWatcherChange(WatcherChangeType::Modified, record.filePath);
+    };
+    mainPath.replace_extension(".wv");
+    refresh(PathToUtf8(mainPath));
+#ifndef _WIN32
+    mainPath.replace_extension(".WV");
+    refresh(PathToUtf8(mainPath));
+#endif
+}
+
+void Database::notifyWatcherChange(WatcherChangeType type, const std::string& path) {
+    invalidateFacetQueryCache();
+    bumpDataRevision();
+    if (m_watcherChangeCallback) m_watcherChangeCallback(type, path);
 }
 
 void Database::handleFileSystemEvent(const std::string& filePath, bool isAdded, bool isDeleted, bool isModified) {
     if (!m_db || filePath.empty()) return;
 
-    // The watcher may race with removal; verify existence and file type before reading metadata.
-    if (isAdded || isModified) {
-        if (Platform::FileSystem::ProbePath(filePath) !=
-                Platform::FileSystem::PathStatus::Present) return;
-        if (Platform::FileSystem::IsDirectory(filePath)) return;
-    }
-
+    const auto pathStatus = Platform::FileSystem::ProbePath(filePath);
     if (isDeleted) {
-        removeFileByPath(filePath);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Deleted, filePath);
+        if (pathStatus != Platform::FileSystem::PathStatus::Missing) return;
+        const auto record = getWatcherFileByPath(filePath);
+        if (record.id > 0 && removeFileByPath(record.filePath))
+            notifyWatcherChange(WatcherChangeType::Deleted, record.filePath);
         return;
     }
 
-    if (isAdded) {
-        // 文件添加：检查是否已存在
-        if (fileExists(filePath)) return;
+    if ((!isAdded && !isModified) || pathStatus != Platform::FileSystem::PathStatus::Present) return;
+    const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
+    if (!fileInfo.isRegularFile || !fileInfo.sizeAvailable) return;
 
-        // Read audio properties.
-        AudioRecord record;
-        record.filePath = filePath;
-
-        try {
-            fs::path p = Utf8ToPath(filePath);
-            record.fileName = PathToUtf8(p.filename());
-            record.extension = PathToUtf8(p.extension());
-            record.folderPath = PathToUtf8(p.parent_path());
-
-            // Read file size and modification time.
-            const auto fileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            record.fileSize = fileInfo.sizeAvailable ? fileInfo.sizeBytes : 0;
-            record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-        } catch (...) {
-            return; // 文件路径解析失败
+    auto record = getWatcherFileByPath(filePath);
+    const bool newRecord = record.id <= 0;
+    try {
+        const auto path = Utf8ToPath(filePath);
+        if (newRecord) {
+            record.filePath = filePath;
+            record.fileName = PathToUtf8(path.filename());
+            record.folderPath = PathToUtf8(path.parent_path());
+            record.dateAdded = static_cast<int64_t>(std::time(nullptr));
         }
 
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          record.sampleRate,
-                          record.channels,
-                          record.totalFrames,
-                          record.durationSeconds,
-                          &record.wavPackLossless);
-        
-        // Read metadata tags.
-        AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) record.title = metadata.title;
-            if (!metadata.artist.empty()) record.artist = metadata.artist;
-            if (!metadata.album.empty()) record.album = metadata.album;
-            if (!metadata.albumArtist.empty()) record.albumArtist = metadata.albumArtist;
-            if (metadata.replayGainTrack != 0.0f) record.replayGainTrack = metadata.replayGainTrack;
-            if (metadata.replayGainAlbum != 0.0f) record.replayGainAlbum = metadata.replayGainAlbum;
-            if (metadata.track > 0) record.trackNumber = metadata.track;
-            if (metadata.disc > 1) record.discNumber = metadata.disc;
-            if (!metadata.description.empty()) record.description = metadata.description;
-            if (!metadata.category.empty()) record.category = metadata.category;
-            else if (!metadata.genre.empty()) record.category = metadata.genre;
-
-            if (!metadata.genre.empty()) record.rawGenre = metadata.genre;
-            if (!metadata.instruments.empty()) record.rawInstruments = metadata.instruments;
-            TagVocabularyMapper::normalize(
-                record.rawGenre,
-                record.rawInstruments,
-                record.normGenre,
-                record.normInstruments,
-                record.normMoodTags,
-                record.vocalType
-            );
-            if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) record.keywords = metadata.comment;
-            PopulateExtendedMeta(record.meta, metadata);
-        }
-
-        record.dateAdded = (int64_t)std::time(nullptr);
-        record.lastIndexed = record.dateAdded;
-
-        addFile(record);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Added, filePath);
-        return;
-    }
-
-    if (isModified) {
-        // 文件修改：更新元数据
-        AudioRecord existing = getFileByPath(filePath);
-        if (existing.id <= 0) {
-            // If the path is not in the database, handle it as an addition.
-            handleFileSystemEvent(filePath, true, false, false);
+        record.extension = GetExtensionUtf8(filePath);
+        record.fileSize = fileInfo.sizeBytes;
+        record.fileMtime = Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
+        if (!readAudioFileInfo(path, record.sampleRate, record.channels, record.totalFrames,
+                               record.durationSeconds, &record.wavPackLossless))
             return;
-        }
 
-        // Check whether the modification time actually changed.
-        try {
-            const int64_t newMtime =
-                Platform::FileSystem::LastWriteTimeUnixSeconds(filePath);
-            if (newMtime > 0) {
-                if (newMtime == existing.fileMtime) return; // No effective change.
-                existing.fileMtime = newMtime;
-            }
-            const auto modifiedFileInfo = Platform::FileSystem::ProbeRegularFile(filePath);
-            existing.fileSize = modifiedFileInfo.sizeAvailable
-                ? modifiedFileInfo.sizeBytes
-                : std::numeric_limits<uint64_t>::max();
-        } catch (...) {}
-
-        readAudioFileInfo(Utf8ToPath(filePath),
-                          existing.sampleRate,
-                          existing.channels,
-                          existing.totalFrames,
-                          existing.durationSeconds,
-                          &existing.wavPackLossless);
-        
-        // Re-read metadata tags.
         AudioMetadata metadata;
-        if (MetadataReader::readMetadata(filePath, metadata)) {
-            if (!metadata.title.empty()) existing.title = metadata.title;
-            if (!metadata.artist.empty()) existing.artist = metadata.artist;
-            if (!metadata.album.empty()) existing.album = metadata.album;
-            if (!metadata.albumArtist.empty()) existing.albumArtist = metadata.albumArtist;
-            if (metadata.track > 0) existing.trackNumber = metadata.track;
-            if (metadata.disc > 1) existing.discNumber = metadata.disc;
-            if (!metadata.description.empty()) existing.description = metadata.description;
-            if (!metadata.category.empty()) existing.category = metadata.category;
-            else if (!metadata.genre.empty()) existing.category = metadata.genre;
-            if (!metadata.keywords.empty()) existing.keywords = metadata.keywords;
-            else if (!metadata.comment.empty()) existing.keywords = metadata.comment;
-            PopulateExtendedMeta(existing.meta, metadata);
-        }
-
-        existing.lastIndexed = (int64_t)std::time(nullptr);
-        updateFile(existing);
-        if (m_watcherChangeCallback)
-            m_watcherChangeCallback(WatcherChangeType::Modified, filePath);
+        if (MetadataReader::readMetadata(filePath, metadata))
+            ApplyAudioMetadataToRecord(record, metadata);
+    } catch (...) {
+        return;
     }
+
+    record.lastIndexed = static_cast<int64_t>(std::time(nullptr));
+    if (upsertFile(record, newRecord))
+        notifyWatcherChange(newRecord ? WatcherChangeType::Added : WatcherChangeType::Modified, record.filePath);
 }
 
 void Database::interrupt() {
@@ -21916,36 +22479,46 @@ void Database::interrupt() {
 
 // Fast search suggestions backed by the FTS5 vocabulary index.
 
-std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit) {
+std::vector<std::string> Database::getSearchSuggestions(const std::string& query, int limit, int maxTermBytes) {
     std::vector<std::string> results;
-    if (!m_db || query.empty() || limit <= 0) return results;
+    if (!m_db || query.empty() || limit <= 0 || maxTermBytes < 2) return results;
 
     // FTS terms are lowercase, so normalize the query before the range scan.
     std::string lowerQuery = query;
-    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(), ::tolower);
+    std::transform(lowerQuery.begin(), lowerQuery.end(), lowerQuery.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
 
     // Build the exclusive upper bound for the B-tree prefix query.
     std::string upperQuery = lowerQuery;
     upperQuery.back() = static_cast<char>(upperQuery.back() + 1);
 
-    // Indexed prefix query:
-    // Use the B-tree index and rank by document frequency without a temporary GROUP BY.
-    const char* sql = "SELECT term FROM audio_files_vocab "
-                      "WHERE term >= ? AND term < ? "
-                      "ORDER BY doc DESC LIMIT ?";
+    const char* sql = "SELECT term FROM temp.audio_files_suggestion_vocab "
+                      "WHERE term >= ?1 AND term < ?2 "
+                      "AND col IN ('file_name', 'title', 'artist', 'album', 'description', 'keywords', 'category') "
+                      "AND length(term) <= min(?4, 32) AND (length(term) > 1 OR unicode(term) > 127) "
+                      "AND term GLOB '*[^0-9]*' "
+                      "AND instr(?5, '|' || ltrim(term, '0123456789') || '|') = 0 "
+                      "AND aura_utf8_bytes(term) <= ?4 "
+                      "GROUP BY term ORDER BY max(doc) DESC, length(term), term LIMIT ?3";
+    static const std::string extensionTokens = [] {
+        std::string tokens = "|";
+        for (const auto& extension : AUDIO_EXTENSIONS) {
+            tokens.append(extension, 1, std::string::npos);
+            tokens.push_back('|');
+        }
+        return tokens;
+    }();
 
     sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(stmt, 1, lowerQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_text(stmt, 2, upperQuery.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_int(stmt, 3, limit);
+        sqlite3_bind_int(stmt, 4, maxTermBytes);
+        sqlite3_bind_text(stmt, 5, extensionTokens.c_str(), -1, SQLITE_STATIC);
 
         while (sqlite3_step(stmt) == SQLITE_ROW) {
-            std::string term = safeGetText(stmt, 0);
-            // Drop one-character terms and filename-extension tokens.
-            if (term.length() > 1 && term.find(".wav") == std::string::npos && term.find(".mp3") == std::string::npos) {
-                results.push_back(term);
-            }
+            results.emplace_back(safeGetText(stmt, 0));
         }
         sqlite3_finalize(stmt);
     }
