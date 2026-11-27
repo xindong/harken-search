@@ -4473,6 +4473,10 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     std::string searchCatExpr  = "IFNULL(category,'')";
 
     int paramIdx = 1;
+    // SET expressions read the pre-update row, so a patched harken_meta has to
+    // feed search_data through its bound value; reading the column would keep
+    // the values that were just saved out of the search index.
+    int harkenParamIdx = 0;
 
     // Sort text fields so equivalent patches reuse the same SQL plan.
     std::vector<std::string> sortedTextKeys;
@@ -4490,6 +4494,7 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
         if (col == "description") searchDescExpr = "?" + std::to_string(paramIdx);
         else if (col == "keywords") searchKwExpr = "?" + std::to_string(paramIdx);
         else if (col == "category") searchCatExpr = "?" + std::to_string(paramIdx);
+        else if (col == "harken_meta") harkenParamIdx = paramIdx;
         paramIdx++;
     }
 
@@ -4513,7 +4518,13 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     // Build search_data expression including searchable extended fields
     std::string searchExtra = BuildSearchableExtendedSearchSql(
         [](const char* column) { return std::string(column); });
-    searchExtra += HarkenMetaSearchSql("harken_meta");
+    if (harkenParamIdx > 0) {
+        const std::string harkenExpr = "?" + std::to_string(harkenParamIdx);
+        searchExtra += " || ' ' || IFNULL(json_extract(" + harkenExpr + ",'$.category'),'')" +
+                       " || ' ' || IFNULL(json_extract(" + harkenExpr + ",'$.function'),'')";
+    } else {
+        searchExtra += HarkenMetaSearchSql("harken_meta");
+    }
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
         ", search_data = aura_search_data(file_name || ' ' || IFNULL(title,'') || ' ' || " +
