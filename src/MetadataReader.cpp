@@ -904,6 +904,15 @@ void ApplyVorbisCommentEntry(const std::string& key, const std::string& value, A
     }
 }
 
+// Vorbis files routinely carry only music tags. Those fields must count as a
+// successful read, otherwise the scan and import paths drop the whole comment
+// block just because no title or artist is present.
+bool HasVorbisMusicOnlyData(const AudioMetadata& metadata) {
+    return !metadata.composer.empty() || !metadata.bpm.empty() ||
+           !metadata.musicalKey.empty() || !metadata.customTextTags.empty() ||
+           metadata.year > 0;
+}
+
 // FLAC: walk the metadata block chain and read the VORBIS_COMMENT block.
 // Blocks we do not need (SEEKTABLE, PICTURE, ...) are skipped by length so a
 // large embedded picture never gets pulled into memory here.
@@ -956,7 +965,7 @@ bool ReadFlacVorbisComment(const std::string& filePath, AudioMetadata& metadata,
 
     for (const auto& entry : entries) ApplyVorbisCommentEntry(entry.first, entry.second, metadata);
     customTagsRead = commentParsed && complete;
-    return metadata.hasData();
+    return metadata.hasData() || HasVorbisMusicOnlyData(metadata);
 }
 
 // Ogg: assemble packets from page lacing values and read the comment packet
@@ -1042,7 +1051,7 @@ bool ReadOggVorbisComment(const std::string& filePath, AudioMetadata& metadata, 
 
     for (const auto& entry : entries) ApplyVorbisCommentEntry(entry.first, entry.second, metadata);
     customTagsRead = commentParsed && complete;
-    return metadata.hasData();
+    return metadata.hasData() || HasVorbisMusicOnlyData(metadata);
 }
 
 }  // namespace

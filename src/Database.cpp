@@ -1,4 +1,6 @@
 #include "Database.h"
+
+#include <functional>
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
 // Display sites (reverse map): getLastError -> main.cpp 10484 switchError /
 // 31884 newDbError, AsyncSearchRefreshCompletionStateAdapter, BackfillWorkerPool
@@ -9252,8 +9254,11 @@ bool Database::isCoverTileMembershipMaintenancePending() {
  * indexed values are preserved. A cursor keeps the pass resumable; the marker
  * set at completion prevents it from ever running again.
  *
- * Returns >0 processed rows, 0 when there is nothing to do right now, -1 when
- * the pass is finished or cannot run on this connection.
+ * Returns >0 processed rows, -1 when the pass is finished, cannot run on this
+ * connection, or stopped early and must be retried. A row whose write fails or
+ * that arrives after a cancel keeps its place: the cursor only advances over
+ * rows that really finished, and the completion marker is written only after a
+ * clean empty read.
  */
 int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
     if (!m_db || batchSize <= 0) return -1;
@@ -9266,13 +9271,15 @@ int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
     const int64_t cursor = ReadAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey);
     {
         sqlite3_stmt* stmt = nullptr;
+        // Any still-empty target column qualifies: a row where the user already
+        // filled the composer must still gain BPM, key or custom tags.
         const char* sql =
             "SELECT id FROM audio_files "
             "WHERE id > ?1 "
             "  AND lower(extension) IN ('flac','.flac','ogg','.ogg') "
-            "  AND IFNULL(composer,'') = '' AND IFNULL(bpm,'') = '' "
-            "  AND IFNULL(musical_key,'') = '' "
-            "  AND IFNULL(id3_text_tags,'') = '' "
+            "  AND (IFNULL(composer,'') = '' OR IFNULL(bpm,'') = '' "
+            "       OR IFNULL(musical_key,'') = '' OR IFNULL(track_year,'') = '' "
+            "       OR IFNULL(id3_text_tags,'') = '') "
             "ORDER BY id LIMIT ?2;";
         if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             m_lastError = sqlite3_errmsg(m_db);
@@ -9280,10 +9287,15 @@ int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
         }
         sqlite3_bind_int64(stmt, 1, cursor);
         sqlite3_bind_int(stmt, 2, batchSize);
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
+        int step = SQLITE_ROW;
+        while ((step = sqlite3_step(stmt)) == SQLITE_ROW) {
             ids.push_back(sqlite3_column_int64(stmt, 0));
         }
+        const bool queryComplete = step == SQLITE_DONE;
+        if (!queryComplete) m_lastError = sqlite3_errmsg(m_db);
         sqlite3_finalize(stmt);
+        // A failed read is not the end of the data: never mark the pass done.
+        if (!queryComplete) return -1;
     }
 
     if (ids.empty()) {
@@ -9293,47 +9305,165 @@ int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
         return -1;
     }
 
+    int64_t lastCompletedId = cursor;
+    int processed = 0;
     for (int64_t fileId : ids) {
+        // Closing the library or switching databases stops the pass between
+        // files instead of waiting for the rest of a 256-row batch.
+        if (m_coverPhashBackfillCancel.load(std::memory_order_acquire)) break;
+
         AudioRecord record = getFileById(fileId);
-        if (record.id <= 0) continue;
+        if (record.id <= 0) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
+        }
 
         AudioMetadata metadata;
         const bool foundMetadata = MetadataReader::readMetadata(record.filePath, metadata);
-        if (!foundMetadata && !metadata.customTextTagsRead) continue;
+        if (!foundMetadata && !metadata.customTextTagsRead) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
+        }
 
-        bool changed = false;
-        if (record.getMeta("composer").empty() && !metadata.composer.empty()) {
-            record.meta["composer"] = metadata.composer;
-            changed = true;
+        // Values the row still needs; empty means "leave the stored column alone".
+        const std::string composer = record.getMeta("composer").empty() ? metadata.composer : std::string();
+        const std::string bpm = record.getMeta("bpm").empty() ? metadata.bpm : std::string();
+        const std::string musicalKey = record.getMeta("musical_key").empty() ? metadata.musicalKey : std::string();
+        const std::string trackYear = (record.getMeta("track_year").empty() && metadata.year > 0)
+                                          ? std::to_string(metadata.year)
+                                          : std::string();
+        const bool writeCustomTags = record.id3TextTags.empty() && metadata.customTextTagsRead &&
+                                     !metadata.customTextTags.empty();
+        if (composer.empty() && bpm.empty() && musicalKey.empty() && trackYear.empty() &&
+            !writeCustomTags) {
+            lastCompletedId = fileId;
+            ++processed;
+            continue;
         }
-        if (record.getMeta("bpm").empty() && !metadata.bpm.empty()) {
-            record.meta["bpm"] = metadata.bpm;
-            changed = true;
+
+        // One guarded statement: a column is written only while it is still
+        // empty, so an edit saved while the file was being read survives.
+        if (!fillLegacyVorbisColumns(fileId, composer, bpm, musicalKey, trackYear,
+                                     writeCustomTags ? &metadata.customTextTags : nullptr)) {
+            // Keep the cursor before this row so the next pass retries it.
+            break;
         }
-        if (record.getMeta("musical_key").empty() && !metadata.musicalKey.empty()) {
-            record.meta["musical_key"] = metadata.musicalKey;
-            changed = true;
-        }
-        if (record.getMeta("track_year").empty() && metadata.year > 0) {
-            record.meta["track_year"] = std::to_string(metadata.year);
-            changed = true;
-        }
-        if (record.id3TextTags.empty() && metadata.customTextTagsRead &&
-            !metadata.customTextTags.empty()) {
-            record.id3TextTags = metadata.customTextTags;
-            record.id3TextTagsRead = true;
-            changed = true;
-        }
-        if (changed) {
-            record.lastIndexed = std::time(nullptr);
-            updateFile(record);
-        }
+        // The UI reloads its rows from this counter, so a filled row becomes
+        // searchable in the running session without a restart.
+        bumpDataRevision();
+        lastCompletedId = fileId;
+        ++processed;
     }
 
-    WriteAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey, static_cast<int>(ids.back()));
+    if (lastCompletedId > cursor) {
+        WriteAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey, static_cast<int>(lastCompletedId));
+    }
     DIAG_ACTION_FMT("Database", "LegacyVorbisMetadataRefresh batch: cursor=%lld scanned=%d",
-                    (long long)ids.back(), static_cast<int>(ids.size()));
-    return static_cast<int>(ids.size());
+                    (long long)lastCompletedId, processed);
+    return processed > 0 ? processed : -1;
+}
+
+namespace {
+
+// Fill-only update for the legacy Vorbis backfill. Each target column keeps its
+// current value unless it is empty, evaluated inside the same statement as the
+// write, so a concurrent manual edit cannot be overwritten by a stale copy.
+const std::string& LegacyVorbisFillSql() {
+    static const std::string sql =
+        "UPDATE audio_files SET "
+        "composer = COALESCE(NULLIF(composer,''), ?1, ''), "
+        "bpm = COALESCE(NULLIF(bpm,''), ?2, ''), "
+        "musical_key = COALESCE(NULLIF(musical_key,''), ?3, ''), "
+        "track_year = COALESCE(NULLIF(track_year,''), ?4, ''), "
+        "id3_text_tags = COALESCE(NULLIF(id3_text_tags,''), ?5, ''), "
+        "last_indexed = ?6 "
+        "WHERE id = ?7 AND ("
+        "(IFNULL(composer,'') = '' AND ?1 IS NOT NULL) OR "
+        "(IFNULL(bpm,'') = '' AND ?2 IS NOT NULL) OR "
+        "(IFNULL(musical_key,'') = '' AND ?3 IS NOT NULL) OR "
+        "(IFNULL(track_year,'') = '' AND ?4 IS NOT NULL) OR "
+        "(IFNULL(id3_text_tags,'') = '' AND ?5 IS NOT NULL));";
+    return sql;
+}
+
+// Rebuild search_data from the row as it is now, using the same shared
+// expression as every other writer so a new searchable column needs no change
+// here.
+const std::string& LegacyVorbisSearchDataSql() {
+    static const std::string sql = [] {
+        std::string expression = "file_name";
+        for (const char* column : {"title", "description", "category", "keywords"}) {
+            expression += " || ' ' || IFNULL(" + std::string(column) + ",'')";
+        }
+        expression += SearchableMetadataSql(true);
+        return "UPDATE audio_files SET search_data = aura_search_data(" + expression +
+               ") WHERE id = ?1;";
+    }();
+    return sql;
+}
+
+bool StepSqlite(sqlite3* db, const char* sql, const std::function<void(sqlite3_stmt*)>& bind,
+                std::string* error) {
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        if (error) *error = sqlite3_errmsg(db);
+        return false;
+    }
+    if (bind) bind(stmt);
+    const int step = sqlite3_step(stmt);
+    const bool ok = step == SQLITE_DONE;
+    if (!ok && error) *error = sqlite3_errmsg(db);
+    sqlite3_finalize(stmt);
+    return ok;
+}
+
+}  // namespace
+
+bool Database::fillLegacyVorbisColumns(int64_t fileId,
+                                       const std::string& composer,
+                                       const std::string& bpm,
+                                       const std::string& musicalKey,
+                                       const std::string& trackYear,
+                                       const std::unordered_map<std::string, std::string>* customTags) {
+    if (!m_db || fileId <= 0) return false;
+    const std::string tags = customTags
+        ? nlohmann::json(*customTags).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace)
+        : std::string();
+    const auto bindText = [](sqlite3_stmt* stmt, int index, const std::string& value) {
+        if (value.empty()) {
+            sqlite3_bind_null(stmt, index);
+        } else {
+            sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
+        }
+    };
+
+    // Fill and search_data update share one transaction: a failure rolls the
+    // row back to "still empty" so the next pass retries it as a whole.
+    if (!beginTransaction()) return false;
+    bool ok = StepSqlite(m_db, LegacyVorbisFillSql().c_str(), [&](sqlite3_stmt* stmt) {
+        bindText(stmt, 1, composer);
+        bindText(stmt, 2, bpm);
+        bindText(stmt, 3, musicalKey);
+        bindText(stmt, 4, trackYear);
+        if (tags.empty()) sqlite3_bind_null(stmt, 5);
+        else sqlite3_bind_text(stmt, 5, tags.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(stmt, 6, static_cast<sqlite3_int64>(std::time(nullptr)));
+        sqlite3_bind_int64(stmt, 7, fileId);
+    }, &m_lastError);
+    const bool filled = ok && sqlite3_changes(m_db) > 0;
+    if (ok && filled) {
+        ok = StepSqlite(m_db, LegacyVorbisSearchDataSql().c_str(), [&](sqlite3_stmt* stmt) {
+            sqlite3_bind_int64(stmt, 1, fileId);
+        }, &m_lastError);
+    }
+    if (ok) {
+        ok = commitTransaction();
+    } else {
+        rollbackTransaction();
+    }
+    return ok;
 }
 
 int Database::repairCoverTileMembershipBatch(int batchSize) {

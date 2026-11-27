@@ -767,6 +767,15 @@ public:
     // One-time FLAC/OGG backfill: returns >0 processed rows, 0 when idle
     // without progress, -1 when it has completed or cannot run.
     int refreshLegacyVorbisMetadataBatch(int batchSize);
+    // Fill-only write used by the backfill: a target column is written only
+    // while it is still empty, in the same statement, so a concurrent manual
+    // edit survives. Values left empty and a null tag pointer are not written.
+    bool fillLegacyVorbisColumns(int64_t fileId,
+                                 const std::string& composer,
+                                 const std::string& bpm,
+                                 const std::string& musicalKey,
+                                 const std::string& trackYear,
+                                 const std::unordered_map<std::string, std::string>* customTags);
     int64_t countAudioCoverPresenceCandidates();
     int countCoverRegistryEntries();
     int pruneOrphanCoverCaches();

@@ -256,6 +256,37 @@ int main() {
     Check(splitMetadata.composer == "ElderScore", "OGG spanning packet keeps composer");
     Check(splitMetadata.title == "Flac Room Tone", "OGG spanning packet keeps title");
 
+    // --- Vorbis files that carry only music tags -------------------------
+    const std::vector<std::string> musicOnlyEntries = {
+        "COMPOSER=" "OnlyScore",
+        "BPM=199",
+        "INITIALKEY=C#m",
+        "VENDOR ONLY=" "SoloValue",
+    };
+    const fs::path musicOnlyFlac =
+        fixture.Write("music_only.flac", BuildFlac(musicOnlyEntries, true, false));
+    AudioMetadata musicOnlyMetadata;
+    bool musicOnlyCustomRead = false;
+    Check(MetadataReader::readMetadata(musicOnlyFlac.u8string(), musicOnlyMetadata, &musicOnlyCustomRead),
+          "FLAC with only music tags still counts as readable");
+    Check(musicOnlyCustomRead, "music-only FLAC still reports a complete comment read");
+    Check(musicOnlyMetadata.composer == "OnlyScore" && musicOnlyMetadata.bpm == "199" &&
+              musicOnlyMetadata.musicalKey == "C#m",
+          "music-only FLAC keeps composer, BPM and key");
+    Check(musicOnlyMetadata.customTextTags.count("VENDOR ONLY") == 1,
+          "music-only FLAC keeps its custom tag");
+
+    const fs::path musicOnlyOgg =
+        fixture.Write("music_only.ogg", BuildOgg(musicOnlyEntries, false));
+    AudioMetadata musicOnlyOggMetadata;
+    bool musicOnlyOggRead = false;
+    Check(MetadataReader::readMetadata(musicOnlyOgg.u8string(), musicOnlyOggMetadata, &musicOnlyOggRead),
+          "OGG with only music tags still counts as readable");
+    Check(musicOnlyOggMetadata.musicalKey == "C#m" && musicOnlyOggMetadata.bpm == "199",
+          "music-only OGG keeps key and BPM");
+    Check(musicOnlyOggMetadata.customTextTags.count("VENDOR ONLY") == 1,
+          "music-only OGG keeps its custom tag");
+
     // --- unknown container -------------------------------------------------
     const fs::path unknown = fixture.Write("broken.ogg", "not-an-ogg-container");
     AudioMetadata unknownMetadata;
