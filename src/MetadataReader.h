@@ -123,6 +123,11 @@ public:
     // Parse iXML chunk data (embedded in WAV files)
     static bool parseIXML(const std::string& xmlData, AudioMetadata& metadata);
 
+    // Read the raw iXML chunk payload from a WAV file. Returns false when the
+    // file is not RIFF/WAVE or has no iXML chunk.
+    static bool readIXMLChunk(const std::string& filePath, std::string& xmlData,
+                              std::string& errorMessage);
+
 private:
     // Helper functions
     static std::string trimString(const std::string& str);

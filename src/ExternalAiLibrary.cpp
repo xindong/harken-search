@@ -1,4 +1,5 @@
 #include "ExternalAiLibrary.h"
+#include "HarkenMeta.h"
 #include "SearchTextIndex.h"
 #include "SimilarityAnalysisStore.h"
 #include "sqlite3.h"
@@ -787,15 +788,30 @@ std::optional<bool> HasColumn(sqlite3* database, const char* name) {
 }
 
 bool ValidMetadataPatch(const Json& fields, std::string& error) {
-    static const std::set<std::string> allowed{"title", "description", "category", "keywords"};
+    static const std::set<std::string> allowed{"title", "description", "category", "keywords", "harken"};
     if (!fields.is_object() || fields.empty() || fields.size() > allowed.size()) {
-        error = "fields must contain one to four supported metadata values";
+        error = "fields must contain one to five supported metadata values";
         return false;
     }
     for (auto entry = fields.begin(); entry != fields.end(); ++entry) {
         if (!allowed.count(entry.key())) {
             error = "unsupported metadata field";
             return false;
+        }
+        if (entry.key() == "harken") {
+            if (!entry.value().is_object() || entry.value().empty() || entry.value().size() > 2) {
+                error = "harken must contain one or two values";
+                return false;
+            }
+            for (auto part = entry.value().begin(); part != entry.value().end(); ++part) {
+                if ((part.key() != "category" && part.key() != "function") ||
+                    !part.value().is_string() ||
+                    part.value().get_ref<const std::string&>().size() > 4096) {
+                    error = "harken values must be category or function text of at most 4096 bytes";
+                    return false;
+                }
+            }
+            continue;
         }
         if (!entry.value().is_string() || entry.value().get_ref<const std::string&>().size() > 4096) {
             error = "metadata values must be text of at most 4096 bytes";
@@ -1159,13 +1175,14 @@ Json ExternalAiLibrary::GetMetadata(std::int64_t fileId) {
         return {{"status", "query_failed"}};
     }
     auto statement = Prepare(session.Database(),
-        "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
+        "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1");
     if (!statement || sqlite3_bind_int64(statement.get(), 1, fileId) != SQLITE_OK) {
         return {{"status", "query_failed"}};
     }
     if (sqlite3_step(statement.get()) != SQLITE_ROW) {
         return {{"status", "reference_not_found"}};
     }
+    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(std::string(SqlText(statement.get(), 5)));
     return {
         {"status", "ok"},
         {"file_id", fileId},
@@ -1176,6 +1193,11 @@ Json ExternalAiLibrary::GetMetadata(std::int64_t fileId) {
             {"description", std::string(SqlText(statement.get(), 2))},
             {"category", std::string(SqlText(statement.get(), 3))},
             {"keywords", std::string(SqlText(statement.get(), 4))},
+            {"harken", {
+                {"category", harkenValues.category},
+                {"function", harkenValues.function},
+                {"source", harkenValues.source},
+            }},
         }},
     };
 }
@@ -1219,16 +1241,40 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
     }
 
     auto existing = Prepare(raw,
-        "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
+        "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1");
     if (!existing || sqlite3_bind_int64(existing.get(), 1, fileId) != SQLITE_OK ||
         sqlite3_step(existing.get()) != SQLITE_ROW) {
         error = "metadata target not found";
         return false;
     }
     const std::string fileName = std::string(SqlText(existing.get(), 0));
+    const std::string oldHarken = std::string(SqlText(existing.get(), 5));
 
-    const std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(
-        fileName + " " + title + " " + description + " " + category + " " + keywords);
+    std::string newHarken = oldHarken;
+    if (fields.contains("harken")) {
+        if (HarkenMeta::IsManual(oldHarken)) {
+            error = "harken_meta_manual";
+            return false;
+        }
+        HarkenMeta::Update update;
+        const auto& harkenFields = fields.at("harken");
+        if (harkenFields.contains("category")) {
+            update.setCategory = true;
+            update.category = harkenFields.at("category").get<std::string>();
+        }
+        if (harkenFields.contains("function")) {
+            update.setFunction = true;
+            update.function = harkenFields.at("function").get<std::string>();
+        }
+        update.setSource = true;
+        update.source = "ai";
+        newHarken = HarkenMeta::Merge(oldHarken, update);
+    }
+
+    std::string searchSource = fileName + " " + title + " " + description + " " + category + " " + keywords;
+    const std::string harkenSearch = HarkenMeta::SearchText(newHarken);
+    if (!harkenSearch.empty()) searchSource += " " + harkenSearch;
+    const std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchSource);
     char* beginError = nullptr;
     if (sqlite3_exec(raw, "BEGIN IMMEDIATE", nullptr, nullptr, &beginError) != SQLITE_OK) {
         sqlite3_free(beginError);
@@ -1236,16 +1282,17 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
         return false;
     }
     const std::string sql = *hasSearchData
-        ? "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,search_data=?5 WHERE id=?6"
-        : "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4 WHERE id=?5";
+        ? "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,harken_meta=?5,search_data=?6 WHERE id=?7"
+        : "UPDATE audio_files SET title=?1,description=?2,category=?3,keywords=?4,harken_meta=?5 WHERE id=?6";
     auto update = Prepare(raw, sql);
-    const int idParameter = *hasSearchData ? 6 : 5;
+    const int idParameter = *hasSearchData ? 7 : 6;
     const bool bound = update &&
         BindText(update.get(), 1, title) &&
         BindText(update.get(), 2, description) &&
         BindText(update.get(), 3, category) &&
         BindText(update.get(), 4, keywords) &&
-        (!*hasSearchData || BindText(update.get(), 5, searchData)) &&
+        BindText(update.get(), 5, newHarken) &&
+        (!*hasSearchData || BindText(update.get(), 6, searchData)) &&
         sqlite3_bind_int64(update.get(), idParameter, fileId) == SQLITE_OK;
     if (!bound || sqlite3_step(update.get()) != SQLITE_DONE || sqlite3_changes(raw) != 1) {
         sqlite3_exec(raw, "ROLLBACK", nullptr, nullptr, nullptr);

@@ -3,8 +3,10 @@
 
 struct InfoEditValues {
     std::string description, keywords, category;
+    std::string harkenCategory, harkenFunction;
     bool operator==(const InfoEditValues& other) const {
-        return description == other.description && keywords == other.keywords && category == other.category;
+        return description == other.description && keywords == other.keywords && category == other.category &&
+            harkenCategory == other.harkenCategory && harkenFunction == other.harkenFunction;
     }
 };
 

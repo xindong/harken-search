@@ -74,6 +74,13 @@ public:
                                     const MetadataFieldPatch& patch,
                                     std::string& errorMessage);
 
+    // Write the Harken-owned iXML USER/HARKEN section without touching the
+    // standard BEXT/iXML/ID3 fields. WAV keeps one merged iXML chunk; FLAC
+    // stores the same XML payload in a vendor APPLICATION block.
+    static bool writeHarkenMetadata(const std::string& audioFilePath,
+                                    const std::string& harkenMetaJson,
+                                    std::string& errorMessage);
+
     // Batch field writeback. Returns number of files successfully written.
     static int writeMetadataFieldsBatch(const std::vector<std::string>& audioPaths,
                                         const MetadataFieldPatch& patch,

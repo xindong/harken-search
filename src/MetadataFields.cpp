@@ -47,6 +47,8 @@ void MetadataFieldManager::initialize() {
     registerField("Source",         "Source",            "来源",     FieldType::String, 64,   false, false, "Basic", "Original source");
     registerField("Category",      "Category",          "分类",     FieldType::String, 64,   true,  true,  "Basic", "Primary category");
     registerField("SubCategory",   "Sub Category",      "子分类",   FieldType::String, 64,   true,  true,  "Basic", "Sub-category");
+    registerField("HarkenCategory","Harken Category",   "Harken 分类", FieldType::String, 256, false, false, "Harken", "AI-assigned Harken category stored in harken_meta");
+    registerField("HarkenFunction","Harken Function",   "Harken 功能", FieldType::String, 256, false, false, "Harken", "AI-assigned Harken function stored in harken_meta");
     registerField("CatID",         "Category ID",       "分类ID",   FieldType::String, 12,   false, false, "Basic", "UCS Category ID code");
     registerField("CategoryFull",  "Category Full",     "完整分类", FieldType::String, 256,  false, false, "Basic", "Full category path");
     registerField("FXName",        "FX Name",           "效果名",   FieldType::String, 128,  true,  false, "Basic", "Sound effect name");

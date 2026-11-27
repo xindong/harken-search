@@ -1,4 +1,5 @@
 #include "Database.h"
+#include "HarkenMeta.h"
 // i18n-anchor (F1, RQ-20260911-04): m_lastError/outError/heartbeatMsg feeders.
 // Display sites (reverse map): getLastError -> main.cpp 10484 switchError /
 // 31884 newDbError, AsyncSearchRefreshCompletionStateAdapter, BackfillWorkerPool
@@ -897,8 +898,34 @@ static const ExtMetaCol kExtMetaCols[] = {
     {"shoot_date",         true,  false},
     // System / User
     {"track_colour",       false, false},
+    // Harken-owned AI classification. Stored as a flat JSON object; its values
+    // are aggregated into search_data through json_extract, so the raw JSON
+    // keys never become searchable text.
+    {"harken_meta",        false, false},
 };
 static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
+
+// Bump when the aggregated search_data text changes. Version 3 adds
+// harken_meta values (and the previously omitted searchable extended fields)
+// to the background recompute.
+static constexpr int kSearchDataMigrationVersion = 3;
+
+// Values inside harken_meta that participate in search. Keep this list in sync
+// with HarkenMeta::SearchText.
+static std::string HarkenMetaSearchSql(const std::string& columnExpression) {
+    return " || ' ' || IFNULL(json_extract(" + columnExpression + ",'$.category'),'')" +
+           " || ' ' || IFNULL(json_extract(" + columnExpression + ",'$.function'),'')";
+}
+
+template <typename ColumnExpression>
+static std::string BuildSearchableExtendedSearchSql(ColumnExpression&& columnExpression) {
+    std::string result;
+    for (size_t i = 0; i < kExtMetaCount; ++i) {
+        if (!kExtMetaCols[i].searchable) continue;
+        result += " || ' ' || IFNULL(" + columnExpression(kExtMetaCols[i].col) + ",'')";
+    }
+    return result;
+}
 
 // Columns that MetadataEditPatch may update after whitelist validation.
 static const std::unordered_set<std::string>& EditableTextColumns() {
@@ -933,7 +960,7 @@ static const char* kRecordColumns =
     "scene, take_num, tape, "
     "bw_description, bw_originator, bw_originator_ref, bw_date, bw_time, bw_umid, bw_coding_history, "
     "ixml_project, ixml_note, ixml_file_uid, ixml_track_layout, "
-    "shoot_date, track_colour, "
+    "shoot_date, track_colour, harken_meta, "
     // F-033 Music Mode extended fields
     "album_artist, track_number, disc_number, "
     "energy_tension, energy_drive, "
@@ -960,7 +987,7 @@ static const char* kRecordColumnsAf =
     "af.scene, af.take_num, af.tape, "
     "af.bw_description, af.bw_originator, af.bw_originator_ref, af.bw_date, af.bw_time, af.bw_umid, af.bw_coding_history, "
     "af.ixml_project, af.ixml_note, af.ixml_file_uid, af.ixml_track_layout, "
-    "af.shoot_date, af.track_colour, "
+    "af.shoot_date, af.track_colour, af.harken_meta, "
     // F-033 Music Mode extended fields
     "af.album_artist, af.track_number, af.disc_number, "
     "af.energy_tension, af.energy_drive, "
@@ -2544,7 +2571,7 @@ void Database::preheat() {
         }
         const bool searchDataStillPending =
             primaryWritableConnection &&
-            ReadAppMetaInt(m_db, "search_data_migrated") != 2;
+            ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion;
         const auto decision =
             ResolveAutomaticCoverMaintenanceDecision(
                 maintenanceCtx,
@@ -2992,6 +3019,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "shoot_date", "TEXT");
     // System / User
     ensureColumn(m_db, "audio_files", "track_colour", "TEXT");
+    // Harken-owned AI classification JSON; preserved across rescans.
+    ensureColumn(m_db, "audio_files", "harken_meta", "TEXT DEFAULT ''");
 
     // Audio similarity features (F-028)
     ensureColumn(m_db, "audio_files", "audio_features", "BLOB");
@@ -3029,9 +3058,8 @@ bool Database::createTables() {
     ensureColumn(m_db, "audio_files", "vocal_type",         "TEXT DEFAULT ''");
     ensureColumn(m_db, "audio_files", "snoozed_until",      "INTEGER DEFAULT 0");
 
-    // Version 2 recomputes every existing row. Version 1 only filled NULLs, so
-    // bumping the marker alone left old pinyin tokens in place.
-    const int kSearchDataMigrationVersion = 2;
+    // Each version recomputes every existing row. Version 1 only filled NULLs,
+    // so bumping the marker alone left old pinyin tokens in place.
     if (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
         DIAG_ACTION("Database", "SearchDataBackfillDeferred: remaining rows continue in the background");
     }
@@ -4239,6 +4267,7 @@ static const std::string& GetAddFileSql() {
                     kExtMetaCols[i].col + ",'')";
             }
         }
+        searchExpr += HarkenMetaSearchSql("audio_files.harken_meta");
         upsert += ", search_data = aura_search_data(" + searchExpr + ")";
 
         return "INSERT INTO audio_files (" + cols + ") VALUES (" + vals +
@@ -4363,6 +4392,13 @@ bool Database::addFile(const AudioRecord& record) {
             searchDataText += " " + it->second;
         }
     }
+    {
+        auto it = record.meta.find("harken_meta");
+        if (it != record.meta.end() && !it->second.empty()) {
+            const std::string harkenText = HarkenMeta::SearchText(it->second);
+            if (!harkenText.empty()) searchDataText += " " + harkenText;
+        }
+    }
     std::string searchData = HarkenSearch::Search::BuildSearchDataForFts(searchDataText);
     sqlite3_bind_text(stmt, 30, searchData.c_str(), -1, SQLITE_TRANSIENT);
 
@@ -4475,11 +4511,9 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
     if (setClauses.empty()) return false;
 
     // Build search_data expression including searchable extended fields
-    std::string searchExtra;
-    for (size_t i = 0; i < kExtMetaCount; ++i) {
-        if (!kExtMetaCols[i].searchable) continue;
-        searchExtra += " || ' ' || IFNULL(" + std::string(kExtMetaCols[i].col) + ",'')";
-    }
+    std::string searchExtra = BuildSearchableExtendedSearchSql(
+        [](const char* column) { return std::string(column); });
+    searchExtra += HarkenMetaSearchSql("harken_meta");
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
         ", search_data = aura_search_data(file_name || ' ' || IFNULL(title,'') || ' ' || " +
@@ -6345,7 +6379,8 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                 "IFNULL(af.folder_path,'') || ' ' || IFNULL(af.title,'') || ' ' || "
                 "IFNULL(af.artist,'') || ' ' || IFNULL(af.album,'') || ' ' || "
                 "IFNULL(af.category,'') || ' ' || IFNULL(af.description,'') || ' ' || "
-                "IFNULL(af.keywords,'')) LIKE ? ESCAPE '\\'";
+                "IFNULL(af.keywords,'') || ' ' || IFNULL(json_extract(af.harken_meta,'$.category'),'') || ' ' || "
+                "IFNULL(json_extract(af.harken_meta,'$.function'),'')) LIKE ? ESCAPE '\\'";
             bq.bindValues.push_back(pattern);
             bq.whereClause += ")";
         }
@@ -10140,7 +10175,7 @@ static HarkenSearch::Search::SearchDataRecomputeStep PublishSearchDataRecompute(
         ok = execSqlite(db, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
     }
     if (ok) {
-        ok = WriteAppMetaInt(db, "search_data_migrated", 2);
+        ok = WriteAppMetaInt(db, "search_data_migrated", kSearchDataMigrationVersion);
     }
     if (ok) {
         ok = execSqlite(db, "DELETE FROM app_meta WHERE key = 'search_data_recompute_cursor';", &err);
@@ -10186,7 +10221,6 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     if (batchSize <= 0 || !ensureSearchRecomputeConnection()) return SearchDataRecomputeStep::Failed;
     sqlite3* db = m_searchRecomputeDb;
     if (sqlite3_get_autocommit(db) == 0) return SearchDataRecomputeStep::Failed;
-    constexpr int kSearchDataMigrationVersion = 2;
     if (ReadAppMetaInt(db, "search_data_migrated") == kSearchDataMigrationVersion) {
         return SearchDataRecomputeStep::Finished;
     }
@@ -10229,13 +10263,15 @@ HarkenSearch::Search::SearchDataRecomputeStep Database::recomputeSearchDataBatch
     }
 
     sqlite3_stmt* stmt = nullptr;
-    const char* sql =
+    std::string sql =
         "INSERT INTO temp.search_data_recompute_work (id, old_search_data, new_search_data) "
         "SELECT id, search_data, aura_search_data("
         "file_name || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || "
-        "IFNULL(category,'') || ' ' || IFNULL(keywords,'')) "
-        "FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        "IFNULL(category,'') || ' ' || IFNULL(keywords,'') ";
+    sql += BuildSearchableExtendedSearchSql([](const char* column) { return std::string(column); });
+    sql += HarkenMetaSearchSql("harken_meta");
+    sql += ") FROM audio_files WHERE id > ? ORDER BY id LIMIT ?;";
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         DiscardSearchDataRecomputeScratch(db);
         return SearchDataRecomputeStep::Failed;
     }
@@ -10291,7 +10327,7 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
             if (progress) progress->store(-1.0f);
             return false;
         }
-        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2) {
+        if (ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion) {
             std::string err;
             const bool success = !(cancel && cancel->load()) &&
                 execSqlite(m_searchRecomputeDb, "INSERT INTO audio_files_fts(audio_files_fts) VALUES('rebuild');", &err);
@@ -10330,7 +10366,8 @@ bool Database::rebuildFtsIndexBatched(int batchSize, std::atomic<float>* progres
         bool migrated = false;
         {
             std::unique_lock<std::mutex> writerLk(m_writerSerializeMutex);
-            migrated = m_searchRecomputeDb && ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == 2;
+            migrated = m_searchRecomputeDb &&
+                ReadAppMetaInt(m_searchRecomputeDb, "search_data_migrated") == kSearchDataMigrationVersion;
         }
         if (step != HarkenSearch::Search::SearchDataRecomputeStep::Finished || !migrated) {
             DIAG_ACTION("Database", "SearchDataRecompute stopped before replacing the FTS index");
@@ -12502,11 +12539,13 @@ bool Database::updateFilePath(
     newFolderPath = HarkenSearch::CanonicalFolderPath(newFolderPath);
 
     // Update path fields and clear folder artwork in one statement to keep list and detail views aligned.
-    const char* sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
+    std::string sql = "UPDATE audio_files SET file_path = ?, file_name = ?, "
                       "folder_path = ?, folder_cover_key = NULL, folder_cover_src_path = NULL, folder_cover_src_mtime = 0, "
-                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')) WHERE file_path = ?;";
+                      "search_data = aura_search_data(? || ' ' || IFNULL(title,'') || ' ' || IFNULL(description,'') || ' ' || IFNULL(category,'') || ' ' || IFNULL(keywords,'')";
+    sql += HarkenMetaSearchSql("harken_meta");
+    sql += ") WHERE file_path = ?;";
     sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         m_lastError = sqlite3_errmsg(m_db);
         return false;
     }

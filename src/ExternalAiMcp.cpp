@@ -507,8 +507,24 @@ Json ListTools()
                 schema["properties"]["fields"] = {
                     {"type", "object"},
                     {"minProperties", 1},
-                    {"maxProperties", 4},
-                    {"additionalProperties", {{"type", "string"}, {"maxLength", 4096}}},
+                    {"maxProperties", 5},
+                    {"additionalProperties", false},
+                    {"properties", {
+                        {"title", {{"type", "string"}, {"maxLength", 4096}}},
+                        {"description", {{"type", "string"}, {"maxLength", 4096}}},
+                        {"category", {{"type", "string"}, {"maxLength", 4096}}},
+                        {"keywords", {{"type", "string"}, {"maxLength", 4096}}},
+                        {"harken", {
+                            {"type", "object"},
+                            {"minProperties", 1},
+                            {"maxProperties", 2},
+                            {"additionalProperties", false},
+                            {"properties", {
+                                {"category", {{"type", "string"}, {"maxLength", 4096}}},
+                                {"function", {{"type", "string"}, {"maxLength", 4096}}},
+                            }},
+                        }},
+                    }},
                 };
             }
         } else if (tool.kind == ToolKind::ApplyMetadataUpdate) {
@@ -531,16 +547,29 @@ Json ListTools()
 
 bool ValidMetadataFields(const Json& fields)
 {
-    static const std::array<std::string_view, 4> allowed{
-        "title", "description", "category", "keywords",
+    static const std::array<std::string_view, 5> allowed{
+        "title", "description", "category", "keywords", "harken",
     };
     if (!fields.is_object() || fields.empty() || fields.size() > allowed.size()) {
         return false;
     }
     for (auto entry = fields.begin(); entry != fields.end(); ++entry) {
-        if (std::find(allowed.begin(), allowed.end(), std::string_view(entry.key())) == allowed.end()
-            || !entry.value().is_string()
-            || entry.value().get_ref<const std::string&>().size() > 4096) {
+        if (std::find(allowed.begin(), allowed.end(), std::string_view(entry.key())) == allowed.end()) {
+            return false;
+        }
+        if (entry.key() == "harken") {
+            if (!entry.value().is_object() || entry.value().empty() || entry.value().size() > 2) return false;
+            for (auto part = entry.value().begin(); part != entry.value().end(); ++part) {
+                if ((part.key() != "category" && part.key() != "function") ||
+                    !part.value().is_string() ||
+                    part.value().get_ref<const std::string&>().size() > 4096) {
+                    return false;
+                }
+            }
+            continue;
+        }
+        if (!entry.value().is_string() ||
+            entry.value().get_ref<const std::string&>().size() > 4096) {
             return false;
         }
     }
@@ -1149,6 +1178,15 @@ private:
                 }
                 std::string writeError;
                 if (!library_.ApplyMetadata(pending.fileId, pending.fields, writeError)) {
+                    if (writeError == "harken_meta_manual") {
+                        return ToolResult(id, {
+                            {"status", "skipped_manual"},
+                            {"proposal_id", proposalId},
+                            {"file_id", pending.fileId},
+                            {"relative_path", pending.relativePath},
+                            {"reason", "harken_meta was edited manually; AI values were not applied"},
+                        });
+                    }
                     return ToolResult(id, {{"status", "write_failed"}});
                 }
                 Json appliedPayload = {
@@ -1209,7 +1247,16 @@ private:
             }
             Json after = current.value("metadata", Json::object());
             for (auto entry = arguments["fields"].begin(); entry != arguments["fields"].end(); ++entry) {
-                after[entry.key()] = entry.value();
+                if (entry.key() == "harken") {
+                    Json merged = after.value("harken", Json::object());
+                    for (auto part = entry.value().begin(); part != entry.value().end(); ++part) {
+                        merged[part.key()] = part.value();
+                    }
+                    merged["source"] = "ai";
+                    after["harken"] = std::move(merged);
+                } else {
+                    after[entry.key()] = entry.value();
+                }
             }
             const std::string proposalId = "metadata-proposal-" + std::to_string(nextProposalId_++);
             if (proposals_.size() >= 16) {
