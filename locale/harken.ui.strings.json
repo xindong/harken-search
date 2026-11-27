@@ -234,7 +234,6 @@
     {"id":"Task_Stopped","type":"ui","zh":"已停止","en":"Stopped","ja":"停止しました"},
     {"id":"Task_MetadataBatch","type":"ui","zh":"批量改元数据","en":"Updating metadata","ja":"メタデータを一括更新"},
     {"id":"Task_MetadataAppliedFmt","type":"ui","zh":"已更新 %d 条","en":"Updated %d","ja":"%d 件を更新"},
-    {"id":"Task_MetadataFailedFmt","type":"ui","zh":"%d 条失败","en":"%d failed","ja":"%d 件失敗"},
     {"id":"Task_MetadataPreparingFmt","type":"ui","zh":"校验中 %d / %d","en":"Checking %d / %d","ja":"確認中 %d / %d"},
     {"id":"Task_MetadataCancelRequested","type":"ui","zh":"正在取消","en":"Cancelling","ja":"キャンセル中"},
     {"id":"Task_MetadataCancelled","type":"ui","zh":"已取消，未改动","en":"Cancelled, nothing changed","ja":"キャンセルしました（変更なし）"},
