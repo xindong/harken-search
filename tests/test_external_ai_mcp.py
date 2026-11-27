@@ -868,6 +868,7 @@ class ExternalAiMcpTest(unittest.TestCase):
             connection.execute(
                 "UPDATE audio_files SET harken_meta=? WHERE id=1",
                 (json.dumps({"category": "Manual", "function": "Keep", "source": "manual"}),))
+            connection.commit()
 
         with self.live_session(flags) as exchange:
             preview = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
