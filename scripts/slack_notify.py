@@ -553,6 +553,13 @@ def collect_event(env: dict[str, str], payload: dict[str, Any] | None = None) ->
         )
     title = sanitize_plain(format_title(raw_title, translated), TITLE_LIMIT)
     digest_source = extract_summary_section(body)[:BODY_LIMIT]
+    if not translated and raw_title and not has_cjk(title):
+        # No model configured: keep the notice readable in Chinese instead of
+        # posting an English title. This team writes the PR summary in Chinese,
+        # so its first sentence is a usable one-line description.
+        chinese_hint = sanitize_plain(fallback_digest(digest_source), TITLE_LIMIT)
+        if has_cjk(chinese_hint):
+            title = chinese_hint
     digest_raw = ""
     if digest_source:
         kind_label = "新 issue" if kind == "issue" else "已合并的 PR"
