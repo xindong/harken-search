@@ -8521,6 +8521,7 @@ target_compile_features(TestHarkenSearchBootstrapPlan PRIVATE cxx_std_17)
 if(MSVC)
     target_compile_options(TestHarkenSearchBootstrapPlan PRIVATE /W4 /WX /permissive- /utf-8)
     set_target_properties(TestHarkenSearchBootstrapPlan PROPERTIES
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
         LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
     )

@@ -99,6 +99,18 @@ def test_bootstrap_core_link_relationships_remain_unchanged() -> None:
     assert "src/bootstrap/HarkenSearchBootstrapPlan.cpp" in cmake
 
 
+def test_bootstrap_and_its_plan_library_use_the_same_static_msvc_runtime() -> None:
+    cmake = _read(CMAKE_PATH)
+    behavior = _read(BEHAVIOR_TESTS)
+    expected = "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    for source, target in (
+        (cmake, "HarkenSearchBootstrap"),
+        (cmake, "HarkenSearchBootstrapCore"),
+        (behavior, "TestHarkenSearchBootstrapPlan"),
+    ):
+        assert _target_properties(source, target).get("MSVC_RUNTIME_LIBRARY") == expected, target
+
+
 def test_release_compliance_still_forbids_static_libraries() -> None:
     source = _read(COMPLIANCE_PATH)
     assert '"*.lib"' in source
