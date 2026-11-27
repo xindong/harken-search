@@ -6226,6 +6226,55 @@
       "ja": "やり直し"
     },
     {
+      "id": "Undo_UndoActionFmt",
+      "type": "ui",
+      "zh": "撤销「%s」",
+      "en": "Undo \"%s\"",
+      "ja": "「%s」を元に戻す"
+    },
+    {
+      "id": "Undo_RedoActionFmt",
+      "type": "ui",
+      "zh": "重做「%s」",
+      "en": "Redo \"%s\"",
+      "ja": "「%s」をやり直す"
+    },
+    {
+      "id": "Undo_EditColumnFmt",
+      "type": "ui",
+      "zh": "编辑%s",
+      "en": "Edit %s",
+      "ja": "%sを編集"
+    },
+    {
+      "id": "Undo_BatchEditColumnFmt",
+      "type": "ui",
+      "zh": "批量编辑%s",
+      "en": "Batch edit %s",
+      "ja": "%sを一括編集"
+    },
+    {
+      "id": "Undo_BatchEditMetadata",
+      "type": "ui",
+      "zh": "批量编辑元数据",
+      "en": "Batch edit metadata",
+      "ja": "メタデータを一括編集"
+    },
+    {
+      "id": "Undo_RenameFileFmt",
+      "type": "ui",
+      "zh": "重命名 %s",
+      "en": "Rename %s",
+      "ja": "%sをリネーム"
+    },
+    {
+      "id": "Undo_BatchRenameFilesFmt",
+      "type": "ui",
+      "zh": "批量重命名（%d 个文件）",
+      "en": "Batch rename (%d files)",
+      "ja": "一括リネーム（%d ファイル）"
+    },
+    {
       "id": "Undo_ClearAll",
       "type": "ui",
       "zh": "清空历史",

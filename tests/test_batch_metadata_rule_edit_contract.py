@@ -161,6 +161,34 @@ class LocaleContract(unittest.TestCase):
                 self.assertEqual(spec.findall(entry["zh"]), spec.findall(entry["ja"]))
 
 
+class UndoLabelsContract(unittest.TestCase):
+    def test_edit_menu_uses_its_own_next_action_for_undo_and_redo(self) -> None:
+        main = read("src/main.cpp")
+        menu = main[main.index("if (editMenuOpen)"):main.index("ImGui::MenuItem(L(Undo_HistoryTitle))")]
+        for action in ("Undo", "Redo"):
+            with self.subTest(action=action):
+                self.assertRegex(
+                    menu,
+                    rf"RenderUndoMenuLabel\(LStr::Undo_{action}Btn, LStr::Undo_{action}ActionFmt,\s*"
+                    rf"state\.undoStack\.{action.lower()}Description\(\)\)",
+                )
+        batch_apply = main[main.index("bool ApplyBatchRuleEdit("):main.index("undoOp->entries.reserve")]
+        self.assertNotIn('operationName = "Batch edit metadata"', batch_apply)
+        self.assertIn("undoOp->targetColumn = column", batch_apply)
+
+    def test_chinese_formats_quote_the_action_and_name_the_column(self) -> None:
+        ledger = json.loads(read("locale/harken.ui.strings.json"))
+        entries = {entry["id"]: entry for entry in ledger["entries"]}
+        undo = entries["Undo_UndoActionFmt"]
+        redo = entries["Undo_RedoActionFmt"]
+        batch = entries["Undo_BatchEditColumnFmt"]
+        self.assertEqual(undo["zh"] % (batch["zh"] % "标题"), "撤销「批量编辑标题」")
+        self.assertEqual(redo["zh"] % (batch["zh"] % "关键词"), "重做「批量编辑关键词」")
+        for entry in (undo, redo, batch, entries["Undo_EditColumnFmt"]):
+            for language in ("zh", "en", "ja"):
+                self.assertEqual(entry[language].count("%s"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
 

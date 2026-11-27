@@ -102,10 +102,17 @@ struct MetadataPatchEntry {
     std::unordered_map<std::string, std::string> newValues;
 };
 
+enum class MetadataUndoKind {
+    Edit,
+    BatchEdit,
+    WriteUcsCategory,
+};
+
 class MetadataPatchOp : public UndoOperation {
 public:
     std::vector<MetadataPatchEntry> entries;
-    std::string operationName; // e.g. "Edit description", "Batch update category"
+    MetadataUndoKind editKind = MetadataUndoKind::Edit;
+    std::string targetColumn;
 
     std::string description() const override;
     UndoOpType type() const override { return UndoOpType::MetadataPatch; }

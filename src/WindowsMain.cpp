@@ -6988,7 +6988,7 @@ static void PollQaCommandFile(AppState& state) {
                 int skippedCount = 0;
                 int failedCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = rows.size() > 1 ? "Batch edit metadata" : "Edit metadata";
+                undoOp->editKind = rows.size() > 1 ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
 
                 const bool useTxn = rows.size() > 1;
                 bool txnStarted = !useTxn || state.database.beginTransaction();

@@ -13972,7 +13972,8 @@ bool ApplyBatchRuleEdit(AppState& state) {
     std::vector<std::pair<int64_t, MetadataEditPatch>> items;
     std::unordered_map<int64_t, std::string> expected;
     auto undoOp = std::make_unique<MetadataPatchOp>();
-    undoOp->operationName = "Batch edit metadata";
+    undoOp->editKind = MetadataUndoKind::BatchEdit;
+    undoOp->targetColumn = column;
     items.reserve(preview.rows.size());
     undoOp->entries.reserve(preview.rows.size());
     for (const auto& row : preview.rows) {
@@ -19266,7 +19267,8 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     if(keys) patch.setKeywords(values.keywords);
     if(cat) patch.setCategory(values.category);
     auto undo=std::make_unique<MetadataPatchOp>();
-    undo->operationName=state.metadataBatchMode?"Batch edit metadata":"Edit metadata";
+    undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
+    if (patch.fields.size() == 1) undo->targetColumn = patch.fields.begin()->first;
     std::vector<int64_t> ids;
     for(const auto& original:state.infoEditRecords) {
         // Resolve by the captured identity, never by the new selection.
@@ -31959,6 +31961,13 @@ static void PumpExternalAiWriteBridge(AppState& state) {
     });
 }
 
+static std::string RenderUndoMenuLabel(LStr emptyLabel, LStr actionFormat, std::string action) {
+    if (action.empty()) return GetLocalizedString(emptyLabel);
+    LedgerText label;
+    label.setKeyStr(actionFormat, std::move(action));
+    return label.Render();
+}
+
 void RenderUI(AppState& state) {
     PumpExternalAiWriteBridge(state);
     if (state.pendingReverseRestore && state.settings.transportEffectVisibility.reverse &&
@@ -36462,7 +36471,8 @@ void RenderUI(AppState& state) {
                 int svOk = 0, svSkip = 0, svFail = 0;
                 if (!patch.isEmpty()) {
                     auto undoOp = std::make_unique<MetadataPatchOp>();
-                    undoOp->operationName = state.metadataBatchMode ? "Batch edit metadata (full)" : "Edit metadata (full)";
+                    undoOp->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
+                    if (patch.fields.size() == 1) undoOp->targetColumn = patch.fields.begin()->first;
 
                     auto ids = state.metadataBatchMode ? state.metadataBatchIds
                                                       : std::vector<int64_t>{state.metadataEditFileId};
@@ -37287,14 +37297,14 @@ void RenderUI(AppState& state) {
             { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
             {
-                std::string undoLabel = std::string(L(Undo_UndoBtn));
-                if (state.undoStack.canUndo()) undoLabel += "  " + state.undoStack.undoDescription();
+                const std::string undoLabel = RenderUndoMenuLabel(LStr::Undo_UndoBtn, LStr::Undo_UndoActionFmt,
+                    state.undoStack.undoDescription());
                 if (ImGui::MenuItem(undoLabel.c_str(), "Ctrl+Z", false, state.undoStack.canUndo())) {
                     state.undoStack.undo(state.database);
                     RefreshSearchResults(state, false);
                 }
-                std::string redoLabel = std::string(L(Undo_RedoBtn));
-                if (state.undoStack.canRedo()) redoLabel += "  " + state.undoStack.redoDescription();
+                const std::string redoLabel = RenderUndoMenuLabel(LStr::Undo_RedoBtn, LStr::Undo_RedoActionFmt,
+                    state.undoStack.redoDescription());
                 if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, state.undoStack.canRedo())) {
                     state.undoStack.redo(state.database);
                     RefreshSearchResults(state, false);
