@@ -89,16 +89,16 @@ std::wstring Fold(const std::wstring& value)
 }
 #endif
 
-std::vector<std::wstring> Components(const fs::path& path)
+std::vector<fs::path::string_type> Components(const fs::path& path)
 {
-    std::vector<std::wstring> parts;
+    std::vector<fs::path::string_type> parts;
     for (const auto& part : path) {
         parts.push_back(part.native());
     }
     return parts;
 }
 
-bool SameComponent(const std::wstring& left, const std::wstring& right)
+bool SameComponent(const fs::path::string_type& left, const fs::path::string_type& right)
 {
 #ifdef _WIN32
     return Fold(left) == Fold(right);

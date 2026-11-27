@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -141,11 +142,57 @@ inline void InsertLayersByFullPath(
     }
 }
 
+#ifndef _WIN32
+inline std::vector<FolderTreeLayer> BuildNativeFolderTreeLayers(
+    std::string_view folderPath,
+    const std::vector<std::string>& libraryRoots,
+    PathMode mode)
+{
+    const auto trimTrailingSeparators = [](std::string_view path) {
+        const size_t last = path.find_last_not_of('/');
+        return last == std::string_view::npos ? path.substr(0, 1) : path.substr(0, last + 1);
+    };
+    folderPath = trimTrailingSeparators(folderPath);
+    if (folderPath == "/") return {{"/", "/"}};
+
+    size_t rootLength = 0;
+    if (mode == PathMode::Pilot) {
+        for (std::string_view root : libraryRoots) {
+            root = trimTrailingSeparators(root);
+            if (root.empty() || (rootLength != 0 && root.size() >= rootLength)) continue;
+            if (root == "/" ||
+                (folderPath.compare(0, root.size(), root) == 0 &&
+                 (root.size() == folderPath.size() || folderPath[root.size()] == '/'))) {
+                rootLength = root.size();
+            }
+        }
+    }
+
+    std::vector<FolderTreeLayer> layers;
+    if (rootLength == 1) layers.push_back({"/", "/"});
+    for (size_t start = folderPath.find_first_not_of('/'); start != std::string_view::npos;) {
+        const size_t separator = folderPath.find('/', start);
+        const size_t end = std::min(separator, folderPath.size());
+        if (end >= rootLength) {
+            layers.push_back({std::string(folderPath.substr(start, end - start)),
+                              std::string(folderPath.substr(0, end))});
+        }
+        start = folderPath.find_first_not_of('/', end);
+    }
+    return layers;
+}
+#endif
+
 inline std::vector<FolderTreeLayer> BuildFolderTreeLayers(
     const std::string& folderPath,
     const std::vector<std::string>& libraryRoots,
     PathMode mode)
 {
+#ifndef _WIN32
+    if (!folderPath.empty() && folderPath.front() == '/') {
+        return BuildNativeFolderTreeLayers(folderPath, libraryRoots, mode);
+    }
+#endif
     const std::string preserved = NormalizeFolderPathPreserved(folderPath);
     const std::vector<std::string> parts = SplitFolderPathSegments(preserved);
     std::vector<FolderTreeLayer> layers;
