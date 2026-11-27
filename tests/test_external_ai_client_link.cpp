@@ -524,6 +524,53 @@ void TestIndependentTomlClients(const fs::path& root, const ExternalAiLinkTarget
           HarkenSearch::ExternalAiClientLinkAuthorized(codex), "dual: revoking Cindy does not revoke standalone Codex");
 }
 
+#ifdef __APPLE__
+void TestConfigAndMarkerLinkPolicies(const fs::path& root, const ExternalAiLinkTarget& target)
+{
+    const auto client = ExternalAiClient::Cindy;
+    const auto directory = root / "link-policies";
+    fs::create_directories(directory);
+    const auto config = directory / "mcp.json";
+    const auto configLink = directory / "mcp-link.json";
+    const auto dangling = directory / "mcp-missing.json";
+    const auto cycle = directory / "mcp-cycle.json";
+    const auto marker = directory / "mcp.json.harken-link";
+    const auto markerTarget = directory / "saved-marker";
+    ExternalAiLinkStatus status;
+    Check(HarkenSearch::LinkExternalAiClient(client, config.u8string(), target, status),
+        "link policies: create an isolated configuration and marker");
+    const auto configBytes = ReadAll(config);
+    const auto markerBytes = ReadAll(marker);
+    fs::create_symlink(config.filename(), configLink);
+    fs::create_symlink("missing.json", dangling);
+    fs::create_symlink(cycle.filename(), cycle);
+
+    const auto liveStatus = HarkenSearch::QueryExternalAiClientLink(client, configLink.u8string(), target);
+    const auto danglingStatus = HarkenSearch::QueryExternalAiClientLink(client, dangling.u8string(), target);
+    Check(liveStatus.state == ExternalAiLinkState::Disconnected && liveStatus.needsRelink &&
+            danglingStatus.state == ExternalAiLinkState::Disconnected && !danglingStatus.needsRelink,
+        "read-only query: follows a live config link and treats a dangling target as absent");
+    Check(HarkenSearch::QueryExternalAiClientLink(client, directory.u8string(), target).state ==
+            ExternalAiLinkState::Failed &&
+            HarkenSearch::QueryExternalAiClientLink(client, cycle.u8string(), target).state ==
+            ExternalAiLinkState::Failed,
+        "read-only query: a directory and a link cycle are errors, not an empty configuration");
+    Check(!HarkenSearch::LinkExternalAiClient(client, configLink.u8string(), target, status) &&
+            status.state == ExternalAiLinkState::Failed && fs::is_symlink(configLink) &&
+            ReadAll(config) == configBytes && !fs::exists(directory / "mcp-link.json.harken-backup"),
+        "safe edit: rejects the same config link without touching its target or creating a backup");
+
+    fs::rename(marker, markerTarget);
+    fs::create_symlink(markerTarget.filename(), marker);
+    const auto markerStatus = HarkenSearch::QueryExternalAiClientLink(client, config.u8string(), target);
+    Check(markerStatus.state == ExternalAiLinkState::Disconnected && markerStatus.needsRelink,
+        "marker read: ignores a symlink even when it points to the original valid marker bytes");
+    Check(!HarkenSearch::UnlinkExternalAiClient(client, config.u8string(), status) && !status.revoked &&
+            fs::is_symlink(marker) && ReadAll(markerTarget) == markerBytes && ReadAll(config) == configBytes,
+        "marker removal: refuses to revoke via a symlink and preserves both files");
+}
+#endif
+
 int RunFixture(const fs::path& fixture, std::string_view action)
 {
     const auto input = nlohmann::json::parse(ReadAll(fixture));
@@ -564,6 +611,9 @@ int main(int argc, char** argv)
     TestDisconnectWithoutCurrentTarget(root, target);
     TestForeignEntriesAreUntouched(root, target);
     TestIndependentTomlClients(root, target);
+#ifdef __APPLE__
+    TestConfigAndMarkerLinkPolicies(root, target);
+#endif
 
     std::cout << (failures == 0 ? "ALL PASS" : "FAILURES") << ": " << failures << '\n';
     return failures == 0 ? 0 : 1;

@@ -15,6 +15,8 @@
 #include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
+#include "SimilarAnalysisReportLayout.h"
+#include "BatchMetadataRuleEditUi.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/UiScale.h"
 #include "ui/EmptyStateVisualAudit.h"
@@ -3861,6 +3863,19 @@ struct MagicEqQaPointer {
     ImGuiMouseButton button = ImGuiMouseButton_Left;
 };
 static MagicEqQaPointer s_magicEqQaPointer;
+// Drives a real edge drag on the open modal by feeding ImGui's own mouse queue.
+// SetWindowSize() would prove nothing about the grip the user actually grabs.
+struct QaDialogResizeDrag {
+    bool active = false;
+    int phase = 0; // 0 hover, 1 press, 2 move, 3 release
+    int moveStep = 0;
+    int moveSteps = 8;
+    float fromX = 0.0f;
+    float fromY = 0.0f;
+    float toX = 0.0f;
+    float toY = 0.0f;
+};
+static QaDialogResizeDrag s_qaDialogResizeDrag;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
 extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
@@ -3897,6 +3912,32 @@ static bool MagicEqQaIsolationReady() {
 
 static void ApplyMagicEqQaPointerBeforeFrame() {
 #if ARIS_PREVIEW_ISOLATION
+    if (s_qaDialogResizeDrag.active) {
+        ImGuiIO& dragIo = ImGui::GetIO();
+        QaDialogResizeDrag& drag = s_qaDialogResizeDrag;
+        if (drag.phase == 0) {
+            dragIo.AddMousePosEvent(drag.fromX, drag.fromY);
+            drag.phase = 1;
+        } else if (drag.phase == 1) {
+            dragIo.AddMousePosEvent(drag.fromX, drag.fromY);
+            dragIo.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            drag.phase = 2;
+            drag.moveStep = 0;
+        } else if (drag.phase == 2) {
+            ++drag.moveStep;
+            float t = drag.moveSteps > 0
+                ? static_cast<float>(drag.moveStep) / static_cast<float>(drag.moveSteps)
+                : 1.0f;
+            if (t > 1.0f) t = 1.0f;
+            dragIo.AddMousePosEvent(drag.fromX + (drag.toX - drag.fromX) * t,
+                                    drag.fromY + (drag.toY - drag.fromY) * t);
+            if (t >= 1.0f) drag.phase = 3;
+        } else {
+            dragIo.AddMousePosEvent(drag.toX, drag.toY);
+            dragIo.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            drag.active = false;
+        }
+    }
     if (s_dockQaEscapePhase) {
         ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, s_dockQaEscapePhase == 1);
         s_dockQaEscapePhase = s_dockQaEscapePhase == 1 ? 2 : 0;
@@ -4903,6 +4944,16 @@ static void PollQaCommandFile(AppState& state) {
             for(const auto& item:observation.items)items.push_back({{"id",item.id},{"bounds",rect(item.bounds)},{"clip",rect(item.clip)},{"disabled",item.disabled},{"font_pixels",item.fontPixels}});
             auto texts=nlohmann::json::array();
             for(const auto& text:observation.texts)texts.push_back({{"id",text.id},{"text",text.text},{"bounds",rect(text.bounds)},{"clip",rect(text.clip)}});
+            auto glyphSources=[](ImFont* font) {
+                auto names=nlohmann::json::array();
+                if(!font) return names;
+                auto* baked=font->GetFontBaked(font->LegacySize);
+                for(ImWchar c : {ImWchar(0x5E38), ImWchar('A'), ImWchar('0'), ImWchar(0x2192), ImWchar(0x3042)}) {
+                    const auto* glyph=baked->FindGlyphNoFallback(c);
+                    names.push_back(glyph ? font->Sources[glyph->SourceIdx]->Name : "");
+                }
+                return names;
+            };
             result=nlohmann::json({{"ok",true},{"frame",observation.frame},{"current_frame",ImGui::GetFrameCount()},
                 {"open",observation.open},{"prompt",observation.prompt},{"page",observation.page},{"pending",observation.pending},
                 {"preview_save_result",su::previewSaveResult},
@@ -4911,6 +4962,10 @@ static void PollQaCommandFile(AppState& state) {
                 {"live_volume",state.settings.defaultVolume},{"live_realtime",state.settings.searchRealtime},{"live_theme",(int)state.settings.theme},
                 {"engine_volume",state.audioEngine.getVolume()},{"live_row_height",state.settings.rowHeight},{"draft_row_height",editor.app.Value().rowHeight},{"draft_pitch_range",editor.app.Value().pitchRange},
                 {"live_font",state.settings.readingFontSize},{"draft_font",editor.app.Value().readingFontSize},
+                {"ui_glyph_sources",glyphSources(GetUIFontRegular())},
+                {"list_glyph_sources",glyphSources(GetUIListFont())},
+                {"list_mono_glyph_sources",glyphSources(GetUIListMono())},
+                {"waveform_timecode_glyph_sources",glyphSources(GetUIWaveformTimecodeFont())},
                 {"reading_font_pixels",[]{ReadingTextScope reading;return ImGui::GetFontSize();}()},
                 {"list_font_pixels",[]{ImGui::PushFont(GetUIListFont());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
                 {"list_mono_font_pixels",[]{ImGui::PushFont(GetUIListMono());const auto px=ImGui::GetFontSize();ImGui::PopFont();return px;}()},
@@ -4997,6 +5052,7 @@ static void PollQaCommandFile(AppState& state) {
                 state.showDawTargetSettings = false;
                 state.showFolderAutoRenameDialog = false;
                 state.showPlaylistRenameDialog = false;
+                state.showSimilarAnalysisReport = false;
             }
             if (action == "close") {
                 result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
@@ -5022,6 +5078,114 @@ static void PollQaCommandFile(AppState& state) {
                         "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
                         "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
                         before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
+            } else if (action == "geometry" || action == "resize" || action == "resize_drag" ||
+                       action == "pointer" || action == "pointer_clear") {
+                // Geometry and resize receipts for the Similar Sounds analysis
+                // report. Without this the resize path can only be checked by
+                // hand, and this dialog has no other automation entry.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                    const HarkenSearch::similar_analysis_report::Rect workArea{
+                        viewport->WorkPos.x, viewport->WorkPos.y,
+                        viewport->WorkSize.x, viewport->WorkSize.y};
+                    if (action == "resize") {
+                        const float width = static_cast<float>(getDouble(raw, "w", dialogWindow->Size.x));
+                        const float height = static_cast<float>(getDouble(raw, "h", dialogWindow->Size.y));
+                        ImGui::SetWindowSize(dialogWindow, ImVec2(width, height));
+                    } else if (action == "pointer") {
+                        // Park the synthetic pointer over a dialog row so the
+                        // failure tooltip can be captured without the desktop.
+                        const float x = static_cast<float>(getDouble(raw, "x",
+                            dialogWindow->Pos.x + dialogWindow->Size.x * 0.25));
+                        const float y = static_cast<float>(getDouble(raw, "y",
+                            dialogWindow->Pos.y + dialogWindow->Size.y * 0.12));
+                        s_magicEqQaPointer.active = true;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                        s_magicEqQaPointer.x = x;
+                        s_magicEqQaPointer.y = y;
+                        s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                    } else if (action == "pointer_clear") {
+                        s_magicEqQaPointer.active = false;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                    } else if (action == "resize_drag") {
+                        // Grab the bottom-right resize grip and drag it by the
+                        // requested delta over several frames. ImGui resolves
+                        // the hit test, the hold and the new size itself.
+                        s_qaDialogResizeDrag.fromX = dialogWindow->Pos.x + dialogWindow->Size.x - 6.0f;
+                        s_qaDialogResizeDrag.fromY = dialogWindow->Pos.y + dialogWindow->Size.y - 6.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                    }
+                    size_t failureRows = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                        failureRows = state.batchFeatureResult.issues.size();
+                    }
+                    const ImVec2 size = dialogWindow->Size;
+                    bool tooltipVisible = false;
+                    for (int windowIndex = 0; windowIndex < ctx.Windows.Size; ++windowIndex) {
+                        const ImGuiWindow* candidate = ctx.Windows[windowIndex];
+                        if (candidate && candidate->Active &&
+                            (candidate->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+                            tooltipVisible = true;
+                            break;
+                        }
+                    }
+                    char receipt[1024];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"%s\","
+                        "\"dialog\":\"similar-analysis-report\","
+                        "\"rect\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"resizable\":%s,\"no_resize\":%s,\"always_auto_resize\":%s,"
+                        "\"viewport_owned\":%s,\"drag_active\":%s,\"tooltip_visible\":%s,"
+                        "\"hovered_is_dialog\":%s,\"mouse\":[%.1f,%.1f],"
+                        "\"work\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"stored\":[%.1f,%.1f],"
+                        "\"failure_rows\":%d,"
+                        "\"failure_row_height\":%.1f,"
+                        "\"failure_list_height\":%.1f,"
+                        "\"work_area_clamped\":%s,\"hovered_window\":\"%s\"}",
+                        action.c_str(),
+                        dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y,
+                        ((dialogWindow->Flags & ImGuiWindowFlags_NoResize) != 0 ||
+                         (dialogWindow->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0)
+                            ? "false" : "true",
+                        (dialogWindow->Flags & ImGuiWindowFlags_NoResize) != 0 ? "true" : "false",
+                        (dialogWindow->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0 ? "true" : "false",
+                        dialogWindow->ViewportOwned ? "true" : "false",
+                        s_qaDialogResizeDrag.active ? "true" : "false",
+                        tooltipVisible ? "true" : "false",
+                        ctx.HoveredWindow == dialogWindow ? "true" : "false",
+                        ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y,
+                        workArea.x, workArea.y, workArea.w, workArea.h,
+                        state.settings.similarAnalysisReportWidth,
+                        state.settings.similarAnalysisReportHeight,
+                        static_cast<int>(failureRows),
+                        HarkenSearch::similar_analysis_report::g_qaFailureRowHeight,
+                        HarkenSearch::similar_analysis_report::g_qaFailureListHeight,
+                        HarkenSearch::similar_analysis_report::ClampToWorkArea(
+                            HarkenSearch::similar_analysis_report::Rect{
+                                dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y},
+                            workArea).y == dialogWindow->Pos.y ? "true" : "false",
+                        jsonEscape(ctx.HoveredWindow ? ctx.HoveredWindow->Name : "").c_str());
                     result = receipt;
                 }
             } else if (action == "open") {
@@ -5078,6 +5242,50 @@ static void PollQaCommandFile(AppState& state) {
                     state.settings.defaultPlayerPrompted = false;
                     state.warmupFramesRemaining = 0;
                     state.filePlayerFastPathActive = false;
+                } else if (dialog == "similar-analysis-report") {
+                    // 44 failures mirror the field report: the list must read as
+                    // one line per file instead of a squeezed strip.
+                    const char* names[] = {
+                        "Impact_Metal_Heavy_01.wav", "Impact_Metal_Heavy_02.wav",
+                        "Footstep_Gravel_Walk_03.wav", "Footstep_Gravel_Run_07.wav",
+                        "Amb_Forest_Insects_Loop_02.wav", "Amb_Forest_Wind_Calm_05.wav",
+                        "UI_Button_Confirm_Soft_01.wav", "UI_Button_Cancel_Dry_02.wav",
+                        "Weapon_Swing_Whoosh_Heavy_04.wav", "Weapon_Blade_Sheath_06.wav",
+                        "Voice_Effort_Short_08.wav", "Voice_Breath_Tired_09.wav"};
+                    const char* folders[] = {
+                        "impact/metal", "footsteps/gravel", "ambience/forest",
+                        "ui/buttons", "weapons/blade", "voice/effort"};
+                    const char* formats[] = {"WAV", "WAV", "WAV", "FLAC"};
+                    std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                    auto& report = state.batchFeatureResult;
+                    report.issues.clear();
+                    for (int index = 0; index < 44; ++index) {
+                        HarkenSearch::SimilarityIndexIssue issue;
+                        issue.file.id = index + 41;
+                        issue.file.name = names[index % 12];
+                        issue.file.path = std::string("D:/Harken-QA/preview-samples/") +
+                            folders[(index / 12) % 6] + "/" + issue.file.name;
+                        issue.file.format = formats[index % 4];
+                        issue.file.seconds = 1.25f + index * 0.5f;
+                        issue.reason = static_cast<HarkenSearch::SimilarityIndexFailure>(index % 5);
+                        report.issues.push_back(std::move(issue));
+                    }
+                    report.ok = false;
+                    report.cancelled = false;
+                    report.error.clear();
+                    report.modelError.clear();
+                    report.progress.saved = 8;
+                    report.progress.skipped = 0;
+                    report.progress.failed = static_cast<int>(report.issues.size());
+                    report.progress.completed = report.progress.failed + report.progress.saved;
+                    report.progress.total = report.progress.completed;
+                    state.manualSimilarityResultVisibleFrame = 0;
+                    // The report is drawn from the Similar Sounds body, so the
+                    // panel must be rendered for the modal to exist at all.
+                    state.panelSimilarSounds.floating = true;
+                    aura::ui::OpenSimilarSoundsWindow(state);
+                    state.panelSimilarSounds.floating = true;
+                    state.showSimilarAnalysisReport = true;
                 } else {
                     known = false;
                 }
@@ -5125,7 +5333,7 @@ static void PollQaCommandFile(AppState& state) {
             } else if (action == "open") {
                 if (module == "settings") state.showSettingsDialog = true;
                 else if (module == "library") state.showDbManagerDialog = true;
-                else if (module == "batch-rename") state.showBatchRenameDialog = true;
+                else if (module == "batch-rename") state.openBatchEdit();
                 else if (module == "naming") state.showNamingDialog = true;
                 else if (module == "theme-editor") state.showThemeEditor = true;
                 else if (module == "wwise") aura::wwise::OpenWwiseTransferPanel({}, {});
@@ -5158,6 +5366,9 @@ static void PollQaCommandFile(AppState& state) {
             } else if (module == "transfer") {
                 panel = &state.panelTransfer;
                 show = &state.showTransferDialog;
+            } else if (module == "batch-edit") {
+                panel = &state.panelBatchEdit;
+                show = &state.panelBatchEdit.visible;
             }
             const std::string action = getStr(raw, "action");
             if (!panel || !show) {
@@ -5421,6 +5632,90 @@ static void PollQaCommandFile(AppState& state) {
         }
 #else
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
+#endif
+
+    } else if (cmd == "batch_rule_edit") {
+#if ARIS_PREVIEW_ISOLATION
+        const nlohmann::json payload = nlohmann::json::parse(raw, nullptr, false);
+        if (!payload.is_object()) {
+            result = R"({"ok":false,"cmd":"batch_rule_edit","error":"invalid_payload"})";
+        } else {
+            const std::string action = payload.value("action", std::string());
+            auto previewJson = [&](const char* verb, bool applied) {
+                const auto& preview = state.batchRuleEditPreview;
+                nlohmann::json rows = nlohmann::json::array();
+                for (const auto& row : preview.rows) {
+                    rows.push_back({{"id", row.id}, {"file", row.fileName}, {"old", row.oldValue},
+                                    {"new", row.newValue}, {"changed", row.changed},
+                                    {"blocked", row.blockedEmpty}, {"error", row.error}});
+                }
+                return nlohmann::json({{"ok", true}, {"cmd", "batch_rule_edit"}, {"action", verb},
+                    {"applied", applied},
+                    {"column", aura::metadata::RuleEditColumnName(preview.column)},
+                    {"rows", rows}, {"change_count", preview.changeCount},
+                    {"unchanged_count", preview.unchangedCount},
+                    {"blocked_count", preview.blockedCount}, {"error_count", preview.errorCount},
+                    {"can_apply", preview.CanApply()}, {"stale", state.batchRuleEditStale},
+                    {"failed", state.batchRuleEditFailed},
+                    {"message", state.batchRuleEditMessage}}).dump();
+            };
+            if (action == "open") {
+                state.batchEditTarget = payload.value("target", 1);
+                state.batchRuleEditRules.clear();
+                if (payload.contains("rules") && payload["rules"].is_array()) {
+                    for (const auto& item : payload["rules"]) {
+                        aura::metadata::RuleEditRule rule;
+                        rule.mode = static_cast<aura::metadata::RuleEditMode>(item.value("mode", 0));
+                        rule.value = item.value("value", std::string());
+                        rule.replacement = item.value("replacement", std::string());
+                        rule.separator = item.value("separator", std::string());
+                        rule.enabled = item.value("enabled", true);
+                        state.batchRuleEditRules.push_back(rule);
+                    }
+                }
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                state.openBatchEdit();
+                result = previewJson("open", false);
+            } else if (action == "preview") {
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                result = previewJson("preview", false);
+            } else if (action == "apply") {
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                result = previewJson("apply", applied);
+            } else if (action == "race") {
+                // Preview, then let another writer change the same column, then
+                // apply: proves the guarded write refuses the stale batch.
+                aura::ui::RefreshBatchRuleEditPreview(state);
+                bool changedOutside = false;
+                if (!state.batchRuleEditPreview.rows.empty()) {
+                    const std::string column =
+                        aura::metadata::RuleEditColumnName(state.batchRuleEditPreview.column);
+                    std::vector<int64_t> ids;
+                    for (const auto& row : state.batchRuleEditPreview.rows) ids.push_back(row.id);
+                    MetadataEditPatch outsidePatch;
+                    outsidePatch.set(column, std::string("outside race"));
+                    changedOutside = state.database.applyMetadataPatchBatch(ids, outsidePatch).success > 0;
+                }
+                const bool applied = aura::ui::ApplyBatchRuleEdit(state);
+                nlohmann::json reply = nlohmann::json::parse(previewJson("race", applied), nullptr, false);
+                reply["changed_outside"] = changedOutside;
+                result = reply.dump();
+            } else if (action == "clear") {
+                state.batchRuleEditRules.clear();
+                state.batchRuleEditPreview = {};
+                state.batchRuleEditStale = false;
+                state.batchRuleEditMessage.clear();
+                state.batchRuleEditFailed = false;
+                result = previewJson("clear", false);
+            } else {
+                result = previewJson("state", false);
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
 #endif
 
     } else if (cmd == "capture_preview_frame") {
@@ -6890,7 +7185,7 @@ static void PollQaCommandFile(AppState& state) {
                 int skippedCount = 0;
                 int failedCount = 0;
                 auto undoOp = std::make_unique<MetadataPatchOp>();
-                undoOp->operationName = rows.size() > 1 ? "Batch edit metadata" : "Edit metadata";
+                undoOp->editKind = rows.size() > 1 ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
 
                 const bool useTxn = rows.size() > 1;
                 bool txnStarted = !useTxn || state.database.beginTransaction();
@@ -8821,6 +9116,7 @@ void ApplyShowManagerGlobalHotkey(const AppSettings& settings) {
 static ImFont* g_uiFontRegular = nullptr;
 static ImFont* g_uiFontEmphasis = nullptr;
 static ImFont* g_uiFontMono = nullptr;
+static ImFont* g_uiWaveformTimecodeFont = nullptr;
 static ImFont* g_uiMeterFont = nullptr;  // F-018: 10px ASCII-only, for narrow meter bars
 
 // Reading group: built at the user's readingFontSize. Returned by the GetUIFont*()
@@ -8853,7 +9149,45 @@ static ImFont* AddFontFromCandidates(ImGuiIO& io,
     return nullptr;
 }
 
-void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
+struct BundledUiFont {
+    const char* filename;
+    const ImWchar* exclusions;
+    std::vector<char> bytes;
+    bool loaded = false;
+
+    ImFont* Add(ImFontAtlas* atlas, float pixels, const ImFontConfig& base, bool merge) {
+        if (!loaded) {
+            loaded = true;
+            const auto path = std::filesystem::u8path(GetExeDirUtf8()) / "assets" / "fonts" / filename;
+            std::ifstream file(path, std::ios::binary);
+            if (file) bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+        if (bytes.empty()) return nullptr;
+        ImFontConfig config = base;
+        config.MergeMode = merge;
+        config.GlyphExcludeRanges = exclusions;
+        config.FontDataOwnedByAtlas = false;
+        std::snprintf(config.Name, sizeof(config.Name), "%s", filename);
+        return atlas->AddFontFromMemoryTTF(bytes.data(), static_cast<int>(bytes.size()), pixels, &config);
+    }
+};
+
+static void LoadUiFonts(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize,
+                        const UiFontFamilies& families) {
+    static const ImWchar chineseExclusions[] = {
+        0x0001, 0x2E7F, 0x3040, 0x30FF, 0x3130, 0x319F, 0x31C0, 0x33FF,
+        0xA000, 0xF8FF, 0xFB00, 0xFE0F, 0xFE20, 0xFE2F, 0xFE50, 0xFF00,
+        0xFF61, IM_UNICODE_CODEPOINT_MAX, 0,
+    };
+    static const ImWchar englishExclusions[] = {
+        0x0001, 0x0040, 0x005B, 0x0060, 0x007B, 0x00BF, 0x00D7, 0x00D7,
+        0x00F7, 0x00F7, 0x0250, 0x02FF, 0x0370, 0x1DFF, 0x1F00, IM_UNICODE_CODEPOINT_MAX, 0,
+    };
+    static const ImWchar numeralExclusions[] = {0x0001, 0x002F, 0x003A, IM_UNICODE_CODEPOINT_MAX, 0};
+    static BundledUiFont chinese{"SourceHanSansSC-Regular.otf", chineseExclusions};
+    static BundledUiFont english{"Inter.ttf", englishExclusions};
+    static BundledUiFont numerals{"JetBrainsMono-Regular.ttf", numeralExclusions};
+
     const char* uiRegularLatinBase[] = {
         "C:\\Windows\\Fonts\\SegoeUIVF.ttf", // Segoe UI Variable (Win11, closer to WebUI style)
         "C:\\Windows\\Fonts\\segoeui.ttf",   // Segoe UI fallback
@@ -8908,158 +9242,76 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
         0,
     };
 
-    // Base Latin/UI glyphs first (Segoe-like modern look), then merge Chinese glyphs
-    // to reduce CJK/Latin mismatch while keeping Chinese coverage complete.
-    // Build a {regular, emphasis, mono} triplet at a given pixel size. Reuses the
-    // candidate arrays declared above. Lucide icons are merged into the regular
-    // face so icon buttons resolve glyphs at this size.
-    auto buildTriplet = [&](float px,
-                            ImFont** outRegular,
-                            ImFont** outEmphasis,
-                            ImFont** outMono) {
-        // Regular: Latin base + CJK merge.
-        *outRegular = AddFontFromCandidates(
-            io, uiRegularLatinBase,
-            (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-            px, uiConfig, kExtendedLatinRanges);
-        if (!*outRegular) {
-            *outRegular = AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, uiConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outRegular) *outRegular = io.Fonts->AddFontDefault();
-        } else {
-            ImFontConfig mergeCjk = uiConfig;
-            mergeCjk.MergeMode = true;
-            mergeCjk.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiRegularCjkMerge,
-                (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-                px, mergeCjk, io.Fonts->GetGlyphRangesChineseFull());
+    auto preferred = [&](float pixels, const ImFontConfig& config) {
+        ImFont* font = nullptr;
+        if (families.numerals)
+            font = numerals.Add(io.Fonts, pixels, config, false);
+        if (families.english) {
+            if (auto* added = english.Add(io.Fonts, pixels, config, font != nullptr))
+                font = added;
         }
-        // Merge Lucide icons into THIS regular face at THIS size.
-        aura::ui::MergeLucideFont(io.Fonts, px);
-
-        // Emphasis: semibold Latin base + CJK merge.
-        ImFontConfig emphasisConfig = uiConfig;
-        *outEmphasis = AddFontFromCandidates(
-            io, uiEmphasisLatinBase,
-            (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-            px, emphasisConfig, kExtendedLatinRanges);
-        if (!*outEmphasis) {
-            *outEmphasis = AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, emphasisConfig, io.Fonts->GetGlyphRangesChineseFull());
-            if (!*outEmphasis) *outEmphasis = *outRegular;
-        } else {
-            ImFontConfig mergeCjkEmphasis = emphasisConfig;
-            mergeCjkEmphasis.MergeMode = true;
-            mergeCjkEmphasis.RasterizerMultiply = 1.08f;
-            (void)AddFontFromCandidates(
-                io, uiEmphasisCjkMerge,
-                (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-                px, mergeCjkEmphasis, io.Fonts->GetGlyphRangesChineseFull());
+        if (families.chinese) {
+            if (auto* added = chinese.Add(io.Fonts, pixels, config, font != nullptr))
+                font = added;
         }
-
-        // Mono: +1px optical compensation.
-        ImFontConfig monoConfig;
-        monoConfig.MergeMode = false;
-        monoConfig.OversampleH = 2;
-        monoConfig.OversampleV = 1;
-        monoConfig.PixelSnapH = true;
-        *outMono = AddFontFromCandidates(
-            io, monoPaths,
-            (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-            px + 1.0f, monoConfig, kExtendedLatinRanges);
-        if (!*outMono) *outMono = *outRegular;
+        return font;
     };
 
-    buildTriplet(chromePixelSize, &g_uiFontRegular, &g_uiFontEmphasis, &g_uiFontMono);
-    buildTriplet(readingPixelSize, &g_readingRegular, &g_readingEmphasis, &g_readingMono);
+    auto buildText = [&](float pixels, const auto& latinPaths, const auto& cjkPaths) {
+        ImFont* font = preferred(pixels, uiConfig);
+        ImFontConfig latin = uiConfig;
+        latin.MergeMode = font != nullptr;
+        if (auto* added = AddFontFromCandidates(io, latinPaths, static_cast<int>(std::size(latinPaths)),
+                                                pixels, latin, kExtendedLatinRanges))
+            font = added;
 
-    // Dedicated list font (independent from system font size).
-    float listPx = listPixelSize;
-    ImFontConfig listConfig = uiConfig;
-    listConfig.MergeMode = false;
-    g_uiListFont = AddFontFromCandidates(
-        io,
-        uiRegularLatinBase,
-        (int)(sizeof(uiRegularLatinBase) / sizeof(uiRegularLatinBase[0])),
-        listPx,
-        listConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListFont) {
-        g_uiListFont = AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            listConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkList = listConfig;
-        mergeCjkList.MergeMode = true;
-        mergeCjkList.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiRegularCjkMerge,
-            (int)(sizeof(uiRegularCjkMerge) / sizeof(uiRegularCjkMerge[0])),
-            listPx,
-            mergeCjkList,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
+        ImFontConfig cjk = uiConfig;
+        cjk.MergeMode = font != nullptr;
+        if (cjk.MergeMode) cjk.RasterizerMultiply = 1.08f;
+        if (auto* added = AddFontFromCandidates(io, cjkPaths, static_cast<int>(std::size(cjkPaths)),
+                                                pixels, cjk, io.Fonts->GetGlyphRangesChineseFull()))
+            font = added;
+        return font;
+    };
+
+    auto buildMono = [&](float pixels, bool useFamilies) {
+        ImFontConfig config;
+        config.OversampleH = 2;
+        config.OversampleV = 1;
+        config.PixelSnapH = true;
+        ImFont* font = useFamilies ? preferred(pixels, config) : nullptr;
+        config.MergeMode = font != nullptr;
+        if (auto* added = AddFontFromCandidates(io, monoPaths, static_cast<int>(std::size(monoPaths)),
+                                                pixels, config, kExtendedLatinRanges))
+            font = added;
+        return font;
+    };
+
+    auto buildTriplet = [&](float pixels, ImFont*& regular, ImFont*& emphasis, ImFont*& mono) {
+        regular = buildText(pixels, uiRegularLatinBase, uiRegularCjkMerge);
+        if (!regular) regular = io.Fonts->AddFontDefault();
+        aura::ui::MergeLucideFont(io.Fonts, pixels);
+        emphasis = buildText(pixels, uiEmphasisLatinBase, uiEmphasisCjkMerge);
+        if (!emphasis) emphasis = regular;
+        mono = buildMono(pixels + 1.0f, true);
+        if (!mono) mono = regular;
+    };
+
+    buildTriplet(chromePixelSize, g_uiFontRegular, g_uiFontEmphasis, g_uiFontMono);
+    buildTriplet(readingPixelSize, g_readingRegular, g_readingEmphasis, g_readingMono);
+
+    g_uiListFont = buildText(listPixelSize, uiRegularLatinBase, uiRegularCjkMerge);
     if (!g_uiListFont) g_uiListFont = g_uiFontRegular;
-
-    // Results-table header face at the list size: column titles must follow
-    // listFontSize together with the row text instead of staying at chrome size.
-    ImFontConfig listEmphasisConfig = uiConfig;
-    listEmphasisConfig.MergeMode = false;
-    g_uiListEmphasis = AddFontFromCandidates(
-        io,
-        uiEmphasisLatinBase,
-        (int)(sizeof(uiEmphasisLatinBase) / sizeof(uiEmphasisLatinBase[0])),
-        listPx,
-        listEmphasisConfig,
-        kExtendedLatinRanges);
-    if (!g_uiListEmphasis) {
-        g_uiListEmphasis = AddFontFromCandidates(
-            io,
-            uiEmphasisCjkMerge,
-            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-            listPx,
-            listEmphasisConfig,
-            io.Fonts->GetGlyphRangesChineseFull());
-    } else {
-        ImFontConfig mergeCjkListEmphasis = listEmphasisConfig;
-        mergeCjkListEmphasis.MergeMode = true;
-        mergeCjkListEmphasis.RasterizerMultiply = 1.08f;
-        (void)AddFontFromCandidates(
-            io,
-            uiEmphasisCjkMerge,
-            (int)(sizeof(uiEmphasisCjkMerge) / sizeof(uiEmphasisCjkMerge[0])),
-            listPx,
-            mergeCjkListEmphasis,
-            io.Fonts->GetGlyphRangesChineseFull());
-    }
+    g_uiListEmphasis = buildText(listPixelSize, uiEmphasisLatinBase, uiEmphasisCjkMerge);
     if (!g_uiListEmphasis) g_uiListEmphasis = g_uiListFont;
-
-    // List mono: numeric cells (duration, size, sample rate, channels, BPM,
-    // key, date) share the list size, with the same +1px optical compensation
-    // the chrome/reading mono faces use.
-    ImFontConfig listMonoConfig;
-    listMonoConfig.MergeMode = false;
-    listMonoConfig.OversampleH = 2;
-    listMonoConfig.OversampleV = 1;
-    listMonoConfig.PixelSnapH = true;
-    g_uiListMono = AddFontFromCandidates(
-        io,
-        monoPaths,
-        (int)(sizeof(monoPaths) / sizeof(monoPaths[0])),
-        listPx + 1.0f,
-        listMonoConfig,
-        kExtendedLatinRanges);
+    g_uiListMono = buildMono(listPixelSize + 1.0f, true);
     if (!g_uiListMono) g_uiListMono = g_uiListFont;
+
+    g_uiWaveformTimecodeFont = g_uiFontMono;
+    if (families.chinese || families.english || families.numerals) {
+        g_uiWaveformTimecodeFont = buildMono(chromePixelSize + 1.0f, false);
+        if (!g_uiWaveformTimecodeFont) g_uiWaveformTimecodeFont = io.Fonts->AddFontDefault();
+    }
 
     // F-018: Small ASCII-only font for Loudness Meter numeric readouts / channel labels
     // when barW is narrow. No CJK merge needed — meter labels are L/R/C/LFE/Lss/W/Y/Z etc.
@@ -9086,6 +9338,10 @@ void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize,
     io.FontDefault = g_uiFontRegular;
 }
 
+void LoadChineseFont(ImGuiIO& io, float chromePixelSize, float readingPixelSize, float listPixelSize) {
+    LoadUiFonts(io, chromePixelSize, readingPixelSize, listPixelSize, {});
+}
+
 ImFont* GetUIFontRegular() {
     if (g_inReadingScope && g_readingRegular) return g_readingRegular;
     return g_uiFontRegular;
@@ -9104,6 +9360,10 @@ ImFont* GetUIFontMono() {
 ImFont* GetUIListFont() {
     // Reading-sized fallback (not chrome) so the list keeps reading metrics.
     return g_uiListFont ? g_uiListFont : g_readingRegular;
+}
+
+ImFont* GetUIWaveformTimecodeFont() {
+    return g_uiWaveformTimecodeFont ? g_uiWaveformTimecodeFont : GetUIFontMono();
 }
 
 ImFont* GetUIListEmphasis() {
@@ -9172,10 +9432,11 @@ MenuTextScope::~MenuTextScope() {
 
 // UI Scaling (Scheme B): rebuild fonts + scale style sizes (debounced)
 
-static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx) {
+static void RebuildImGuiFontsForSizePx(float chromePx, float readingPx, float listPx,
+                                      const UiFontFamilies& families) {
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->Clear();
-    LoadChineseFont(io, chromePx, readingPx, listPx);
+    LoadUiFonts(io, chromePx, readingPx, listPx, families);
     io.Fonts->Build();
     // Recreate GPU resources (OpenGL backend). Fonts texture is part of device objects.
     ImGui_ImplOpenGL3_DestroyDeviceObjects();
@@ -9301,6 +9562,7 @@ static float MainWindowUiDpiScale() {
 static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     static float s_lastRebuiltReadingPx = -1.0f;
     static float s_lastRebuiltListPx    = -1.0f;
+    static UiFontFamilies s_lastFontFamilies;
     static int s_lastTheme = -9999;
     static bool s_lastUseCustom = false;
     static float s_lastDpiScale = 0.0f;
@@ -9332,11 +9594,14 @@ static void UpdateImGuiUiScaleSchemeB(const AppState& state) {
     const bool dpiChanged = dpiScale != s_lastDpiScale;
 
     const bool needFontRebuild = (s_lastRebuiltReadingPx != (float)requestedReading) ||
-                                 (s_lastRebuiltListPx    != (float)requestedList);
+                                 (s_lastRebuiltListPx    != (float)requestedList) ||
+                                 !(s_lastFontFamilies == state.settings.uiFontFamilies);
     if (needFontRebuild) {
-        RebuildImGuiFontsForSizePx((float)kChromeFontPx, (float)requestedReading, (float)requestedList);
+        RebuildImGuiFontsForSizePx((float)kChromeFontPx, (float)requestedReading, (float)requestedList,
+                                   state.settings.uiFontFamilies);
         s_lastRebuiltReadingPx = (float)requestedReading;
         s_lastRebuiltListPx    = (float)requestedList;
+        s_lastFontFamilies = state.settings.uiFontFamilies;
     }
 
     const bool themeChanged = (themeNow != s_lastTheme) || (useCustomNow != s_lastUseCustom);
@@ -9585,6 +9850,10 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
                             else if (!metadata.comment.empty()) record.keywords = metadata.comment;
                             PopulateExtendedMeta(record.meta, metadata);
+                            if (metadata.customTextTagsRead) {
+                                record.id3TextTags = std::move(metadata.customTextTags);
+                                record.id3TextTagsRead = true;
+                            }
                         }
 
                         g_appState->database.probeAudioFileInfo(filePath,

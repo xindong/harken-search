@@ -860,9 +860,9 @@
     {
       "id": "Dlg_BatchOp",
       "type": "ui",
-      "zh": "批量操作",
-      "en": "Batch Operations",
-      "ja": "一括操作"
+      "zh": "批量编辑",
+      "en": "Batch Edit",
+      "ja": "一括編集"
     },
     {
       "id": "Dlg_ScanFolder",
@@ -1299,6 +1299,34 @@
       "ja": "リストフォントサイズ"
     },
     {
+      "id": "Set_ChineseFontFamily",
+      "type": "ui",
+      "zh": "中文字族",
+      "en": "Chinese Font Family",
+      "ja": "中国語のフォント"
+    },
+    {
+      "id": "Set_EnglishFontFamily",
+      "type": "ui",
+      "zh": "英文字族",
+      "en": "English Font Family",
+      "ja": "英語のフォント"
+    },
+    {
+      "id": "Set_NumeralFontFamily",
+      "type": "ui",
+      "zh": "数字字族",
+      "en": "Numeral Font Family",
+      "ja": "数字のフォント"
+    },
+    {
+      "id": "Set_BuiltinSourceHanSans",
+      "type": "ui",
+      "zh": "思源黑体 SC",
+      "en": "Source Han Sans SC",
+      "ja": "源ノ角ゴシック SC"
+    },
+    {
       "id": "Set_SkipLeadingSilence",
       "type": "ui",
       "zh": "跳过开头无声部分",
@@ -1612,69 +1640,6 @@
       "zh": "执行重命名",
       "en": "Execute Rename",
       "ja": "リネーム実行"
-    },
-    {
-      "id": "Batch_ApplyMeta",
-      "type": "ui",
-      "zh": "应用元数据",
-      "en": "Apply Metadata",
-      "ja": "メタデータを適用"
-    },
-    {
-      "id": "Batch_EditMeta",
-      "type": "ui",
-      "zh": "批量编辑选中文件的元数据",
-      "en": "Batch edit metadata for selected files",
-      "ja": "選択ファイルのメタデータを一括編集"
-    },
-    {
-      "id": "Batch_WriteMode",
-      "type": "ui",
-      "zh": "写入模式:",
-      "en": "Write Mode:",
-      "ja": "書き込みモード:"
-    },
-    {
-      "id": "Batch_Replace",
-      "type": "ui",
-      "zh": "替换现有内容",
-      "en": "Replace Existing",
-      "ja": "既存を置換"
-    },
-    {
-      "id": "Batch_Append",
-      "type": "ui",
-      "zh": "追加到现有内容",
-      "en": "Append to Existing",
-      "ja": "既存に追記"
-    },
-    {
-      "id": "Batch_Description",
-      "type": "ui",
-      "zh": "描述:",
-      "en": "Description:",
-      "ja": "説明:"
-    },
-    {
-      "id": "Batch_Keywords",
-      "type": "ui",
-      "zh": "关键词 - 用逗号分隔:",
-      "en": "Keywords (comma separated):",
-      "ja": "キーワード - カンマ区切り:"
-    },
-    {
-      "id": "Batch_Category",
-      "type": "ui",
-      "zh": "分类:",
-      "en": "Category:",
-      "ja": "分類:"
-    },
-    {
-      "id": "Batch_AffectedFiles",
-      "type": "ui",
-      "zh": "将影响以下文件:",
-      "en": "Affected files:",
-      "ja": "対象ファイル:"
     },
     {
       "id": "FolderRename_Rule",
@@ -2305,6 +2270,27 @@
       "zh": "专辑",
       "en": "Album",
       "ja": "アルバム"
+    },
+    {
+      "id": "Col_Composer",
+      "type": "ui",
+      "zh": "作曲者",
+      "en": "Composer",
+      "ja": "作曲者"
+    },
+    {
+      "id": "Col_Year",
+      "type": "ui",
+      "zh": "年份",
+      "en": "Year",
+      "ja": "年"
+    },
+    {
+      "id": "Col_Advanced",
+      "type": "ui",
+      "zh": "高级",
+      "en": "Advanced",
+      "ja": "詳細"
     },
     {
       "id": "Col_Rating",
@@ -6268,6 +6254,55 @@
       "ja": "やり直し"
     },
     {
+      "id": "Undo_UndoActionFmt",
+      "type": "ui",
+      "zh": "撤销「%s」",
+      "en": "Undo \"%s\"",
+      "ja": "「%s」を元に戻す"
+    },
+    {
+      "id": "Undo_RedoActionFmt",
+      "type": "ui",
+      "zh": "重做「%s」",
+      "en": "Redo \"%s\"",
+      "ja": "「%s」をやり直す"
+    },
+    {
+      "id": "Undo_EditColumnFmt",
+      "type": "ui",
+      "zh": "编辑%s",
+      "en": "Edit %s",
+      "ja": "%sを編集"
+    },
+    {
+      "id": "Undo_BatchEditColumnFmt",
+      "type": "ui",
+      "zh": "批量编辑%s",
+      "en": "Batch edit %s",
+      "ja": "%sを一括編集"
+    },
+    {
+      "id": "Undo_BatchEditMetadata",
+      "type": "ui",
+      "zh": "批量编辑元数据",
+      "en": "Batch edit metadata",
+      "ja": "メタデータを一括編集"
+    },
+    {
+      "id": "Undo_RenameFileFmt",
+      "type": "ui",
+      "zh": "重命名 %s",
+      "en": "Rename %s",
+      "ja": "%sをリネーム"
+    },
+    {
+      "id": "Undo_BatchRenameFilesFmt",
+      "type": "ui",
+      "zh": "批量重命名（%d 个文件）",
+      "en": "Batch rename (%d files)",
+      "ja": "一括リネーム（%d ファイル）"
+    },
+    {
       "id": "Undo_ClearAll",
       "type": "ui",
       "zh": "清空历史",
@@ -8305,20 +8340,6 @@
       "ja": "参照...##TransferBrowse"
     },
     {
-      "id": "Main_BatchRenameTab",
-      "type": "ui",
-      "zh": "批量重命名",
-      "en": "Batch rename",
-      "ja": "一括リネーム"
-    },
-    {
-      "id": "Main_BatchMetaTab",
-      "type": "ui",
-      "zh": "批量元数据",
-      "en": "Batch metadata",
-      "ja": "一括メタデータ"
-    },
-    {
       "id": "Main_MatchLocationLabel",
       "type": "ui",
       "zh": "匹配位置",
@@ -9140,9 +9161,51 @@
     {
       "id": "Main_NoSnippetText",
       "type": "ui",
-      "zh": "No preview snippet available for this match.",
+      "zh": "此命中无预览片段。",
       "en": "No preview snippet available for this match.",
       "ja": "このヒット箇所のプレビューはありません。"
+    },
+    {
+      "id": "Main_SearchMatchName",
+      "type": "ui",
+      "zh": "命中：文件名",
+      "en": "Matched in: Name",
+      "ja": "一致箇所：ファイル名"
+    },
+    {
+      "id": "Main_SearchMatchPath",
+      "type": "ui",
+      "zh": "命中：路径",
+      "en": "Matched in: Path",
+      "ja": "一致箇所：パス"
+    },
+    {
+      "id": "Main_SearchMatchDescription",
+      "type": "ui",
+      "zh": "命中：描述",
+      "en": "Matched in: Description",
+      "ja": "一致箇所：説明"
+    },
+    {
+      "id": "Main_SearchMatchKeywords",
+      "type": "ui",
+      "zh": "命中：关键词",
+      "en": "Matched in: Keywords",
+      "ja": "一致箇所：キーワード"
+    },
+    {
+      "id": "Main_SearchMatchMetadata",
+      "type": "ui",
+      "zh": "命中：元数据",
+      "en": "Matched in: Metadata",
+      "ja": "一致箇所：メタデータ"
+    },
+    {
+      "id": "Main_SearchMatchFuzzyName",
+      "type": "ui",
+      "zh": "命中：文件名模糊匹配",
+      "en": "Matched by: Fuzzy name match",
+      "ja": "ファイル名のあいまい一致"
     },
     {
       "id": "Main_FileCountsFmt",
@@ -15143,6 +15206,42 @@
     {"id":"TransferOption_AlwaysCreateNew","type":"ui","zh":"总是新建","en":"Always Create New","ja":"常に新規作成"},
     {"id":"TransferOption_SkipExisting","type":"ui","zh":"跳过已存在文件","en":"Skip Existing","ja":"既存ファイルをスキップ"},
     {"id":"TransferOption_UpdateMetadata","type":"ui","zh":"仅更新元数据","en":"Update Metadata","ja":"メタデータのみ更新"},
-    {"id":"TransferOption_ReplaceExisting","type":"ui","zh":"替换已存在文件","en":"Replace Existing","ja":"既存ファイルを置き換え"}
+    {"id":"TransferOption_ReplaceExisting","type":"ui","zh":"替换已存在文件","en":"Replace Existing","ja":"既存ファイルを置き換え"},
+    {"id":"Batch_EditTarget","type":"ui","zh":"目标:","en":"Target:","ja":"対象:"},
+    {"id":"Batch_EditTargetFileName","type":"ui","zh":"文件名","en":"File name","ja":"ファイル名"},
+    {"id":"Batch_EditTargetTitle","type":"ui","zh":"标题","en":"Title","ja":"タイトル"},
+    {"id":"Batch_EditTargetDescription","type":"ui","zh":"描述","en":"Description","ja":"説明"},
+    {"id":"Batch_EditTargetKeywords","type":"ui","zh":"关键词","en":"Keywords","ja":"キーワード"},
+    {"id":"Batch_EditTargetCategory","type":"ui","zh":"分类","en":"Category","ja":"分類"},
+    {"id":"Batch_EditRules","type":"ui","zh":"编辑规则","en":"Edit rules","ja":"編集ルール"},
+    {"id":"Batch_RuleEditApplyBtn","type":"ui","zh":"应用改动","en":"Apply changes","ja":"変更を適用"},
+    {"id":"Batch_RuleEditStale","type":"ui","zh":"条件已改变，请重新预览","en":"Conditions changed, preview again","ja":"条件が変わったため、もう一度プレビューしてください"},
+    {"id":"Batch_RuleEditAppliedFmt","type":"ui","zh":"已应用 %d 条","en":"Applied %d","ja":"%d 件を適用しました"},
+    {"id":"Batch_RuleEditFailedFmt","type":"ui","zh":"应用失败：%s","en":"Apply failed: %s","ja":"適用に失敗しました: %s"},
+    {"id":"Batch_RuleEditNoChanges","type":"ui","zh":"没有可应用的改动","en":"Nothing to apply","ja":"適用する変更がありません"},
+    {"id":"Batch_RuleEditBlocked","type":"ui","zh":"会变成空白","en":"Would become blank","ja":"空になります"},
+    {"id":"Batch_RuleEditUnsupportedRule","type":"ui","zh":"规则无效","en":"Invalid rule","ja":"無効なルール"},
+    {"id":"Batch_RuleEditEmptyValue","type":"ui","zh":"（空）","en":"(empty)","ja":"（空）"},
+    {"id":"Batch_RuleEditOldValue","type":"ui","zh":"原值","en":"Original value","ja":"元の値"},
+    {"id":"Batch_RuleEditNewValue","type":"ui","zh":"新值","en":"New value","ja":"新しい値"},
+    {"id":"Batch_RuleEditValue","type":"ui","zh":"文本","en":"Text","ja":"テキスト"},
+    {"id":"Batch_RuleEditFixedValue","type":"ui","zh":"固定值","en":"Fixed value","ja":"固定値"},
+    {"id":"Batch_RuleEditSeparator","type":"ui","zh":"分隔符","en":"Separator","ja":"区切り文字"},
+    {"id":"Batch_RuleModeSetFixed","type":"ui","zh":"设为固定值","en":"Set fixed value","ja":"固定値に設定"},
+    {"id":"Batch_RuleModeAppendBefore","type":"ui","zh":"追加到前面","en":"Append before","ja":"前に追加"},
+    {"id":"Batch_RuleModeAppendAfter","type":"ui","zh":"追加到后面","en":"Append after","ja":"後ろに追加"},
+    {"id":"MacBaseline_OpenLibrary","type":"ui","zh":"打开素材库…","en":"Open Library...","ja":"ライブラリを開く…"},
+    {"id":"MacBaseline_OpenLibraryTitle","type":"ui","zh":"打开 Harken Search 素材库","en":"Open Harken Search Library","ja":"Harken Search ライブラリを開く"},
+    {"id":"MacBaseline_OpenLibraryError","type":"ui","zh":"无法打开素材库：%s","en":"Could not open library: %s","ja":"ライブラリを開けませんでした：%s"},
+    {"id":"MacBaseline_NotLibrary","type":"ui","zh":"此文件不是 Harken Search 素材库。","en":"This file is not a Harken Search library.","ja":"このファイルは Harken Search ライブラリではありません。"},
+    {"id":"MacBaseline_OpenLibraryHint","type":"ui","zh":"打开现有素材库以搜索音频文件。","en":"Open an existing library to search its audio files.","ja":"既存のライブラリを開いてオーディオファイルを検索します。"},
+    {"id":"MacBaseline_SearchPlaceholder","type":"ui","zh":"搜索音频文件","en":"Search audio files","ja":"オーディオファイルを検索"},
+    {"id":"MacBaseline_Search","type":"ui","zh":"搜索","en":"Search","ja":"検索"},
+    {"id":"MacBaseline_Results","type":"ui","zh":"%lld 条结果","en":"%lld results","ja":"%lld 件の結果"},
+    {"id":"MacBaseline_ResultLimit","type":"ui","zh":"显示前 %d 条结果","en":"Showing the first %d results","ja":"最初の %d 件の結果を表示"},
+    {"id":"MacBaseline_AllFolders","type":"ui","zh":"所有目录","en":"All folders","ja":"すべてのフォルダー"},
+    {"id":"MacBaseline_RenamePrefix","type":"ui","zh":"给当前结果加前缀（仅预览）","en":"Preview a filename prefix for these results","ja":"表示中のファイル名に付ける接頭辞をプレビュー"},
+    {"id":"MacBaseline_RenameInvalidPrefix","type":"ui","zh":"前缀不能包含路径分隔符。","en":"A prefix cannot contain path separators.","ja":"接頭辞にパスの区切り文字は使えません。"},
+    {"id":"MacBaseline_RenameReady","type":"ui","zh":"可改名","en":"Ready","ja":"変更可能"}
   ]
 }

@@ -38,7 +38,7 @@ else if(id=="theme") {
         dl->AddRectFilled(p,ImVec2(p.x+swatch,p.y+swatch),ImGui::GetColorU32(theme.dialogBG),6);
         dl->AddRect(p,ImVec2(p.x+swatch,p.y+swatch),ImGui::GetColorU32(current==i?preview.controlAccent:preview.chromeBorder),6,0,current==i?2.f:1.f);
         if(current==i){const auto c=ImVec2(p.x+7,p.y+13);dl->AddLine(c,ImVec2(c.x+4,c.y+4),ImGui::GetColorU32(theme.interfaceText),1.6f);dl->AddLine(ImVec2(c.x+4,c.y+4),ImVec2(c.x+12,c.y-4),ImGui::GetColorU32(theme.interfaceText),1.6f);}
-        if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",su::StockLabel(i));ImGui::PopID();
+        if(ImGui::IsItemHovered())HarkenSearch::SetTooltipUngated("%s",su::StockLabel(i));ImGui::PopID();
     }
     ImGui::SetCursorPosY(ImGui::GetCursorPosY()-std::min(swatchShift,std::max(0.f,ImGui::GetStyle().ItemSpacing.y-4.f)));
     ImGui::TextDisabled("%s",su::StockLabel(current));
@@ -84,6 +84,15 @@ else if(id=="listFont") {
     const int safeValue=std::clamp(value,10,kMaxListFontPx);
     int n=0;for(int i=0;i<kFontStepCount;++i)if(abs(safeValue-kFontSteps[i])<abs(safeValue-kFontSteps[n]))n=i;
     if(combo(n,{"10","11","12","13","14","16","18","20","22","24","26","28","30","32","34","36"}))value=kFontSteps[n];
+}
+else if(id=="chineseFontFamily"||id=="englishFontFamily"||id=="numeralFontFamily") {
+    auto& fonts=draft.uiFontFamilies;
+    const bool chinese=id=="chineseFontFamily";
+    const bool english=id=="englishFontFamily";
+    bool& useBundled=chinese?fonts.chinese:english?fonts.english:fonts.numerals;
+    int choice=useBundled?1:0;
+    const char* bundled=chinese?L(Set_BuiltinSourceHanSans):english?"Inter":"JetBrains Mono";
+    if(combo(choice,{L(Set_SystemDefault),bundled}))useBundled=choice==1;
 }
 else if(id=="rowHeight") {if(ImGui::SliderInt("##value",&draft.rowHeight,16,100,"%d px",ImGuiSliderFlags_AlwaysClamp))draft.listDensity=ListDensity::Custom;}
 else if(id=="extension")ImGui::Checkbox("##value",&draft.showFileExtension);

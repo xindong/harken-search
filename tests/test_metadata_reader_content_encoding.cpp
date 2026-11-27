@@ -345,9 +345,9 @@ int main() {
     AppendFrame(tyerTag, "TYER", 0, {'1', '9', '9', '8'});
     Check(WriteId3v23(tyerPath, tyerTag), "write TYER fixture");
     AudioMetadata tyer;
-    Check(!MetadataReader::readMetadata(tyerPath.u8string(), tyer) &&
+    Check(MetadataReader::readMetadata(tyerPath.u8string(), tyer) &&
               tyer.year == 1998,
-          "TYER maps decoded content but year alone does not satisfy hasData");
+          "year-only MP3 metadata is retained");
 
     const fs::path numericPath = temp.path / "numeric_frames.mp3";
     std::vector<uint8_t> numericTag;
@@ -357,15 +357,15 @@ int main() {
     AppendFrame(numericTag, "TPOS", 1, Utf16Bytes(false, {'2', '/', '3'}));
     Check(WriteId3v23(numericPath, numericTag), "write numeric frame fixture");
     AudioMetadata numeric;
-    Check(!MetadataReader::readMetadata(numericPath.u8string(), numeric) &&
+    Check(MetadataReader::readMetadata(numericPath.u8string(), numeric) &&
               numeric.year == 2024 && numeric.track == 7 && numeric.disc == 2,
-          "TDRC TRCK and TPOS map decoded prefixes but do not satisfy hasData");
+          "TDRC TRCK and TPOS map decoded numeric prefixes");
     AudioMetadata staleNumeric;
     staleNumeric.title = "stale";
     Check(MetadataReader::readMetadata(numericPath.u8string(), staleNumeric) &&
               staleNumeric.title == "stale" && staleNumeric.year == 2024 &&
               staleNumeric.track == 7 && staleNumeric.disc == 2,
-          "pre-existing mapped hasData field controls the numeric-frame return");
+          "numeric frames leave unrelated metadata intact");
 
     const fs::path latinTxxxPath = temp.path / "latin_txxx.mp3";
     std::vector<uint8_t> latinTxxxTag;
@@ -377,11 +377,12 @@ int main() {
                 TxxxBytes("INSTRUMENTS", "  prepared piano  "));
     Check(WriteId3v23(latinTxxxPath, latinTxxxTag), "write encoding-0 TXXX fixture");
     AudioMetadata latinTxxx;
-    Check(!MetadataReader::readMetadata(latinTxxxPath.u8string(), latinTxxx) &&
+    Check(MetadataReader::readMetadata(latinTxxxPath.u8string(), latinTxxx) &&
               latinTxxx.replayGainTrack == -7.25f &&
               latinTxxx.replayGainAlbum == -4.5f &&
-              latinTxxx.instruments == "prepared piano",
-          "encoding-0 TXXX preserves its NUL separator but mapped fields do not satisfy hasData");
+              latinTxxx.instruments == "prepared piano" &&
+              latinTxxx.customTextTags["INSTRUMENTS"] == "  prepared piano  ",
+          "encoding-0 TXXX keeps the raw value as well as the mapped fields");
 
     const fs::path utf16TxxxPath = temp.path / "utf16_txxx.mp3";
     std::vector<uint8_t> utf16TxxxTag;
@@ -393,10 +394,11 @@ int main() {
     AudioMetadata utf16Txxx;
     utf16Txxx.replayGainTrack = 3.0f;
     utf16Txxx.instruments = "stale instrument";
-    Check(!MetadataReader::readMetadata(utf16TxxxPath.u8string(), utf16Txxx) &&
-              utf16Txxx.replayGainTrack == 3.0f &&
+    Check(MetadataReader::readMetadata(utf16TxxxPath.u8string(), utf16Txxx) &&
+              utf16Txxx.replayGainTrack == -1.0f &&
+              utf16Txxx.customTextTags["INSTRUMENTS"] == "violin" &&
               utf16Txxx.instruments == "stale instrument",
-          "UTF-16 first-NUL truncation removes the TXXX separator and preserves public fields");
+          "UTF-16 TXXX reads its description and value, keeping existing instrument precedence");
 
     const fs::path id3v1Path = temp.path / "id3v1_raw.mp3";
     const std::vector<uint8_t> rawTitle = {0x80, 0x93, 'V', 0x94};

@@ -37,15 +37,36 @@ class AuditionHeatContract(unittest.TestCase):
 
     def test_scrollable_table_keeps_its_existing_columns_and_order(self):
         main = read("src/main.cpp")
-        setup = main.split("ImGui::TableSetupColumn(L(Col_FileName),", 1)[1]
+        setup = main.split("// File table with sortable columns", 1)[1]
         setup = setup.split("ImGui::TableSetupScrollFreeze(", 1)[0]
-        columns = re.findall(r"ImGui::TableSetupColumn\(L\((Col_\w+)\)", setup)
-        self.assertEqual(columns, [
-            "Col_Waveform", "Col_Duration", "Col_Format", "Col_Size", "Col_SampleRate",
+        columns = re.findall(r'ImGui::TableSetupColumn\(\s*(?:L\((Col_\w+)\)|u8"([^"]+)"),', setup)
+        self.assertEqual(setup.count("ImGui::TableSetupColumn("), len(columns))
+        self.assertEqual([localized or literal for localized, literal in columns], [
+            "Col_FileName", "Col_Waveform", "Col_Duration", "Col_Format", "Col_Size", "Col_SampleRate",
             "Col_Description", "Col_Keywords", "Col_Channels", "Col_Category", "Col_Artist",
             "Col_Album", "Col_BPM", "Col_MusicalKey", "Col_Mood", "Col_DateAdded",
-            "Col_FilePath", "Col_Cover", "Col_Rating",
+            "Col_FilePath", "Col_Cover", "LUFS", "RMS", "TruePeak", "Col_Rating", "Col_Composer", "Col_Year",
         ])
+        self.assertIn("kResultsCoverColumnIndex = 17;", main)
+        self.assertIn("kResultsLegacyColumnCount = kResultsCoverColumnIndex + 4;", main)
+        self.assertIn("kResultsNewMetadataColumnCount = 2;", main)
+        self.assertIn("const int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;", setup)
+        self.assertIn("const int legacyColumnCount = kResultsLegacyColumnCount + coverColumnCount;", setup)
+        self.assertEqual(re.findall(r"const int totalColumns = ([^;]+);", setup), [
+            "legacyColumnCount + (browserFileTable ? 0 : kResultsNewMetadataColumnCount)",
+        ])
+        self.assertRegex(
+            setup,
+            r"if \(state\.settings\.showCoverColumn\) \{\s+ImGui::TableSetupColumn\(L\(Col_Cover\),",
+        )
+        self.assertRegex(
+            setup,
+            r"if \(!browserFileTable\) \{\s+const auto metadataColumnFlags = "
+            r"ImGuiTableColumnFlags_WidthFixed \|\s+"
+            r"ImGuiTableColumnFlags_DefaultHide \| ImGuiTableColumnFlags_NoSort;\s+"
+            r"ImGui::TableSetupColumn\(L\(Col_Composer\), metadataColumnFlags,[^\n]+\n\s+"
+            r"ImGui::TableSetupColumn\(L\(Col_Year\), metadataColumnFlags,",
+        )
         sort_columns = read("src/AppState.h").split("enum class SortColumn {", 1)[1].split("};", 1)[0]
         self.assertEqual(re.findall(r"^\s*(\w+)\s*,?\s*(?://.*)?$", sort_columns, re.M), [
             "FileName", "History", "Duration", "Format", "Size", "SampleRate", "Description",

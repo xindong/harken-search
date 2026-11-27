@@ -23,6 +23,9 @@ This directory is copied into the public release output and carries verbatim lic
 - `WebView2-LICENSE.txt` - Microsoft WebView2 SDK license
 - `WebView2-NOTICE.txt` - Microsoft WebView2 SDK notice bundle
 - `Lucide-LICENSE.txt` - Lucide upstream LICENSE (includes Feather-derived icon notice)
+- `SourceHanSans-OFL-1.1.txt` - Adobe Source Han Sans SC copyright and SIL Open Font License
+- `Inter-OFL-1.1.txt` - Inter copyright and SIL Open Font License
+- `JetBrainsMono-OFL-1.1.txt` - JetBrains Mono copyright and SIL Open Font License
 - `Hugeicons-MIT.txt` - Hugeicons folder outlines used in the database tree
 - `DiceBear-MIT.txt` - DiceBear core/library MIT license
 - `CC0-1.0.txt` - Creative Commons CC0 1.0 text used for the shipped Lorelei Neutral avatar style

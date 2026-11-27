@@ -76,6 +76,9 @@ enum class PathStatus {
 };
 PathStatus ProbePath(const std::string& pathUtf8,
                      std::string* errorMessage = nullptr);
+enum class FilePathKind { Missing, RegularFile, Symlink, Other, Error };
+enum class PathLinkMode { Follow, NoFollow };
+FilePathKind QueryFilePathKind(const std::string& pathUtf8, PathLinkMode linkMode);
 bool IsNetworkPath(const std::string& pathUtf8);
 PathAttributes QueryPathAttributes(const std::string& pathUtf8);
 bool IsDirectory(const std::string& pathUtf8);
@@ -122,6 +125,7 @@ std::vector<uint8_t> ReadFileBytes(const std::string& pathUtf8);
 std::vector<uint8_t> ReadFileBytes(const std::string& pathUtf8, size_t maxBytes);
 int64_t LastWriteTimeUnixSeconds(const std::string& pathUtf8);
 bool ReadFileText(const std::string& pathUtf8, std::string& outText);
+bool ReadFileBinaryText(const std::string& pathUtf8, std::string& outText);
 bool WriteFileText(const std::string& pathUtf8, const std::string& text);
 bool AppendFileText(const std::string& pathUtf8, const std::string& text);
 

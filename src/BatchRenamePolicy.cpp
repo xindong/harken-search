@@ -2,6 +2,9 @@
 
 #include "Utils.h"
 #include "platform/filesystem.h"
+#ifdef __APPLE__
+#include "platform/text_encoding.h"
+#endif
 
 #include <cstdio>
 #include <regex>
@@ -9,6 +12,20 @@
 #include <utility>
 
 namespace aura::rename {
+
+#ifdef __APPLE__
+static void DeleteMacUtf8Chars(std::string& name, int count, bool fromStart) {
+    if (count <= 0) return;
+    auto characters = Platform::TextEncoding::Utf8ToWideStrict(name);
+    const auto length = static_cast<std::size_t>(count);
+    if (length >= characters.size() ||
+        Platform::TextEncoding::WideToUtf8Strict(characters) != name) {
+        return;
+    }
+    characters.erase(fromStart ? 0 : characters.size() - length, length);
+    name = Platform::TextEncoding::WideToUtf8Strict(characters);
+}
+#endif
 
 // Check if a character is Chinese
 static bool IsChineseCharBR(wchar_t c) {
@@ -68,6 +85,9 @@ std::string ApplyRule(
             {
                 int n = 0;
                 try { n = std::stoi(rule.searchText); } catch (...) {}
+#ifdef __APPLE__
+                DeleteMacUtf8Chars(result, n, true);
+#else
                 if (n > 0 && n < (int)result.length()) {
                     // Handle UTF-8: convert to wstring, delete, convert back
                     std::wstring wstr = Utf8ToWide(result);
@@ -76,6 +96,7 @@ std::string ApplyRule(
                     }
                     result = WideToUtf8(wstr);
                 }
+#endif
             }
             break;
 
@@ -83,6 +104,9 @@ std::string ApplyRule(
             {
                 int n = 0;
                 try { n = std::stoi(rule.searchText); } catch (...) {}
+#ifdef __APPLE__
+                DeleteMacUtf8Chars(result, n, false);
+#else
                 if (n > 0) {
                     std::wstring wstr = Utf8ToWide(result);
                     if (n < (int)wstr.length()) {
@@ -90,6 +114,7 @@ std::string ApplyRule(
                     }
                     result = WideToUtf8(wstr);
                 }
+#endif
             }
             break;
 

@@ -10,8 +10,13 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <GL/gl.h>
+#elif defined(__APPLE__)
+#include <OpenGL/gl.h>
 #endif
 
+#ifndef APIENTRY
+#define APIENTRY
+#endif
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
@@ -25,7 +30,9 @@ namespace TestCoverStubs {
 
 static int g_frameCount = 0;
 static double g_timeSeconds = 0.0;
+#if defined(_WIN32) || defined(__APPLE__)
 static GLuint g_nextTextureId = 1;
+#endif
 static std::mutex g_albumArtMutex;
 static std::condition_variable g_albumArtCv;
 static std::string g_slowAlbumArtPath;
@@ -86,7 +93,7 @@ double GetTime() {
 
 } // namespace ImGui
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__APPLE__)
 extern "C" {
 
 void APIENTRY glGenTextures(GLsizei n, GLuint* textures) {

@@ -1075,7 +1075,7 @@ void RenderThemeEditor(AppState& state) {
                     g_ed.importMsg = L(TE_ImportFail);
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", themePath.c_str());
+            if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", themePath.c_str());
             ImGui::PopID();
         }
         ImGui::EndChild();

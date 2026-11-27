@@ -165,10 +165,46 @@ bool WaitRecomputeStarted(Database& db, std::atomic<float>* progress, int timeou
 bool WaitMigrated(Database& db, int timeoutMs) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
     while (std::chrono::steady_clock::now() < deadline) {
-        if (MetaValue(db, "search_data_migrated") == "2") return true;
+        if (MetaValue(db, "search_data_migrated") == "3") return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return false;
+}
+
+void AppendVorbisLe32(std::string& bytes, uint32_t value) {
+    bytes.push_back(static_cast<char>(value & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 8) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 16) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 24) & 0xFF));
+}
+
+std::string BuildVorbisFlacFixture(const std::vector<std::string>& entries) {
+    std::string comment;
+    const std::string vendor = "Harken Search test";
+    AppendVorbisLe32(comment, static_cast<uint32_t>(vendor.size()));
+    comment += vendor;
+    AppendVorbisLe32(comment, static_cast<uint32_t>(entries.size()));
+    for (const auto& entry : entries) {
+        AppendVorbisLe32(comment, static_cast<uint32_t>(entry.size()));
+        comment += entry;
+    }
+
+    auto block = [](int type, bool last, const std::string& payload) {
+        std::string bytes;
+        bytes.push_back(static_cast<char>((last ? 0x80 : 0x00) | (type & 0x7F)));
+        const uint32_t size = static_cast<uint32_t>(payload.size());
+        bytes.push_back(static_cast<char>((size >> 16) & 0xFF));
+        bytes.push_back(static_cast<char>((size >> 8) & 0xFF));
+        bytes.push_back(static_cast<char>(size & 0xFF));
+        bytes += payload;
+        return bytes;
+    };
+
+    std::string bytes = "fLaC";
+    bytes += block(0, false, std::string(34, '\0'));
+    bytes += block(4, true, comment);
+    bytes += std::string(64, '\0');
+    return bytes;
 }
 
 bool InstallWriteFailTrigger(Database& db) {
@@ -209,7 +245,7 @@ bool InstallFtsRebuildFailTrigger(Database& db, std::string* used) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     bool ok = true;
     const std::string isolationRoot = Platform::HarkenUserData::PreviewIsolationRootUtf8();
     std::cout << "ISOLATION_ROOT=" << isolationRoot << std::endl;
@@ -221,6 +257,293 @@ int main() {
         ("bug07-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     fs::create_directories(root);
     const fs::path audioDir = root / "audio";
+
+    if (argc == 2 && std::string(argv[1]) == "--mp3-search") {
+        Database database;
+        if (!Expect(database.open((root / "mp3.db").u8string(), false), "open an isolated MP3 library")) return 1;
+        database.stopCoverPhashBackfillWorker();
+        AudioRecord record;
+        record.filePath = (audioDir / "Tone.mp3").u8string();
+        record.fileName = "Tone.mp3";
+        record.extension = ".mp3";
+        record.title = "Library title";
+        record.meta = {{"composer", "Azurescore"}, {"bpm", "187"},
+                       {"musical_key", "Dorian"}, {"track_year", "2034"}};
+        record.id3TextTags = {{"Original 名称", "UniqueValue"}, {"Other 英文", "SecondValue"}};
+        ok &= Expect(database.addFile(record), "add the MP3 record");
+        SearchFilter filter;
+        for (const char* value : {"Azurescore", "187", "Dorian", "2034", "UniqueValue"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().matchSource == SearchMatchSource::Metadata, value);
+        }
+        const auto custom = Database::findOptionalMetadataMatches(database.getFileByPath(record.filePath), "UniqueValue");
+        ok &= Expect(custom.size() == 1 && custom.front().custom &&
+            custom.front().field == "Original 名称" && custom.front().value == "UniqueValue",
+            "custom tag stores the original field and explains the actual matching value");
+        filter.keyword = "UniqueValue";
+        filter.exactMode = true;
+        ok &= Expect(database.searchFiles(filter, 10).empty(), "precise filename search does not gain custom-only results");
+        filter.keyword = "Tone";
+        filter.exactMode = true;
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "precise filename still matches");
+        record.title = "Embedded title";
+        record.meta["composer"] = "Embedded composer";
+        record.keywords = "newly indexed";
+        ok &= Expect(database.addFile(record), "reread existing MP3");
+        const auto reread = database.getFileByPath(record.filePath);
+        ok &= Expect(reread.title == "Library title" &&
+            reread.getMeta("composer") == "Azurescore" && reread.keywords == "newly indexed",
+            "reread adds missing metadata without replacing library edits");
+        MetadataEditPatch edit;
+        edit.fields["composer"] = "Borealscore";
+        ok &= Expect(database.applyMetadataPatch(reread.id, edit), "update a library music tag");
+        filter.exactMode = false;
+        filter.keyword = "Borealscore";
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "edited composer immediately searchable");
+        filter.keyword = "Azurescore";
+        ok &= Expect(database.searchFiles(filter, 10).empty(), "edited composer no longer matches old tags");
+
+        database.executeRawQuery("UPDATE audio_files SET search_data = 'Tone';");
+        database.executeRawQuery(
+            "INSERT INTO app_meta(key, value) VALUES('search_data_migrated', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = '2';");
+        ok &= Expect(MatchCount(database, "Dorian") == 0, "version 2 fixture lacks the key in the search index");
+        database.close();
+        if (!Expect(database.open((root / "mp3.db").u8string(), true), "reopen the version 2 library")) return 1;
+        ok &= Expect(WaitMigrated(database, 5000), "opening the version 2 library refreshes the index in the background");
+        for (const char* value : {"187", "Dorian", "2034"}) {
+            filter.keyword = value;
+            ok &= Expect(MatchCount(database, value) == 1 && database.searchFiles(filter, 10).size() == 1, value);
+        }
+        return ok ? 0 : 1;
+    }
+
+    if (argc == 2 && std::string(argv[1]) == "--flac-search") {
+        const fs::path flacPath = root / "Synthetic.flac";
+        {
+            std::ofstream out(flacPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "TITLE=Embedded title",
+                "COMPOSER=Azurescore",
+                "BPM=181",
+                "INITIALKEY=Dorian",
+                "DATE=2034-05-01",
+                "VENDOR LABEL=UniqueValue",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        Database database;
+        if (!Expect(database.open((root / "flac.db").u8string(), false), "open an isolated FLAC library")) return 1;
+        database.stopCoverPhashBackfillWorker();
+        AudioRecord record;
+        record.filePath = flacPath.u8string();
+        record.fileName = "Synthetic.flac";
+        record.extension = ".flac";
+        record.title = "Library title";
+        // The pre-Vorbis-parser build stored the year but nothing else, which is
+        // exactly the row shape the one-time backfill must still pick up.
+        record.meta = {{"track_year", "2034"}};
+        ok &= Expect(database.addFile(record), "add a FLAC row with only the legacy year");
+        database.close();
+
+        if (!Expect(database.open((root / "flac.db").u8string(), true), "reopen the FLAC library")) return 1;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        AudioRecord refreshed;
+        while (std::chrono::steady_clock::now() < deadline) {
+            refreshed = database.getFileByPath(record.filePath);
+            if (!refreshed.getMeta("composer").empty()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        ok &= Expect(refreshed.getMeta("composer") == "Azurescore", "legacy FLAC row gains composer in the background");
+        const auto bpmValue = Scalar(database.executeRawQuery(
+            "SELECT bpm FROM audio_files WHERE id = 1;"));
+        ok &= Expect(bpmValue == "181", "legacy FLAC row gains BPM");
+        ok &= Expect(refreshed.getMeta("musical_key") == "Dorian", "legacy FLAC row gains key");
+        ok &= Expect(refreshed.getMeta("track_year") == "2034", "legacy FLAC row keeps its year");
+        ok &= Expect(refreshed.title == "Library title", "legacy backfill keeps the library title");
+        ok &= Expect(refreshed.id3TextTags.count("VENDOR LABEL") == 1,
+                     "legacy FLAC row gains its custom Vorbis tag");
+        ok &= Expect(MetaValue(database, "legacy_vorbis_metadata_refresh") == "1",
+                     "legacy FLAC backfill records that it finished");
+
+        SearchFilter filter;
+        for (const char* value : {"Azurescore", "181", "Dorian", "2034", "UniqueValue"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().matchSource == SearchMatchSource::Metadata, value);
+        }
+        const auto custom = Database::findOptionalMetadataMatches(
+            database.getFileByPath(record.filePath), "UniqueValue");
+        ok &= Expect(custom.size() == 1 && custom.front().custom &&
+                         custom.front().field == "VENDOR LABEL" &&
+                         custom.front().value == "UniqueValue",
+                     "custom Vorbis tag explains the actual matching field");
+        database.close();
+
+        // A row the user already edited keeps that value while the columns that
+        // are still empty are filled from the file.
+        const fs::path partialPath = root / "Partial.flac";
+        {
+            std::ofstream out(partialPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "COMPOSER=FileComposer",
+                "BPM=145",
+                "INITIALKEY=Amin",
+                "DATE=2019-02-03",
+                "VENDOR LABEL=PartialValue",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database partial;
+            if (!Expect(partial.open((root / "flac-partial.db").u8string(), false),
+                        "open the partially filled FLAC library")) return 1;
+            partial.stopCoverPhashBackfillWorker();
+            AudioRecord manual;
+            manual.filePath = partialPath.u8string();
+            manual.fileName = "Partial.flac";
+            manual.extension = ".flac";
+            manual.title = "Manual title";
+            manual.meta = {{"composer", "ManualComposer"}};
+            ok &= Expect(partial.addFile(manual), "add a FLAC row whose composer was already set");
+            partial.close();
+        }
+        {
+            Database partial;
+            if (!Expect(partial.open((root / "flac-partial.db").u8string(), true),
+                        "reopen the partially filled FLAC library")) return 1;
+            const auto partialDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            AudioRecord partialRecord;
+            while (std::chrono::steady_clock::now() < partialDeadline) {
+                partialRecord = partial.getFileByPath(partialPath.u8string());
+                if (!partialRecord.getMeta("bpm").empty()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            ok &= Expect(partialRecord.getMeta("composer") == "ManualComposer",
+                         "backfill keeps the composer the user already set");
+            ok &= Expect(Scalar(partial.executeRawQuery(
+                             "SELECT bpm FROM audio_files WHERE file_name = 'Partial.flac';")) == "145",
+                         "backfill still fills BPM on a partially filled row");
+            ok &= Expect(partialRecord.getMeta("musical_key") == "Amin",
+                         "backfill still fills the key on a partially filled row");
+            ok &= Expect(partialRecord.getMeta("track_year") == "2019",
+                         "backfill still fills the year on a partially filled row");
+            ok &= Expect(partialRecord.id3TextTags.count("VENDOR LABEL") == 1,
+                         "backfill still adds custom tags on a partially filled row");
+            SearchFilter partialFilter;
+            partialFilter.keyword = "PartialValue";
+            ok &= Expect(partial.searchFiles(partialFilter, 10).size() == 1,
+                         "the partially filled row becomes searchable by its new tag");
+            partial.close();
+        }
+
+        // A failed write keeps the row for the next pass and never records
+        // completion, so the one-time marker cannot hide unfilled rows.
+        const fs::path retryPath = root / "Retry.flac";
+        {
+            std::ofstream out(retryPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "COMPOSER=RetryComposer",
+                "BPM=133",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database retry;
+            if (!Expect(retry.open((root / "flac-retry.db").u8string(), false),
+                        "open the FLAC library used for the retry case")) return 1;
+            retry.stopCoverPhashBackfillWorker();
+            AudioRecord pending;
+            pending.filePath = retryPath.u8string();
+            pending.fileName = "Retry.flac";
+            pending.extension = ".flac";
+            pending.title = "Retry title";
+            ok &= Expect(retry.addFile(pending), "add the row that will fail its first backfill write");
+            const int64_t pendingId = retry.getFileByPath(pending.filePath).id;
+            retry.executeRawQuery(
+                "DELETE FROM app_meta WHERE key IN ('legacy_vorbis_metadata_refresh',"
+                " 'legacy_vorbis_metadata_refresh_cursor');");
+            ok &= Expect(InstallWriteFailTrigger(retry), "install the write-fail trigger");
+            ok &= Expect(retry.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a failed backfill write stops the batch");
+            ok &= Expect(retry.getFileById(pendingId).getMeta("composer").empty(),
+                         "the failed row is left untouched");
+            ok &= Expect(MetaValue(retry, "legacy_vorbis_metadata_refresh") != "1",
+                         "a failed batch never records completion");
+            retry.executeRawQuery("DROP TRIGGER IF EXISTS abort_search_data_update;");
+            retry.close();
+        }
+        {
+            // Only a primary connection starts the worker, so reopen as the app
+            // does: the pass resumes from the row that failed instead of
+            // skipping it.
+            Database retry;
+            if (!Expect(retry.open((root / "flac-retry.db").u8string(), true),
+                        "reopen the FLAC library for the retry pass")) return 1;
+            const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            std::string marker;
+            AudioRecord retriedRecord;
+            while (std::chrono::steady_clock::now() < retryDeadline) {
+                marker = MetaValue(retry, "legacy_vorbis_metadata_refresh");
+                retriedRecord = retry.getFileByPath(retryPath.u8string());
+                if (marker == "1" && !retriedRecord.getMeta("composer").empty()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            ok &= Expect(marker == "1",
+                         "the next pass retries the failed row and finishes the backfill");
+            ok &= Expect(retriedRecord.getMeta("composer") == "RetryComposer",
+                         "the retried row gains its composer");
+            ok &= Expect(retry.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a finished pass does not run again");
+            // The fill-only guard: a value the user saved after the file was read
+            // is never replaced by the backfill copy.
+            const int64_t pendingId = retry.getFileByPath(retryPath.u8string()).id;
+            MetadataEditPatch manualComposer;
+            manualComposer.fields["composer"] = "LateUserEdit";
+            ok &= Expect(retry.applyMetadataPatch(pendingId, manualComposer),
+                         "save a user composer after the backfill finished");
+            ok &= Expect(retry.fillLegacyVorbisColumns(pendingId, "FileComposer", "", "", "", nullptr),
+                         "a fill-only write on an already filled column succeeds as a no-op");
+            ok &= Expect(retry.getFileById(pendingId).getMeta("composer") == "LateUserEdit",
+                         "the fill-only write keeps the user value");
+            retry.close();
+        }
+
+        // Cancelling (closing the library) stops the pass between files and
+        // leaves the row for the next open instead of skipping it.
+        const fs::path cancelPath = root / "Cancel.flac";
+        {
+            std::ofstream out(cancelPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({"COMPOSER=CancelComposer"});
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database cancelled;
+            if (!Expect(cancelled.open((root / "flac-cancel.db").u8string(), false),
+                        "open the FLAC library used for the cancel case")) return 1;
+            cancelled.stopCoverPhashBackfillWorker();
+            AudioRecord pending;
+            pending.filePath = cancelPath.u8string();
+            pending.fileName = "Cancel.flac";
+            pending.extension = ".flac";
+            pending.title = "Cancel title";
+            ok &= Expect(cancelled.addFile(pending), "add the row left for the cancelled pass");
+            const int64_t pendingId = cancelled.getFileByPath(pending.filePath).id;
+            cancelled.executeRawQuery(
+                "DELETE FROM app_meta WHERE key IN ('legacy_vorbis_metadata_refresh',"
+                " 'legacy_vorbis_metadata_refresh_cursor');");
+            ok &= Expect(cancelled.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a cancelled pass stops before reading the next file");
+            ok &= Expect(cancelled.getFileById(pendingId).getMeta("composer").empty(),
+                         "a cancelled pass writes nothing");
+            ok &= Expect(MetaValue(cancelled, "legacy_vorbis_metadata_refresh") != "1",
+                         "a cancelled pass does not record completion");
+            cancelled.close();
+        }
+        return ok ? 0 : 1;
+    }
 
     {
         const fs::path dbPath = root / "product-small.db";
@@ -243,7 +566,7 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated")
                   << " cursor=" << MetaValue(db, "search_data_recompute_cursor")
                   << " matchQiche=" << MatchCount(db, "qiche") << std::endl;
-        ok &= Expect(MetaValue(db, "search_data_migrated") == "2", "product rebuildFtsIndexBatched completes migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") == "3", "product rebuildFtsIndexBatched completes migrated=3");
         ok &= Expect(MetaValue(db, "search_data_recompute_cursor").empty(), "product rebuild clears the recompute cursor");
         ok &= Expect(Contains(Scalar(ftsSql), "content="), "product rebuild keeps content-synced FTS");
         ok &= Expect(MatchCount(db, "qiche") == 1, "product rebuild FTS MATCH full pinyin qiche");
@@ -254,13 +577,13 @@ int main() {
         ok &= Expect(MatchCount(db, "qiche") == 0, "fixture clears FTS before explicit rebuild");
         const bool explicitlyRebuilt = db.rebuildFtsIndexBatched(2, &progress, &cancel);
         ok &= Expect(explicitlyRebuilt, "explicit FTS rebuild reports success");
-        ok &= Expect(MatchCount(db, "qiche") == 1, "explicit rebuild restores FTS after migration=2");
+        ok &= Expect(MatchCount(db, "qiche") == 1, "explicit rebuild restores FTS after migration=3");
         std::string blockedTable;
         ok &= Expect(InstallFtsRebuildFailTrigger(db, &blockedTable),
                      "explicit rebuild failure trigger installs");
         const bool blockedRebuild = db.rebuildFtsIndexBatched(2, &progress, &cancel);
         ok &= Expect(!blockedRebuild, "explicit FTS SQL failure reports failure");
-        std::cout << "NOTE: rebuildFtsIndexBatched uses progress=-1 as 745 done/stop signal; success is migrated=2 not progress>=0. observed="
+        std::cout << "NOTE: rebuildFtsIndexBatched uses progress=-1 as 745 done/stop signal; success is migrated=3 not progress>=0. observed="
                   << progress.load() << std::endl;
         db.close();
     }
@@ -286,7 +609,7 @@ int main() {
                   << " progress=" << progress.load() << std::endl;
         const auto multiFtsSql = db.executeRawQuery("SELECT sql FROM sqlite_master WHERE name = 'audio_files_fts';");
         ok &= Expect(TotalRows(db) > 2048, "multi-batch fixture has more than one 2048 recompute page");
-        ok &= Expect(MetaValue(db, "search_data_migrated") == "2", "product rebuildFtsIndexBatched finishes a >2048-row library");
+        ok &= Expect(MetaValue(db, "search_data_migrated") == "3", "product rebuildFtsIndexBatched finishes a >2048-row library");
         ok &= Expect(Contains(Scalar(multiFtsSql), "content="), "multi-batch product rebuild keeps content-synced FTS");
         ok &= Expect(MatchCount(db, "qiche") == 1, "multi-batch product rebuild MATCH qiche");
         db.close();
@@ -301,7 +624,7 @@ int main() {
         const bool finished = WaitMigrated(db, 20000);
         std::cout << "worker-success migrated=" << MetaValue(db, "search_data_migrated")
                   << " matchQiche=" << MatchCount(db, "qiche") << std::endl;
-        ok &= Expect(finished && MetaValue(db, "search_data_migrated") == "2", "background worker finishes migrated=2");
+        ok &= Expect(finished && MetaValue(db, "search_data_migrated") == "3", "background worker finishes migrated=3");
         ok &= Expect(MatchCount(db, "qiche") == 1, "background worker FTS MATCH qiche");
         db.close();
     }
@@ -327,10 +650,10 @@ int main() {
                   << " attempts=" << attempts
                   << " progress=" << progress.load() << std::endl;
         ok &= Expect(MatchCount(db, "oldtoken") == 1, "write-fail keeps original FTS MATCH oldtoken");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "write-fail does not mark migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "write-fail does not mark migrated=3");
         ok &= Expect(MetaValue(db, "search_data_recompute_cursor").empty(), "write-fail does not advance the recompute cursor");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "write-fail does not busy-retry after the failed publish");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "write-fail does not busy-retry after the failed publish");
         ok &= Expect(progress.load() < 0.0f, "write-fail uses progress=-1 as stop/failure signal");
         db.close();
     }
@@ -358,9 +681,9 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated") << std::endl;
         const std::string migratedAfterWait = MetaValue(db, "search_data_migrated");
         std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        ok &= Expect(migratedAfterWait != "2" && MetaValue(db, "search_data_migrated") != "2",
+        ok &= Expect(migratedAfterWait != "3" && MetaValue(db, "search_data_migrated") != "3",
                     "background worker does not busy-retry write failures");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "worker write-fail does not mark complete");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "worker write-fail does not mark complete");
         ok &= Expect(MatchCount(db, "oldtoken") == 1, "worker write-fail keeps MATCH oldtoken");
         db.close();
     }
@@ -381,7 +704,7 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated") << std::endl;
         ok &= Expect(first == HarkenSearch::Search::SearchDataRecomputeStep::Failed, "openReadOnly recompute does not report success");
         ok &= Expect(second == HarkenSearch::Search::SearchDataRecomputeStep::Failed, "openReadOnly second call stays failed");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "openReadOnly does not mark migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "openReadOnly does not mark migrated=3");
         ok &= Expect(MetaValue(db, "search_data_recompute_cursor").empty(), "openReadOnly does not advance cursor");
         db.close();
     }
@@ -495,7 +818,7 @@ int main() {
                   << " qiche=" << MatchCount(db, "qiche")
                   << " progress=" << progress.load() << std::endl;
         ok &= Expect(started, "in-flight cancel waited until recompute actually started");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "in-flight cancel does not mark migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "in-flight cancel does not mark migrated=3");
         ok &= Expect(MatchCount(db, "oldtoken") == 1, "in-flight cancel still MATCH oldtoken on original early row");
         ok &= Expect(MatchCount(db, "keepoldtoken") == 1, "in-flight cancel still MATCH keepoldtoken on unprocessed late row");
         const auto ftsSql = db.executeRawQuery("SELECT sql FROM sqlite_master WHERE name = 'audio_files_fts';");
@@ -528,9 +851,9 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated")
                   << " attempts=" << attempts << std::endl;
         ok &= Expect(MatchCount(db, "oldtoken") == 1, "compute-then-write-fail keeps MATCH oldtoken");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "compute-then-write-fail does not publish migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "compute-then-write-fail does not publish migrated=3");
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "compute-then-write-fail does not busy-retry a failed publish");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "compute-then-write-fail does not busy-retry a failed publish");
         db.close();
     }
 
@@ -545,7 +868,7 @@ int main() {
         std::atomic<bool> cancel{false};
         const auto step = db.recomputeSearchDataBatch(2048, &cancel);
         ok &= Expect(step == HarkenSearch::Search::SearchDataRecomputeStep::Continue &&
-                     MetaValue(db, "search_data_migrated") != "2",
+                     MetaValue(db, "search_data_migrated") != "3",
                      "fts-rebuild-fail stages rows before the failing publish");
         std::string ftsTable;
         const bool installed = InstallFtsRebuildFailTrigger(db, &ftsTable);
@@ -560,7 +883,7 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated")
                   << " progress=" << progress.load() << std::endl;
         ok &= Expect(MatchCount(db, "oldtoken") == 1, "fts-rebuild-fail keeps MATCH oldtoken");
-        ok &= Expect(MetaValue(db, "search_data_migrated") != "2", "fts-rebuild-fail rolls back and does not mark migrated=2");
+        ok &= Expect(MetaValue(db, "search_data_migrated") != "3", "fts-rebuild-fail rolls back and does not mark migrated=3");
         db.close();
     }
 
@@ -583,7 +906,7 @@ int main() {
                   << " migrated=" << MetaValue(db, "search_data_migrated") << std::endl;
         ok &= Expect(Scalar(liveWhoosh) == "usertoken", "concurrent ordinary edit is not overwritten by a stale snapshot");
         ok &= Expect(MatchCount(db, "usertoken") == 1, "concurrent edit remains searchable through live triggers/FTS");
-        ok &= Expect(MetaValue(db, "search_data_migrated") == "2", "concurrent-edit still allows a successful publish of unchanged rows");
+        ok &= Expect(MetaValue(db, "search_data_migrated") == "3", "concurrent-edit still allows a successful publish of unchanged rows");
         db.close();
     }
 
@@ -610,7 +933,7 @@ int main() {
         Database other;
         if (!other.open(db2.u8string(), false)) return 1;
         other.stopCoverPhashBackfillWorker();
-        ok &= Expect(MetaValue(other, "search_data_migrated") != "2", "closed worker does not finish a different library");
+        ok &= Expect(MetaValue(other, "search_data_migrated") != "3", "closed worker does not finish a different library");
         const auto otherQiche = other.executeRawQuery("SELECT COUNT(*) FROM audio_files WHERE search_data LIKE '%qiche%';");
         ok &= Expect(Scalar(otherQiche) == "0", "closed worker does not write pinyin into another library");
         other.close();

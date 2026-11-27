@@ -13,6 +13,7 @@
 #include <initializer_list>
 #include <ios>
 #include <memory>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
@@ -217,7 +218,12 @@ uint32_t MetadataReader::readSyncSafeInt(const uint8_t* data) {
            ((data[2] & 0x7F) << 7) | (data[3] & 0x7F);
 }
 
-bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata) {
+bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata,
+                                  bool* customTagsRead) {
+    bool localCustomTags = false;
+    bool* customTagsOut = customTagsRead ? customTagsRead : &localCustomTags;
+    *customTagsOut = false;
+    metadata.customTextTagsRead = false;
     try {
     // Determine format from extension
     std::string ext;
@@ -232,20 +238,25 @@ bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& me
 #endif
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
+    bool found = false;
     if (ext == ".mp3") {
-        if (readID3v2(filePath, metadata)) return true;
-        return readID3v1(filePath, metadata);
+        found = readID3v2(filePath, metadata, true, customTagsOut);
+        if (!found) found = readID3v1(filePath, metadata);
     } else if (ext == ".wav" || ext == ".wave") {
-        return readBWF(filePath, metadata);
+        found = readBWF(filePath, metadata);
     } else if (ext == ".ogg" || ext == ".flac") {
-        return readVorbisComment(filePath, metadata);
+        found = readVorbisComment(filePath, metadata, customTagsOut);
     } else if (ext == ".m4a" || ext == ".aac" || ext == ".mp4" || ext == ".m4p") {
-        return readM4A(filePath, metadata);
+        found = readM4A(filePath, metadata);
     } else if (ext == ".aiff" || ext == ".aif") {
-        return readID3v2(filePath, metadata);
+        found = readID3v2(filePath, metadata);
     } else if (ext == ".wv") {
-        return ReadWavPackMetadata(filePath, metadata);
+        found = ReadWavPackMetadata(filePath, metadata);
     }
+    // Report whether the custom-tag container of this format was parsed fully,
+    // not whether the format happens to be MP3.
+    metadata.customTextTagsRead = *customTagsOut;
+    return found;
     } catch (...) {
 // Tolerate any exception (including SEH with /EHa) from corrupted files
     }
@@ -314,7 +325,39 @@ bool MetadataReader::readID3v1(const std::string& filePath, AudioMetadata& metad
     return metadata.hasData();
 }
 
-bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metadata) {
+using Platform::Metadata::LegacyTagContent::Utf16ByteOrder;
+
+static std::string DecodeId3Text(uint8_t encoding, std::string_view bytes, Utf16ByteOrder& order) {
+    if (encoding == 3) return std::string(bytes);
+    if (encoding == 0) return Platform::Metadata::LegacyTagContent::DecodeId3v2Encoding0(bytes);
+    if (encoding != 1 && encoding != 2) return {};
+
+    if (bytes.substr(0, 2) == "\xFF\xFE") {
+        order = Utf16ByteOrder::LittleEndian;
+        bytes.remove_prefix(2);
+    } else if (bytes.substr(0, 2) == "\xFE\xFF") {
+        order = Utf16ByteOrder::BigEndian;
+        bytes.remove_prefix(2);
+    }
+    return Platform::Metadata::LegacyTagContent::DecodeUtf16(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), order);
+}
+
+static size_t FindId3TextSeparator(std::string_view bytes, size_t width) {
+    if (width == 1) return bytes.find('\0');
+    for (size_t offset = 0; offset + 1 < bytes.size(); offset += 2) {
+        if (bytes[offset] == '\0' && bytes[offset + 1] == '\0') return offset;
+    }
+    return std::string_view::npos;
+}
+
+static void StripId3TextTerminators(std::string& text) {
+    while (!text.empty() && text.back() == '\0') text.pop_back();
+}
+
+bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metadata,
+                               bool useV1Fallback, bool* customTagsRead) {
+    if (customTagsRead) *customTagsRead = false;
     MetadataFileReader file = openFile(filePath);
     if (!file.is_open()) return false;
 
@@ -325,6 +368,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
     // Check for ID3 header
     if (header[0] != 'I' || header[1] != 'D' || header[2] != '3') {
+        if (customTagsRead) *customTagsRead = true;
         return false;
     }
 
@@ -333,7 +377,13 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
     // uint8_t flags = header[5];
     uint32_t tagSize = readSyncSafeInt(header + 6);
 
-    if (majorVersion < 2 || majorVersion > 4 || tagSize == 0) {
+    if (majorVersion < 2 || majorVersion > 4) {
+        return false;
+    }
+    bool customTagsComplete = (header[5] & 0xC0) == 0 &&
+        ((header[6] | header[7] | header[8] | header[9]) & 0x80) == 0;
+    if (tagSize == 0) {
+        if (customTagsRead) *customTagsRead = customTagsComplete;
         return false;
     }
 
@@ -344,87 +394,88 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
     std::vector<uint8_t> tagData(tagSize);
     file.read(reinterpret_cast<char*>(tagData.data()), tagSize);
     if (static_cast<uint32_t>(file.gcount()) != tagSize) return false;
+    if (majorVersion == 2 && useV1Fallback) readID3v1(filePath, metadata);
 
     // Parse frames
     size_t pos = 0;
-    while (pos + 10 < tagSize) {
-        // Frame header
-        char frameId[5] = {0};
-        if (majorVersion >= 3) {
-            // ID3v2.3/2.4: 4-char frame ID
-            memcpy(frameId, tagData.data() + pos, 4);
-            pos += 4;
-        } else {
-            // ID3v2.2: 3-char frame ID
-            memcpy(frameId, tagData.data() + pos, 3);
-            pos += 3;
-        }
-
-        // Check for padding
-        if (frameId[0] == 0) break;
+    const size_t idLength = majorVersion >= 3 ? 4 : 3;
+    const size_t headerLength = majorVersion >= 3 ? 10 : 6;
+    while (pos + headerLength < tagSize) {
+        const auto* frame = tagData.data() + pos;
+        if (frame[0] == 0) break;
+        const std::string_view id(reinterpret_cast<const char*>(frame), idLength);
+        const auto* sizeBytes = frame + idLength;
 
         uint32_t frameSize;
         if (majorVersion >= 4) {
-            frameSize = readSyncSafeInt(tagData.data() + pos);
+            frameSize = readSyncSafeInt(sizeBytes);
         } else if (majorVersion == 3) {
-            frameSize = readBE32(tagData.data() + pos);
+            frameSize = readBE32(sizeBytes);
         } else {
-            // ID3v2.2: 3-byte size
-            frameSize = (tagData[pos] << 16) | (tagData[pos + 1] << 8) | tagData[pos + 2];
-            pos += 3;
-            pos += frameSize;
-            continue;
+            frameSize = (sizeBytes[0] << 16) | (sizeBytes[1] << 8) | sizeBytes[2];
         }
-        pos += 4;
-
-        // Skip flags (2 bytes for v2.3/2.4)
-        if (majorVersion >= 3) {
-            pos += 2;
+        pos += headerLength;
+        if (frameSize == 0 || frameSize > tagSize - pos) {
+            customTagsComplete = false;
+            break;
         }
 
-        if (frameSize == 0 || pos + frameSize > tagSize) break;
-
-        // Read frame content
-        std::string content;
-        uint8_t encoding = tagData[pos];
-        size_t textStart = pos + 1;
-        size_t textLen = frameSize - 1;
-        std::string id(frameId);
-        if (id == "COMM") {
-            metadata.comment = trimString(Id3CommentText::Decode(
-                encoding, std::string_view(
-                    reinterpret_cast<const char*>(tagData.data() + textStart), textLen)));
-            pos += frameSize;
+        const uint8_t encoding = tagData[pos];
+        const std::string_view body(
+            reinterpret_cast<const char*>(tagData.data() + pos + 1), frameSize - 1);
+        pos += frameSize;
+        if (id == "COMM" || id == "COM") {
+            metadata.comment = trimString(Id3CommentText::Decode(encoding, body));
             continue;
         }
 
-        if (encoding == 3) {
-            // UTF-8 — already in our canonical form, copy as-is.
-            content = std::string(reinterpret_cast<char*>(tagData.data() + textStart), textLen);
-        } else if (encoding == 0) {
-            // ISO-8859-1. Real-world taggers routinely use CP_1252 extras, so
-            // transcode via CP_1252 → UTF-8 so non-ASCII bytes (é, ñ, ü, etc.)
-            // land as valid UTF-8 in the DB.
-            content = Platform::Metadata::LegacyTagContent::DecodeId3v2Encoding0(
-                std::string_view(reinterpret_cast<char*>(tagData.data() + textStart), textLen));
-        } else if (encoding == 1 || encoding == 2) {
-            // UTF-16 with BOM (encoding=1) or UTF-16BE without BOM (encoding=2).
-            auto order = encoding == 2
-                ? Platform::Metadata::LegacyTagContent::Utf16ByteOrder::BigEndian
-                : Platform::Metadata::LegacyTagContent::Utf16ByteOrder::LittleEndian;
-            if (textLen >= 2 && tagData[textStart] == 0xFF && tagData[textStart + 1] == 0xFE) {
-                order = Platform::Metadata::LegacyTagContent::Utf16ByteOrder::LittleEndian;
-                textStart += 2;
-                textLen -= 2;
-            } else if (textLen >= 2 && tagData[textStart] == 0xFE && tagData[textStart + 1] == 0xFF) {
-                order = Platform::Metadata::LegacyTagContent::Utf16ByteOrder::BigEndian;
-                textStart += 2;
-                textLen -= 2;
+        auto order = encoding == 2 ? Utf16ByteOrder::BigEndian : Utf16ByteOrder::LittleEndian;
+        if (id == "TXXX" || id == "TXX") {
+            if (encoding > 3) {
+                customTagsComplete = false;
+                continue;
             }
-            content = Platform::Metadata::LegacyTagContent::DecodeUtf16(
-                tagData.data() + textStart, textLen, order);
+            const size_t width = encoding == 1 || encoding == 2 ? 2 : 1;
+            const size_t separator = FindId3TextSeparator(body, width);
+            if (separator == std::string_view::npos) {
+                customTagsComplete = false;
+                continue;
+            }
+
+            auto description = DecodeId3Text(encoding, body.substr(0, separator), order);
+            auto value = DecodeId3Text(encoding, body.substr(separator + width), order);
+            StripId3TextTerminators(value);
+
+            auto alias = trimString(description);
+            for (char& letter : alias) {
+                if (letter >= 'a' && letter <= 'z') letter = static_cast<char>(letter - 'a' + 'A');
+            }
+            if (alias == "DESCRIPTION") {
+                metadata.description = trimString(value);
+            } else if (alias == "KEYWORDS") {
+                metadata.keywords = trimString(value);
+            } else if (alias == "REPLAYGAIN_TRACK_GAIN") {
+                try { metadata.replayGainTrack = std::stof(value); } catch (...) {}
+            } else if (alias == "REPLAYGAIN_ALBUM_GAIN") {
+                try { metadata.replayGainAlbum = std::stof(value); } catch (...) {}
+            } else if (alias == "INSTRUMENTS" || alias == "INSTUMENTS" ||
+                       alias == "INSTRUMENT" || alias == "INSTUMENT") {
+                if (metadata.instruments.empty()) metadata.instruments = trimString(value);
+            }
+            metadata.customTextTags.insert_or_assign(std::move(description), std::move(value));
+            continue;
         }
 
+        auto content = DecodeId3Text(encoding, body, order);
+        std::string* commonField = nullptr;
+        if (id == "TCOM" || id == "TCM") commonField = &metadata.composer;
+        else if (id == "TBPM" || id == "TBP") commonField = &metadata.bpm;
+        else if (id == "TKEY" || id == "TKE") commonField = &metadata.musicalKey;
+        if (commonField) {
+            StripId3TextTerminators(content);
+            *commonField = trimString(content);
+            continue;
+        }
         content = trimString(content);
 
         // Map frame ID to metadata field
@@ -444,35 +495,23 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             try { metadata.disc = std::stoi(content); } catch (...) {}
         } else if (id == "TCON" || id == "TCO") {
             metadata.genre = content;
-        } else if (id == "TXXX" || id == "TXX") {
-            // User-defined text frame: <encoding><description>\0<value>
-            // 'content' already has the encoding byte stripped and text decoded.
-            // Split on the first null terminator to get description and value.
-            size_t nullPos = content.find('\0');
-            if (nullPos != std::string::npos) {
-                std::string desc = content.substr(0, nullPos);
-                std::string val  = content.substr(nullPos + 1);
-                // Trim trailing nulls/whitespace from both
-                val = trimString(val);
-                // Case-insensitive compare
-                std::string descUpper = desc;
-                std::transform(descUpper.begin(), descUpper.end(), descUpper.begin(), ::toupper);
-                if (descUpper == "REPLAYGAIN_TRACK_GAIN") {
-                    try { metadata.replayGainTrack = std::stof(val); } catch (...) {}
-                } else if (descUpper == "REPLAYGAIN_ALBUM_GAIN") {
-                    try { metadata.replayGainAlbum = std::stof(val); } catch (...) {}
-                } else if (descUpper == "INSTRUMENTS" || descUpper == "INSTUMENTS" ||
-                           descUpper == "INSTRUMENT"  || descUpper == "INSTUMENT") {
-                    // Vendor instrument tag used by professional audio library tools
-                    if (metadata.instruments.empty()) metadata.instruments = val;
-                }
-            }
         }
-
-        pos += frameSize;
     }
 
-    return metadata.hasData();
+    if (customTagsRead) {
+        *customTagsRead = customTagsComplete &&
+            std::all_of(tagData.begin() + pos, tagData.end(), [](uint8_t byte) { return byte == 0; });
+    }
+    if (metadata.hasData()) return true;
+    if (!useV1Fallback) return false;
+    const bool foundExtended = metadata.year > 0 || !metadata.composer.empty() ||
+        !metadata.bpm.empty() || !metadata.musicalKey.empty() || !metadata.customTextTags.empty();
+    if (foundExtended && majorVersion >= 3) {
+        const int id3v2Year = metadata.year;
+        readID3v1(filePath, metadata);
+        if (id3v2Year > 0) metadata.year = id3v2Year;
+    }
+    return foundExtended;
 }
 
 bool MetadataReader::readBWF(const std::string& filePath, AudioMetadata& metadata) {
@@ -732,94 +771,314 @@ bool MetadataReader::parseIXML(const std::string& xmlData, AudioMetadata& metada
     return metadata.hasData();
 }
 
-bool MetadataReader::readVorbisComment(const std::string& filePath, AudioMetadata& metadata) {
-    // Basic Vorbis comment reading for OGG/FLAC
-    // This is a simplified implementation
+namespace {
+
+using VorbisCommentEntries = std::vector<std::pair<std::string, std::string>>;
+
+std::string TrimVorbisText(std::string value) {
+    while (!value.empty() && (value.back() == '\0' || value.back() == '\r' || value.back() == '\n')) {
+        value.pop_back();
+    }
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) return {};
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+// Payload of a Vorbis comment header: vendor string, then a length delimited
+// "KEY=value" list. The same layout is used by FLAC METADATA_BLOCK type 4 and
+// by the Ogg comment packet (after its 7-byte "\x03vorbis" signature).
+bool ParseVorbisCommentPayload(const uint8_t* data, size_t size, VorbisCommentEntries& entries) {
+    size_t pos = 0;
+    auto readLe32 = [&](uint32_t& out) -> bool {
+        if (pos + 4 > size) return false;
+        out = static_cast<uint32_t>(data[pos]) |
+              (static_cast<uint32_t>(data[pos + 1]) << 8) |
+              (static_cast<uint32_t>(data[pos + 2]) << 16) |
+              (static_cast<uint32_t>(data[pos + 3]) << 24);
+        pos += 4;
+        return true;
+    };
+
+    uint32_t vendorLength = 0;
+    if (!readLe32(vendorLength) || vendorLength > size - pos) return false;
+    pos += vendorLength;
+
+    uint32_t count = 0;
+    if (!readLe32(count) || count > 1000000u) return false;
+    entries.reserve(entries.size() + count);
+    for (uint32_t index = 0; index < count; ++index) {
+        uint32_t length = 0;
+        if (!readLe32(length) || length > size - pos) return false;
+        const std::string_view raw(reinterpret_cast<const char*>(data + pos), length);
+        pos += length;
+        const size_t separator = raw.find('=');
+        if (separator == std::string_view::npos || separator == 0) continue;
+        std::string key = TrimVorbisText(std::string(raw.substr(0, separator)));
+        std::string value = TrimVorbisText(std::string(raw.substr(separator + 1)));
+        if (key.empty() || value.empty()) continue;
+        entries.emplace_back(std::move(key), std::move(value));
+    }
+    return true;
+}
+
+void AppendVorbisValue(std::string& field, const std::string& value) {
+    if (field.empty()) {
+        field = value;
+    } else if (field != value) {
+        field += "; ";
+        field += value;
+    }
+}
+
+// Map one Vorbis comment entry. Known keys go to the shared AudioMetadata
+// fields used by the result columns and the main search; everything else is
+// kept verbatim in customTextTags so unknown vendor keys stay searchable.
+void ApplyVorbisCommentEntry(const std::string& key, const std::string& value, AudioMetadata& metadata) {
+    std::string alias = key;
+    for (char& letter : alias) {
+        if (letter >= 'a' && letter <= 'z') letter = static_cast<char>(letter - 'a' + 'A');
+    }
+
+    if (alias == "TITLE") { AppendVorbisValue(metadata.title, value); return; }
+    if (alias == "ARTIST") { AppendVorbisValue(metadata.artist, value); return; }
+    if (alias == "ALBUM") { AppendVorbisValue(metadata.album, value); return; }
+    if (alias == "ALBUMARTIST" || alias == "ALBUM ARTIST") {
+        AppendVorbisValue(metadata.albumArtist, value);
+        return;
+    }
+    if (alias == "DESCRIPTION") { AppendVorbisValue(metadata.description, value); return; }
+    if (alias == "COMMENT") { AppendVorbisValue(metadata.comment, value); return; }
+    if (alias == "GENRE") { AppendVorbisValue(metadata.genre, value); return; }
+    if (alias == "KEYWORDS" || alias == "KEYWORD") {
+        AppendVorbisValue(metadata.keywords, value);
+        return;
+    }
+    if (alias == "TAGS") {
+        if (metadata.keywords.empty()) metadata.keywords = value;
+        return;
+    }
+    if (alias == "DATE" || alias == "YEAR") {
+        try { metadata.year = std::stoi(value.substr(0, 4)); } catch (...) {}
+        return;
+    }
+    if (alias == "TRACKNUMBER") {
+        try { metadata.track = std::stoi(value); } catch (...) {}
+        return;
+    }
+    if (alias == "DISCNUMBER") {
+        try { metadata.disc = std::stoi(value); } catch (...) {}
+        return;
+    }
+    if (alias == "CATEGORY" || alias == "SUBJECT") { AppendVorbisValue(metadata.category, value); return; }
+    if (alias == "SUBCATEGORY") { AppendVorbisValue(metadata.subcategory, value); return; }
+    if (alias == "LIBRARY" || alias == "SOURCE") { AppendVorbisValue(metadata.library, value); return; }
+    if (alias == "DESIGNER" || alias == "ENGINEER") { AppendVorbisValue(metadata.designer, value); return; }
+    if (alias == "INSTRUMENTS" || alias == "INSTRUMENT") {
+        AppendVorbisValue(metadata.instruments, value);
+        return;
+    }
+    if (alias == "COPYRIGHT") { AppendVorbisValue(metadata.copyright, value); return; }
+    if (alias == "URL" || alias == "CONTACT") { AppendVorbisValue(metadata.url, value); return; }
+    if (alias == "SOFTWARE") { AppendVorbisValue(metadata.software, value); return; }
+    if (alias == "REPLAYGAIN_TRACK_GAIN") {
+        try { metadata.replayGainTrack = std::stof(value); } catch (...) {}
+        return;
+    }
+    if (alias == "REPLAYGAIN_ALBUM_GAIN") {
+        try { metadata.replayGainAlbum = std::stof(value); } catch (...) {}
+        return;
+    }
+    if (alias == "COMPOSER") { AppendVorbisValue(metadata.composer, value); return; }
+    if (alias == "BPM") { AppendVorbisValue(metadata.bpm, value); return; }
+    if (alias == "INITIALKEY" || alias == "KEY" || alias == "MUSICALKEY" || alias == "MUSICAL_KEY") {
+        AppendVorbisValue(metadata.musicalKey, value);
+        return;
+    }
+    if (alias == "METADATA_BLOCK_PICTURE" || alias == "COVERART" || alias == "COVERARTMIME" ||
+        alias == "ENCODER" || alias == "ENCODED_BY") {
+        return;
+    }
+    if (metadata.customTextTags.find(key) == metadata.customTextTags.end()) {
+        metadata.customTextTags.emplace(key, value);
+    }
+}
+
+// Vorbis files routinely carry only music tags. Those fields must count as a
+// successful read, otherwise the scan and import paths drop the whole comment
+// block just because no title or artist is present.
+bool HasVorbisMusicOnlyData(const AudioMetadata& metadata) {
+    return !metadata.composer.empty() || !metadata.bpm.empty() ||
+           !metadata.musicalKey.empty() || !metadata.customTextTags.empty() ||
+           metadata.year > 0;
+}
+
+// FLAC: walk the metadata block chain and read the VORBIS_COMMENT block.
+// Blocks we do not need (SEEKTABLE, PICTURE, ...) are skipped by length so a
+// large embedded picture never gets pulled into memory here.
+bool ReadFlacVorbisComment(const std::string& filePath, AudioMetadata& metadata, bool& customTagsRead) {
+    customTagsRead = false;
     MetadataFileReader file = openFile(filePath);
     if (!file.is_open()) return false;
 
-    // Read first few KB to find Vorbis comments
-    std::vector<char> buffer(64 * 1024);
-    file.read(buffer.data(), buffer.size());
-    size_t bytesRead = file.gcount();
+    char magic[4];
+    file.read(magic, 4);
+    if (file.gcount() != 4 || memcmp(magic, "fLaC", 4) != 0) return false;
 
-    // Search for "vorbis" or "fLaC" markers
-    std::string data(buffer.data(), bytesRead);
-
-    // Look for common Vorbis comment fields
-    auto findField = [&data](const std::string& fieldName) -> std::string {
-        std::string searchUpper = fieldName + "=";
-        std::string searchLower = fieldName + "=";
-        std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
-
-        size_t pos = data.find(searchUpper);
-        if (pos == std::string::npos) {
-            pos = data.find(searchLower);
+    VorbisCommentEntries entries;
+    bool commentParsed = false;
+    bool complete = true;
+    for (int block = 0; block < 256; ++block) {
+        uint8_t header[4];
+        file.read(reinterpret_cast<char*>(header), 4);
+        if (file.gcount() != 4) {
+            complete = false;
+            break;
         }
-        if (pos == std::string::npos) return "";
-
-        pos += fieldName.length() + 1;
-        size_t end = data.find('\0', pos);
-        if (end == std::string::npos) end = data.find('\n', pos);
-        if (end == std::string::npos) return "";
-
-        return data.substr(pos, end - pos);
-    };
-
-    metadata.title = findField("TITLE");
-    metadata.artist = findField("ARTIST");
-    metadata.album = findField("ALBUM");
-    metadata.comment = findField("COMMENT");
-    metadata.genre = findField("GENRE");
-    metadata.description = findField("DESCRIPTION");
-    
-    // Extended Vorbis metadata fields
-    metadata.keywords = findField("KEYWORDS");
-    if (metadata.keywords.empty()) metadata.keywords = findField("TAGS");
-    metadata.category = findField("CATEGORY");
-    if (metadata.category.empty()) metadata.category = findField("SUBJECT");
-    metadata.subcategory = findField("SUBCATEGORY");
-    metadata.library = findField("LIBRARY");
-    if (metadata.library.empty()) metadata.library = findField("SOURCE");
-    metadata.designer = findField("DESIGNER");
-    if (metadata.designer.empty()) metadata.designer = findField("ENGINEER");
-    metadata.instruments = findField("INSTRUMENTS");
-    if (metadata.instruments.empty()) metadata.instruments = findField("INSTRUMENT");
-    metadata.copyright = findField("COPYRIGHT");
-    metadata.url = findField("URL");
-    if (metadata.url.empty()) metadata.url = findField("CONTACT");
-
-    std::string dateStr = findField("DATE");
-    if (!dateStr.empty()) {
-        try { metadata.year = std::stoi(dateStr.substr(0, 4)); } catch (...) {}
+        const bool lastBlock = (header[0] & 0x80) != 0;
+        const int type = header[0] & 0x7F;
+        const uint32_t length = (static_cast<uint32_t>(header[1]) << 16) |
+                                (static_cast<uint32_t>(header[2]) << 8) |
+                                static_cast<uint32_t>(header[3]);
+        if (type == 4) {
+            if (length > kMaxTagDataBytes) {
+                complete = false;
+                break;
+            }
+            std::vector<uint8_t> payload(length);
+            file.read(reinterpret_cast<char*>(payload.data()), static_cast<std::streamsize>(length));
+            if (static_cast<uint32_t>(file.gcount()) != length) {
+                complete = false;
+                break;
+            }
+            commentParsed = ParseVorbisCommentPayload(payload.data(), payload.size(), entries);
+            if (!commentParsed) complete = false;
+        } else {
+            file.seekg(static_cast<std::streamoff>(length), std::ios_base::cur);
+            if (!file.good()) {
+                complete = false;
+                break;
+            }
+        }
+        if (lastBlock) break;
     }
 
-    std::string trackStr = findField("TRACKNUMBER");
-    if (!trackStr.empty()) {
-        try { metadata.track = std::stoi(trackStr); } catch (...) {}
-    }
-
-    metadata.albumArtist = findField("ALBUMARTIST");
-    if (metadata.albumArtist.empty()) metadata.albumArtist = findField("ALBUM ARTIST");
-
-    std::string discStr = findField("DISCNUMBER");
-    if (!discStr.empty()) {
-        try { metadata.disc = std::stoi(discStr); } catch (...) {}
-    }
-
-    // ReplayGain
-    std::string rgTrack = findField("REPLAYGAIN_TRACK_GAIN");
-    if (!rgTrack.empty()) {
-        try { metadata.replayGainTrack = std::stof(rgTrack); } catch (...) {}
-    }
-    std::string rgAlbum = findField("REPLAYGAIN_ALBUM_GAIN");
-    if (!rgAlbum.empty()) {
-        try { metadata.replayGainAlbum = std::stof(rgAlbum); } catch (...) {}
-    }
-
-    return metadata.hasData();
+    for (const auto& entry : entries) ApplyVorbisCommentEntry(entry.first, entry.second, metadata);
+    customTagsRead = commentParsed && complete;
+    return metadata.hasData() || HasVorbisMusicOnlyData(metadata);
 }
 
+// Ogg: assemble packets from page lacing values and read the comment packet
+// ("\x03vorbis"). Continuation pages append to the packet that spans them.
+bool ReadOggVorbisComment(const std::string& filePath, AudioMetadata& metadata, bool& customTagsRead) {
+    customTagsRead = false;
+    MetadataFileReader file = openFile(filePath);
+    if (!file.is_open()) return false;
+
+    VorbisCommentEntries entries;
+    std::vector<uint8_t> packet;
+    bool commentParsed = false;
+    bool complete = true;
+    bool done = false;
+    size_t scannedBytes = 0;
+
+    for (int page = 0; page < 512 && !done; ++page) {
+        uint8_t header[27];
+        file.read(reinterpret_cast<char*>(header), 27);
+        if (file.gcount() != 27) break;
+        if (memcmp(header, "OggS", 4) != 0) {
+            complete = false;
+            break;
+        }
+        const uint8_t headerType = header[5];
+        const uint8_t segmentCount = header[26];
+        std::vector<uint8_t> lacing(segmentCount);
+        if (segmentCount > 0) {
+            file.read(reinterpret_cast<char*>(lacing.data()), static_cast<std::streamsize>(segmentCount));
+            if (file.gcount() != static_cast<std::streamsize>(segmentCount)) {
+                complete = false;
+                break;
+            }
+        }
+        size_t payloadSize = 0;
+        bool packetEndsOnPage = false;
+        for (uint8_t value : lacing) {
+            payloadSize += value;
+            if (value < 255) packetEndsOnPage = true;
+        }
+        if (payloadSize > kMaxChunkDataBytes) {
+            complete = false;
+            break;
+        }
+        std::vector<uint8_t> body(payloadSize);
+        if (payloadSize > 0) {
+            file.read(reinterpret_cast<char*>(body.data()), static_cast<std::streamsize>(payloadSize));
+            if (file.gcount() != static_cast<std::streamsize>(payloadSize)) {
+                complete = false;
+                break;
+            }
+        }
+        scannedBytes += payloadSize;
+        if ((headerType & 0x01) == 0) packet.clear();
+
+        size_t offset = 0;
+        for (uint8_t value : lacing) {
+            packet.insert(packet.end(), body.begin() + static_cast<std::ptrdiff_t>(offset),
+                          body.begin() + static_cast<std::ptrdiff_t>(offset + value));
+            offset += value;
+            if (value == 255) continue;
+
+            const bool isCommentPacket = packet.size() >= 7 && packet[0] == 0x03 &&
+                memcmp(packet.data() + 1, "vorbis", 6) == 0;
+            if (isCommentPacket) {
+                commentParsed = ParseVorbisCommentPayload(packet.data() + 7, packet.size() - 7, entries);
+                if (!commentParsed) complete = false;
+                done = true;
+            }
+            packet.clear();
+            if (done) break;
+        }
+
+        if (!done && !packetEndsOnPage && packet.size() > kMaxTagDataBytes) {
+            complete = false;
+            break;
+        }
+        if (scannedBytes > kMaxChunkDataBytes) {
+            complete = false;
+            break;
+        }
+    }
+
+    for (const auto& entry : entries) ApplyVorbisCommentEntry(entry.first, entry.second, metadata);
+    customTagsRead = commentParsed && complete;
+    return metadata.hasData() || HasVorbisMusicOnlyData(metadata);
+}
+
+}  // namespace
+
+bool MetadataReader::readVorbisComment(const std::string& filePath, AudioMetadata& metadata,
+                                       bool* customTagsRead) {
+    if (customTagsRead) *customTagsRead = false;
+    MetadataFileReader probe = openFile(filePath);
+    if (!probe.is_open()) return false;
+
+    char magic[4] = {};
+    probe.read(magic, 4);
+    if (probe.gcount() != 4) return false;
+
+    bool parsed = false;
+    bool hasData = false;
+    if (memcmp(magic, "fLaC", 4) == 0) {
+        hasData = ReadFlacVorbisComment(filePath, metadata, parsed);
+    } else if (memcmp(magic, "OggS", 4) == 0) {
+        hasData = ReadOggVorbisComment(filePath, metadata, parsed);
+    } else {
+        return false;
+    }
+    metadata.customTextTagsRead = parsed;
+    if (customTagsRead) *customTagsRead = parsed;
+    return hasData;
+}
 // M4A/AAC metadata reading (iTunes-style atoms)
 bool MetadataReader::readM4A(const std::string& filePath, AudioMetadata& metadata) {
     MetadataFileReader file = openFile(filePath);

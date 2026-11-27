@@ -58,10 +58,14 @@ ALWAYS_INCLUDE = [
     "msvcp140_atomic_wait.dll", "msvcp140_codecvt_ids.dll", "vccorlib140.dll",
     "vcomp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcruntime140_threads.dll",
 ]
-RUNTIME_INCLUDE = ["lucide.ttf", "splash_beta.png", "harken_thesaurus.json"]
+RUNTIME_INCLUDE = [
+    "lucide.ttf", "splash_beta.png", "harken_thesaurus.json",
+    "LICENSES/SourceHanSans-OFL-1.1.txt", "LICENSES/Inter-OFL-1.1.txt",
+    "LICENSES/JetBrainsMono-OFL-1.1.txt",
+]
 # Select the current runtime trees explicitly. An incremental build may still
 # contain obsolete contributors/community copies beside these destinations.
-RUNTIME_DIRS = ["assets/icons/brand", "assets/logos/brand", "assets/avatars"]
+RUNTIME_DIRS = ["assets/icons/brand", "assets/logos/brand", "assets/avatars", "assets/fonts"]
 
 # Optional directories bundled when AI features are enabled
 AI_FEATURE_IDS = {"ai_engine", "ai_tags"}

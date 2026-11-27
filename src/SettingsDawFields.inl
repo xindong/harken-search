@@ -117,7 +117,7 @@ auto drawDawCard=[&](const su::Entry& entry,size_t index) {
             editor.reaperConsentDestination=editor.reaperInstallConsent ? destination : std::string{};
         }
         su::Observe("daw-reaper-install-consent");
-        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("%s",L(DawPrefs_Consent));
+        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) HarkenSearch::SetTooltipUngated("%s",L(DawPrefs_Consent));
     }
     ImGui::SetCursorPos(ImVec2(nameX,nameY));
     ImGui::PushTextWrapPos(nameRight);
@@ -149,7 +149,7 @@ auto drawDawCard=[&](const su::Entry& entry,size_t index) {
             draw->AddLine(ImVec2(center.x-arm,center.y),ImVec2(center.x+arm,center.y),ink,1.4f);
             draw->AddLine(ImVec2(center.x,center.y-arm),ImVec2(center.x,center.y+arm),ink,1.4f);
         }
-        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) ImGui::SetTooltip("%s",pathState);
+        if (ImGui::IsItemHovered() || ImGui::IsItemFocused()) HarkenSearch::SetTooltipUngated("%s",pathState);
     }
     ImGui::SetCursorPos(ImVec2(configX,headerY));
     const std::string configObservation=sendReady ? "daw-reaper-config" : entry.id+"-config-disabled";
@@ -241,7 +241,7 @@ auto drawDawCard=[&](const su::Entry& entry,size_t index) {
                         target.exePath=editor.reaperDetectedPath;
                     }
                     su::Observe("daw-reaper-use-detected-path");
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",editor.reaperDetectedPath.c_str());
+                    if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s",editor.reaperDetectedPath.c_str());
                 }
                 if (ImGui::Selectable(L(DawPrefs_ManualPath))) editor.reaperFocusPath=true;
                 su::Observe("daw-reaper-manual-path");
@@ -452,7 +452,7 @@ auto drawDawFields=[&](const std::string& id,float controlW) {
                 }
                 su::Observe("daw-reaper-use-detected-path");
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("%s", g_reaperSetupPageStatus->configuredRootPath.c_str());
+                    HarkenSearch::SetTooltipUngated("%s", g_reaperSetupPageStatus->configuredRootPath.c_str());
                 }
             }
             if (target.exePath!=previousPath) editor.reaperInstallConsent=false;
