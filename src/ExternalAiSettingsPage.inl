@@ -382,7 +382,7 @@
             ImGui::TextDisabled("%s",linkStateText);
             su::Observe(clientIndex==0?"ext-ai-client-cindy-state":"ext-ai-client-codex-state");
             ImGui::PopTextWrapPos();
-            if (cleanupFailed) ImGui::SetItemTooltip("%s",cleanupFailure->second.detail.c_str());
+            if (cleanupFailed) HarkenSearch::SetTooltipUngated("%s",cleanupFailure->second.detail.c_str());
 
             const float actionY=rowCenter-clientSwitchSize.y*.5f;
             bool cleanupPressed=false;
@@ -407,7 +407,7 @@
                     ImGui::GetColorU32(connected?theme.controlAccent:theme.frameBgBase),radius);
                 clientDraw->AddCircleFilled(ImVec2(thumbX,rowCenter),clientTrackHeight*.4f,
                     ImGui::GetColorU32(theme.interfaceText),20);
-                if (switchEnabled) ImGui::SetItemTooltip("%s",connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn));
+                if (switchEnabled) HarkenSearch::SetTooltipUngated("%s",connected?L(ExtAi_DisconnectBtn):L(ExtAi_ConnectBtn));
             }
             ImGui::EndDisabled();
 

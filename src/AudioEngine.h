@@ -639,6 +639,10 @@ private:
     // exhausted-restart never fires on a not-yet-started (or failed-start)
     // pass; cleared on every explicit start, load, pause or reset.
     bool m_loopSawPlaying = false;
+    // Set when stop() scheduled a fade-out stop: the cursor reset to 0 must
+    // wait until the backend has really stopped. Cleared by the lazy reset in
+    // getPlaybackPosition(), by an explicit user seek or by play().
+    mutable std::atomic<bool> m_stopResetPending{false};
     uint64_t m_decodedPlaybackTotalFrames = 0;
     float m_regionFadeInNorm = 0.0f;
     float m_regionFadeOutNorm = 0.0f;

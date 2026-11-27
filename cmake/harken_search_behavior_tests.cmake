@@ -136,6 +136,23 @@ endif()
 add_test(NAME TestAudioPlaybackCursor COMMAND TestAudioPlaybackCursor)
 aura_set_test_labels(TestAudioPlaybackCursor core)
 
+add_executable(TestAudioStopResetPolicy EXCLUDE_FROM_ALL
+    tests/test_audio_stop_reset_policy.cpp
+)
+target_include_directories(TestAudioStopResetPolicy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestAudioStopResetPolicy PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestAudioStopResetPolicy PRIVATE /W3 /utf-8)
+    set_target_properties(TestAudioStopResetPolicy PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestAudioStopResetPolicy COMMAND TestAudioStopResetPolicy)
+aura_set_test_labels(TestAudioStopResetPolicy core)
+
 add_executable(TestAudioPlaybackInit EXCLUDE_FROM_ALL
     tests/test_audio_playback_init.cpp
     tests/audio_playback_miniaudio_test_seam.cpp
@@ -5541,6 +5558,25 @@ endif()
 add_test(NAME TestAppSettingsDefaults COMMAND TestAppSettingsDefaults)
 aura_set_test_labels(TestAppSettingsDefaults core)
 
+# Geometry for the Similar Sounds "analysis report" modal: default size,
+# work-area clamp and one row per failure.
+add_executable(TestSimilarAnalysisReportLayout EXCLUDE_FROM_ALL
+    tests/test_similar_analysis_report_layout.cpp
+)
+target_include_directories(TestSimilarAnalysisReportLayout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(TestSimilarAnalysisReportLayout PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSimilarAnalysisReportLayout PRIVATE /W3 /utf-8)
+    set_target_properties(TestSimilarAnalysisReportLayout PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestSimilarAnalysisReportLayout COMMAND TestSimilarAnalysisReportLayout)
+aura_set_test_labels(TestSimilarAnalysisReportLayout ui)
+
 add_executable(TestConsentManager EXCLUDE_FROM_ALL
     tests/test_consent_manager.cpp
     src/ConsentManager.cpp
@@ -7821,6 +7857,22 @@ if(Python3_Interpreter_FOUND)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSimilarSoundsWindowContract ui)
+
+    add_custom_target(TestSimilarAnalysisReportResizeContract
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similar_analysis_report_resize_contract.py"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    add_test(
+        NAME TestSimilarAnalysisReportResizeContract
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similar_analysis_report_resize_contract.py"
+    )
+    set_tests_properties(TestSimilarAnalysisReportResizeContract PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    aura_set_test_labels(TestSimilarAnalysisReportResizeContract ui)
 
     add_custom_target(TestRelinkWorkflowBoundary
         COMMAND ${Python3_EXECUTABLE}

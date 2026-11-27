@@ -2087,6 +2087,8 @@ if(WIN32)
    aura_set_test_labels(PreviewPinyinDatabase db)
    add_test(NAME Mp3MetadataSearch COMMAND TestPreviewPinyinDatabase --mp3-search)
    aura_set_test_labels(Mp3MetadataSearch db)
+   add_test(NAME FlacMetadataSearch COMMAND TestPreviewPinyinDatabase --flac-search)
+   aura_set_test_labels(FlacMetadataSearch db)
     add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
         tests/test_cover_wall_order_index.cpp
         tests/test_database_link_stubs.cpp
@@ -3039,6 +3041,35 @@ if(MSVC)
 endif()
 add_test(NAME Mp3Id3Reader COMMAND TestMp3Id3Reader)
 aura_set_test_labels(Mp3Id3Reader core)
+
+add_executable(TestVorbisMetadataReader EXCLUDE_FROM_ALL
+    tests/test_vorbis_metadata_reader.cpp
+    src/MetadataReader.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(TestVorbisMetadataReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestVorbisMetadataReader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestVorbisMetadataReader PRIVATE harken_wavpack)
+target_compile_features(TestVorbisMetadataReader PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestVorbisMetadataReader PRIVATE /utf-8)
+endif()
+add_test(NAME VorbisMetadataReader COMMAND TestVorbisMetadataReader)
+aura_set_test_labels(VorbisMetadataReader core)
 
 # WavPack decoding backend
 function(_harken_attach_wavpack_decoder target)
