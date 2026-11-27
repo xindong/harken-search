@@ -548,6 +548,9 @@ void AudioEngine::resetState(bool clearVisualWaveform) {
     m_regionLoopActive = false;
     m_regionFadeInNorm = 0.0f;
     m_regionFadeOutNorm = 0.0f;
+    // No sound survives a reset, so a pending stop must not leak into the next
+    // file and force it back to 0 when its first position query runs.
+    m_stopResetPending.store(false, std::memory_order_release);
     m_reverseBuffer.clear();
     m_reverseBufferValid = false;
     m_reverse = false;
@@ -3696,8 +3699,11 @@ void AudioEngine::play() {
     if (m_sound && m_isLoaded) {
         if (m_stopResetPending.load(std::memory_order_acquire)) {
             // Stop 的淡出已结束但尚未归零：从 0 秒重新开始，别从淡出位置续播。
-            if (!Platform::AudioPlayback::IsPlaying(m_sound->Borrow())) {
-                (void)Platform::AudioPlayback::SeekToFrame(m_sound->Borrow(), 0);
+            auto sound = m_sound->Borrow();
+            if (!Platform::AudioPlayback::IsPlaying(sound)) {
+                (void)Platform::AudioPlayback::SeekToFrame(sound, 0);
+                // 淡出把 fader 停在了 0；不还原的话，关掉淡入时下一次 play 是静音的。
+                Platform::AudioPlayback::SetFadeInMilliseconds(sound, 1.0f, 1.0f, 0);
             }
             m_stopResetPending.store(false, std::memory_order_release);
         }
@@ -3799,6 +3805,8 @@ void AudioEngine::pause() {
     std::unique_lock<std::mutex> lock(m_mutex);
     if (!m_sound || !m_isLoaded) return;
     m_playIntent = false;
+    // Pause keeps the cursor; a pending stop reset belongs to stop(), not here.
+    m_stopResetPending.store(false, std::memory_order_release);
 
     const bool fadeEnabled = m_fadeEnabled.load();
     int fadeMs = m_seekFadeMs.load();
@@ -4624,6 +4632,9 @@ static uint64_t ResolveExportFrameCount(uint64_t decoderFrames,
 
 void AudioEngine::playRegion(bool loopEnabled, float regionFadeInNorm, float regionFadeOutNorm) {
     std::lock_guard<std::mutex> lock(m_mutex);
+    // Region playback re-arms stop_time and the fade itself, so it takes over
+    // from any pending stop reset instead of being pulled back to 0 later.
+    m_stopResetPending.store(false, std::memory_order_release);
     if (m_sound && m_isLoaded && m_fileInfo.totalFrames == 0 &&
         ShouldArmRegionLoopWithoutLength(m_inPoint, m_outPoint, loopEnabled)) {
         // OGG/push-mode first pass: the real length is still unknown (0), but
@@ -5581,10 +5592,20 @@ float AudioEngine::getPlaybackPosition() const {
                 m_stopResetPending.load(std::memory_order_acquire),
                 Platform::AudioPlayback::IsPlaying(sound))) {
             std::lock_guard<std::mutex> lock(m_mutex);
-            if (m_stopResetPending.load(std::memory_order_relaxed)) {
-                (void)Platform::AudioPlayback::SeekToFrame(m_sound->Borrow(), 0);
-                Platform::AudioPlayback::SetVolume(
-                    m_sound->Borrow(), std::max(0.0f, std::min(1.2f, m_volume * m_replayGain)));
+            // Re-validate under the lock: the sound seen above may have been
+            // replaced by a load since then, and the reset must not be applied
+            // to a different file (or to a null unique_ptr).
+            if (m_stopResetPending.load(std::memory_order_relaxed) && m_sound && m_isLoaded) {
+                auto current = m_sound->Borrow();
+                if (!Platform::AudioPlayback::IsPlaying(current)) {
+                    (void)Platform::AudioPlayback::SeekToFrame(current, 0);
+                    // The fade-out stopped at 0 gain; set_volume alone does not
+                    // clear that fader, so restore it or the next play is silent
+                    // (notably when the click-protection fade is disabled).
+                    Platform::AudioPlayback::SetFadeInMilliseconds(current, 1.0f, 1.0f, 0);
+                    Platform::AudioPlayback::SetVolume(
+                        current, std::max(0.0f, std::min(1.2f, m_volume * m_replayGain)));
+                }
                 m_stopResetPending.store(false, std::memory_order_release);
             }
             return 0.0f;
