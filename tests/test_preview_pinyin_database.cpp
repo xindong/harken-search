@@ -171,6 +171,42 @@ bool WaitMigrated(Database& db, int timeoutMs) {
     return false;
 }
 
+void AppendVorbisLe32(std::string& bytes, uint32_t value) {
+    bytes.push_back(static_cast<char>(value & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 8) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 16) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 24) & 0xFF));
+}
+
+std::string BuildVorbisFlacFixture(const std::vector<std::string>& entries) {
+    std::string comment;
+    const std::string vendor = "Harken Search test";
+    AppendVorbisLe32(comment, static_cast<uint32_t>(vendor.size()));
+    comment += vendor;
+    AppendVorbisLe32(comment, static_cast<uint32_t>(entries.size()));
+    for (const auto& entry : entries) {
+        AppendVorbisLe32(comment, static_cast<uint32_t>(entry.size()));
+        comment += entry;
+    }
+
+    auto block = [](int type, bool last, const std::string& payload) {
+        std::string bytes;
+        bytes.push_back(static_cast<char>((last ? 0x80 : 0x00) | (type & 0x7F)));
+        const uint32_t size = static_cast<uint32_t>(payload.size());
+        bytes.push_back(static_cast<char>((size >> 16) & 0xFF));
+        bytes.push_back(static_cast<char>((size >> 8) & 0xFF));
+        bytes.push_back(static_cast<char>(size & 0xFF));
+        bytes += payload;
+        return bytes;
+    };
+
+    std::string bytes = "fLaC";
+    bytes += block(0, false, std::string(34, '\0'));
+    bytes += block(4, true, comment);
+    bytes += std::string(64, '\0');
+    return bytes;
+}
+
 bool InstallWriteFailTrigger(Database& db) {
     db.executeRawQuery("CREATE TABLE IF NOT EXISTS recompute_write_attempts(n INTEGER);");
     db.executeRawQuery("DELETE FROM recompute_write_attempts;");
@@ -279,6 +315,232 @@ int main(int argc, char** argv) {
         for (const char* value : {"187", "Dorian", "2034"}) {
             filter.keyword = value;
             ok &= Expect(MatchCount(database, value) == 1 && database.searchFiles(filter, 10).size() == 1, value);
+        }
+        return ok ? 0 : 1;
+    }
+
+    if (argc == 2 && std::string(argv[1]) == "--flac-search") {
+        const fs::path flacPath = root / "Synthetic.flac";
+        {
+            std::ofstream out(flacPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "TITLE=Embedded title",
+                "COMPOSER=Azurescore",
+                "BPM=181",
+                "INITIALKEY=Dorian",
+                "DATE=2034-05-01",
+                "VENDOR LABEL=UniqueValue",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        Database database;
+        if (!Expect(database.open((root / "flac.db").u8string(), false), "open an isolated FLAC library")) return 1;
+        database.stopCoverPhashBackfillWorker();
+        AudioRecord record;
+        record.filePath = flacPath.u8string();
+        record.fileName = "Synthetic.flac";
+        record.extension = ".flac";
+        record.title = "Library title";
+        // The pre-Vorbis-parser build stored the year but nothing else, which is
+        // exactly the row shape the one-time backfill must still pick up.
+        record.meta = {{"track_year", "2034"}};
+        ok &= Expect(database.addFile(record), "add a FLAC row with only the legacy year");
+        database.close();
+
+        if (!Expect(database.open((root / "flac.db").u8string(), true), "reopen the FLAC library")) return 1;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        AudioRecord refreshed;
+        while (std::chrono::steady_clock::now() < deadline) {
+            refreshed = database.getFileByPath(record.filePath);
+            if (!refreshed.getMeta("composer").empty()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        ok &= Expect(refreshed.getMeta("composer") == "Azurescore", "legacy FLAC row gains composer in the background");
+        const auto bpmValue = Scalar(database.executeRawQuery(
+            "SELECT bpm FROM audio_files WHERE id = 1;"));
+        ok &= Expect(bpmValue == "181", "legacy FLAC row gains BPM");
+        ok &= Expect(refreshed.getMeta("musical_key") == "Dorian", "legacy FLAC row gains key");
+        ok &= Expect(refreshed.getMeta("track_year") == "2034", "legacy FLAC row keeps its year");
+        ok &= Expect(refreshed.title == "Library title", "legacy backfill keeps the library title");
+        ok &= Expect(refreshed.id3TextTags.count("VENDOR LABEL") == 1,
+                     "legacy FLAC row gains its custom Vorbis tag");
+        ok &= Expect(MetaValue(database, "legacy_vorbis_metadata_refresh") == "1",
+                     "legacy FLAC backfill records that it finished");
+
+        SearchFilter filter;
+        for (const char* value : {"Azurescore", "181", "Dorian", "2034", "UniqueValue"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().matchSource == SearchMatchSource::Metadata, value);
+        }
+        const auto custom = Database::findOptionalMetadataMatches(
+            database.getFileByPath(record.filePath), "UniqueValue");
+        ok &= Expect(custom.size() == 1 && custom.front().custom &&
+                         custom.front().field == "VENDOR LABEL" &&
+                         custom.front().value == "UniqueValue",
+                     "custom Vorbis tag explains the actual matching field");
+        database.close();
+
+        // A row the user already edited keeps that value while the columns that
+        // are still empty are filled from the file.
+        const fs::path partialPath = root / "Partial.flac";
+        {
+            std::ofstream out(partialPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "COMPOSER=FileComposer",
+                "BPM=145",
+                "INITIALKEY=Amin",
+                "DATE=2019-02-03",
+                "VENDOR LABEL=PartialValue",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database partial;
+            if (!Expect(partial.open((root / "flac-partial.db").u8string(), false),
+                        "open the partially filled FLAC library")) return 1;
+            partial.stopCoverPhashBackfillWorker();
+            AudioRecord manual;
+            manual.filePath = partialPath.u8string();
+            manual.fileName = "Partial.flac";
+            manual.extension = ".flac";
+            manual.title = "Manual title";
+            manual.meta = {{"composer", "ManualComposer"}};
+            ok &= Expect(partial.addFile(manual), "add a FLAC row whose composer was already set");
+            partial.close();
+        }
+        {
+            Database partial;
+            if (!Expect(partial.open((root / "flac-partial.db").u8string(), true),
+                        "reopen the partially filled FLAC library")) return 1;
+            const auto partialDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            AudioRecord partialRecord;
+            while (std::chrono::steady_clock::now() < partialDeadline) {
+                partialRecord = partial.getFileByPath(partialPath.u8string());
+                if (!partialRecord.getMeta("bpm").empty()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            ok &= Expect(partialRecord.getMeta("composer") == "ManualComposer",
+                         "backfill keeps the composer the user already set");
+            ok &= Expect(Scalar(partial.executeRawQuery(
+                             "SELECT bpm FROM audio_files WHERE file_name = 'Partial.flac';")) == "145",
+                         "backfill still fills BPM on a partially filled row");
+            ok &= Expect(partialRecord.getMeta("musical_key") == "Amin",
+                         "backfill still fills the key on a partially filled row");
+            ok &= Expect(partialRecord.getMeta("track_year") == "2019",
+                         "backfill still fills the year on a partially filled row");
+            ok &= Expect(partialRecord.id3TextTags.count("VENDOR LABEL") == 1,
+                         "backfill still adds custom tags on a partially filled row");
+            SearchFilter partialFilter;
+            partialFilter.keyword = "PartialValue";
+            ok &= Expect(partial.searchFiles(partialFilter, 10).size() == 1,
+                         "the partially filled row becomes searchable by its new tag");
+            partial.close();
+        }
+
+        // A failed write keeps the row for the next pass and never records
+        // completion, so the one-time marker cannot hide unfilled rows.
+        const fs::path retryPath = root / "Retry.flac";
+        {
+            std::ofstream out(retryPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "COMPOSER=RetryComposer",
+                "BPM=133",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database retry;
+            if (!Expect(retry.open((root / "flac-retry.db").u8string(), false),
+                        "open the FLAC library used for the retry case")) return 1;
+            retry.stopCoverPhashBackfillWorker();
+            AudioRecord pending;
+            pending.filePath = retryPath.u8string();
+            pending.fileName = "Retry.flac";
+            pending.extension = ".flac";
+            pending.title = "Retry title";
+            ok &= Expect(retry.addFile(pending), "add the row that will fail its first backfill write");
+            const int64_t pendingId = retry.getFileByPath(pending.filePath).id;
+            retry.executeRawQuery(
+                "DELETE FROM app_meta WHERE key IN ('legacy_vorbis_metadata_refresh',"
+                " 'legacy_vorbis_metadata_refresh_cursor');");
+            ok &= Expect(InstallWriteFailTrigger(retry), "install the write-fail trigger");
+            ok &= Expect(retry.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a failed backfill write stops the batch");
+            ok &= Expect(retry.getFileById(pendingId).getMeta("composer").empty(),
+                         "the failed row is left untouched");
+            ok &= Expect(MetaValue(retry, "legacy_vorbis_metadata_refresh") != "1",
+                         "a failed batch never records completion");
+            retry.executeRawQuery("DROP TRIGGER IF EXISTS abort_search_data_update;");
+            retry.close();
+        }
+        {
+            // Only a primary connection starts the worker, so reopen as the app
+            // does: the pass resumes from the row that failed instead of
+            // skipping it.
+            Database retry;
+            if (!Expect(retry.open((root / "flac-retry.db").u8string(), true),
+                        "reopen the FLAC library for the retry pass")) return 1;
+            const auto retryDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            std::string marker;
+            AudioRecord retriedRecord;
+            while (std::chrono::steady_clock::now() < retryDeadline) {
+                marker = MetaValue(retry, "legacy_vorbis_metadata_refresh");
+                retriedRecord = retry.getFileByPath(retryPath.u8string());
+                if (marker == "1" && !retriedRecord.getMeta("composer").empty()) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            ok &= Expect(marker == "1",
+                         "the next pass retries the failed row and finishes the backfill");
+            ok &= Expect(retriedRecord.getMeta("composer") == "RetryComposer",
+                         "the retried row gains its composer");
+            ok &= Expect(retry.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a finished pass does not run again");
+            // The fill-only guard: a value the user saved after the file was read
+            // is never replaced by the backfill copy.
+            const int64_t pendingId = retry.getFileByPath(retryPath.u8string()).id;
+            MetadataEditPatch manualComposer;
+            manualComposer.fields["composer"] = "LateUserEdit";
+            ok &= Expect(retry.applyMetadataPatch(pendingId, manualComposer),
+                         "save a user composer after the backfill finished");
+            ok &= Expect(retry.fillLegacyVorbisColumns(pendingId, "FileComposer", "", "", "", nullptr),
+                         "a fill-only write on an already filled column succeeds as a no-op");
+            ok &= Expect(retry.getFileById(pendingId).getMeta("composer") == "LateUserEdit",
+                         "the fill-only write keeps the user value");
+            retry.close();
+        }
+
+        // Cancelling (closing the library) stops the pass between files and
+        // leaves the row for the next open instead of skipping it.
+        const fs::path cancelPath = root / "Cancel.flac";
+        {
+            std::ofstream out(cancelPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({"COMPOSER=CancelComposer"});
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+        {
+            Database cancelled;
+            if (!Expect(cancelled.open((root / "flac-cancel.db").u8string(), false),
+                        "open the FLAC library used for the cancel case")) return 1;
+            cancelled.stopCoverPhashBackfillWorker();
+            AudioRecord pending;
+            pending.filePath = cancelPath.u8string();
+            pending.fileName = "Cancel.flac";
+            pending.extension = ".flac";
+            pending.title = "Cancel title";
+            ok &= Expect(cancelled.addFile(pending), "add the row left for the cancelled pass");
+            const int64_t pendingId = cancelled.getFileByPath(pending.filePath).id;
+            cancelled.executeRawQuery(
+                "DELETE FROM app_meta WHERE key IN ('legacy_vorbis_metadata_refresh',"
+                " 'legacy_vorbis_metadata_refresh_cursor');");
+            ok &= Expect(cancelled.refreshLegacyVorbisMetadataBatch(16) == -1,
+                         "a cancelled pass stops before reading the next file");
+            ok &= Expect(cancelled.getFileById(pendingId).getMeta("composer").empty(),
+                         "a cancelled pass writes nothing");
+            ok &= Expect(MetaValue(cancelled, "legacy_vorbis_metadata_refresh") != "1",
+                         "a cancelled pass does not record completion");
+            cancelled.close();
         }
         return ok ? 0 : 1;
     }

@@ -866,6 +866,7 @@ elseif(APPLE)
         src/platform/executable_path_macos.mm
         src/platform/pe_inspection_macos.mm
         src/platform/file_hash_macos.cpp
+        src/platform/harken_user_data_layout_macos.cpp
         src/platform/hmac_sha256_unsupported.cpp
         src/platform/process_launch_macos.cpp
         src/platform/process_query_unsupported.cpp
@@ -1277,6 +1278,9 @@ aura_set_test_labels(DiagnosticLogBundle core)
 list(APPEND APP_SOURCES src/DiagnosticFileLifecycle.cpp)
 # External AI authorization document: the settings page reads and writes it.
 list(APPEND APP_SOURCES src/ExternalAiAuthorization.cpp src/ExternalAiAuthorizationStore.cpp src/ExternalAiClientLink.cpp src/ExternalAiPlaylistBridge.cpp src/ExternalAiPlaylistService.cpp src/ExternalAiBridgeServer.cpp)
+if(NOT WIN32)
+    list(APPEND APP_SOURCES src/platform/protected_config_file_posix.cpp)
+endif()
 if(AURA_BUILD_DIAGNOSTICS)
     list(APPEND APP_SOURCES src/DiagnosticLogBundle.cpp src/platform/diagnostic_log_bundle_file.cpp)
     list(APPEND APP_SOURCES src/ui/DiagnosticOverlay.cpp)
@@ -1732,6 +1736,7 @@ if(WIN32)
         ixwebsocket
     )
 elseif(APPLE)
+    target_link_options(HarkenSearch PRIVATE "LINKER:-dead_strip")
     target_link_libraries(HarkenSearch PRIVATE
         Threads::Threads
         "-framework Cocoa"
@@ -1742,6 +1747,7 @@ elseif(APPLE)
         "-framework CoreFoundation"
         "-framework CoreGraphics"
         "-framework GameController"    # imgui_impl_osx uses GCController
+        ixwebsocket
         # macOS builds omit Whisper/aubio until compatible libraries are supplied.
     )
 else()
@@ -2081,6 +2087,8 @@ if(WIN32)
    aura_set_test_labels(PreviewPinyinDatabase db)
    add_test(NAME Mp3MetadataSearch COMMAND TestPreviewPinyinDatabase --mp3-search)
    aura_set_test_labels(Mp3MetadataSearch db)
+   add_test(NAME FlacMetadataSearch COMMAND TestPreviewPinyinDatabase --flac-search)
+   aura_set_test_labels(FlacMetadataSearch db)
     add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
         tests/test_cover_wall_order_index.cpp
         tests/test_database_link_stubs.cpp
@@ -3033,6 +3041,35 @@ if(MSVC)
 endif()
 add_test(NAME Mp3Id3Reader COMMAND TestMp3Id3Reader)
 aura_set_test_labels(Mp3Id3Reader core)
+
+add_executable(TestVorbisMetadataReader EXCLUDE_FROM_ALL
+    tests/test_vorbis_metadata_reader.cpp
+    src/MetadataReader.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(TestVorbisMetadataReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+    target_sources(TestVorbisMetadataReader PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestVorbisMetadataReader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestVorbisMetadataReader PRIVATE harken_wavpack)
+target_compile_features(TestVorbisMetadataReader PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestVorbisMetadataReader PRIVATE /utf-8)
+endif()
+add_test(NAME VorbisMetadataReader COMMAND TestVorbisMetadataReader)
+aura_set_test_labels(VorbisMetadataReader core)
 
 # WavPack decoding backend
 function(_harken_attach_wavpack_decoder target)

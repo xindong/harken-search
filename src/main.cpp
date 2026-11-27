@@ -31,6 +31,9 @@
 #include "imgui_impl_win32.h"
 #elif defined(__APPLE__)
 #include "imgui_impl_osx.h"
+// The shared UI keeps MSVC CRT spellings and Win32 type names; the macOS shim
+// supplies them without a Windows SDK. Windows uses the real headers.
+#include "platform/harken_macos_win32_shim.h"
 #endif
 #include "imgui_impl_opengl3.h"
 
@@ -13490,9 +13493,8 @@ public:
         const std::string& filePath,
         aura::record_rescan::SelectedRecordRescanMetadata& out) override {
         AudioMetadata metadata;
-        bool mp3CustomTagsRead = false;
-        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata, &mp3CustomTagsRead);
-        if (!foundMetadata && !mp3CustomTagsRead) return false;
+        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata);
+        if (!foundMetadata && !metadata.customTextTagsRead) return false;
         out.title = metadata.title;
         out.artist = metadata.artist;
         out.album = metadata.album;
@@ -13502,7 +13504,7 @@ public:
         out.keywords = metadata.keywords;
         out.comment = metadata.comment;
         PopulateExtendedMeta(out.extendedMetadata, metadata);
-        if (mp3CustomTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
+        if (metadata.customTextTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
         return true;
     }
 
