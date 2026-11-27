@@ -3,6 +3,7 @@
 
 #include "UndoSystem.h"
 #include "Database.h"
+#include "Localization.h"
 #include "platform/filesystem.h"
 
 #include <filesystem>
@@ -49,11 +50,13 @@ static bool ApplyMetadataRevert(Database& db, const std::vector<MetadataPatchEnt
 // FileRenameOp
 
 std::string FileRenameOp::description() const {
+    LedgerText label;
     if (entries.size() == 1) {
-        auto fn = fs::u8path(entries[0].oldPath).filename().u8string();
-        return "Rename " + fn;
+        label.setKeyStr(LStr::Undo_RenameFileFmt, fs::u8path(entries[0].oldPath).filename().u8string());
+    } else {
+        label.setKeyInt(LStr::Undo_BatchRenameFilesFmt, static_cast<int>(entries.size()));
     }
-    return "Rename " + std::to_string(entries.size()) + " files";
+    return label.Render();
 }
 
 bool FileRenameOp::undo(Database& db) {
@@ -96,10 +99,24 @@ bool UndoFolderRenameOp::redo(Database& db) {
 
 // MetadataPatchOp
 
+static const char* MetadataUndoColumnLabel(const std::string& column) {
+    if (column == "title") return L(Batch_EditTargetTitle);
+    if (column == "description") return L(Batch_EditTargetDescription);
+    if (column == "keywords") return L(Batch_EditTargetKeywords);
+    if (column == "category") return L(Batch_EditTargetCategory);
+    if (column == "rating") return L(Col_Rating);
+    return nullptr;
+}
+
 std::string MetadataPatchOp::description() const {
-    if (!operationName.empty()) return operationName;
-    if (entries.size() == 1) return "Edit metadata";
-    return "Edit metadata (" + std::to_string(entries.size()) + " files)";
+    if (editKind == MetadataUndoKind::WriteUcsCategory) return L(ModuleUI_UcsWriteTitle);
+    const bool batch = editKind == MetadataUndoKind::BatchEdit;
+    if (const char* column = MetadataUndoColumnLabel(targetColumn)) {
+        LedgerText label;
+        label.setKeyStr(batch ? LStr::Undo_BatchEditColumnFmt : LStr::Undo_EditColumnFmt, column);
+        return label.Render();
+    }
+    return batch ? L(Undo_BatchEditMetadata) : L(MetaEdit_DialogTitle);
 }
 
 bool MetadataPatchOp::undo(Database& db) {

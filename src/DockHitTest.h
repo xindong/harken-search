@@ -73,6 +73,7 @@ inline DockMinimumSize DockModuleMinimum(
     else if (id == "mod-tag-browser") size = {320.0f, 320.0f};
     else if (id == "mod-workflow") size = {560.0f, 360.0f};
     else if (id == "mod-transfer") size = {480.0f, 360.0f};
+    else if (id == "mod-batch-edit") size = {480.0f, 440.0f};
     scale = std::isfinite(scale) ? std::clamp(scale, 0.5f, 4.0f) : 1.0f;
     return {size.width * scale, size.height * scale};
 }

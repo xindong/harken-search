@@ -161,6 +161,51 @@ void TestWaveformRecoveryConditions() {
           "failed record update is not counted and never clears waveform");
 }
 
+void TestMp3RereadFillsMissingTagsWithoutOverwritingLibraryEdits() {
+    auto item = Item();
+    item.filePath = "C:/sounds/tagged.MP3";
+    item.artist.clear();
+    item.extendedMetadata["composer"] = "library-composer";
+    item.extendedMetadata["track_year"] = "";
+
+    FakeOperationPort port;
+    port.metadata.title = "embedded-title";
+    port.metadata.artist = "embedded-artist";
+    port.metadata.album = "embedded-album";
+    port.metadata.description = "embedded-description";
+    port.metadata.keywords = "embedded-keywords";
+    port.metadata.extendedMetadata = {{"composer", "embedded-composer"},
+                                      {"track_year", "2024"},
+                                      {"musical_key", "A#m"}};
+
+    Check(RescanSelectedRecord(item, port) == SelectedRecordRescanItemResult::Updated,
+          "MP3 rescan updates the library record");
+    Check(port.update.title == item.title && port.update.album == item.album &&
+              port.update.description == item.description && port.update.keywords == item.keywords,
+          "MP3 rescan keeps nonempty standard fields already in the library");
+    Check(port.update.artist == "embedded-artist" &&
+              port.update.extendedMetadata.at("composer") == "library-composer" &&
+              port.update.extendedMetadata.at("track_year") == "2024" &&
+              port.update.extendedMetadata.at("musical_key") == "A#m",
+          "MP3 rescan fills missing music fields without replacing user values");
+}
+
+void TestMp3RereadDistinguishesEmptyFromUnavailableTags() {
+    auto item = Item();
+    item.filePath = "C:/sounds/tagless.mp3";
+    FakeOperationPort readable;
+    readable.metadata.id3TextTags.emplace();
+    Check(RescanSelectedRecord(item, readable) == SelectedRecordRescanItemResult::Updated &&
+              readable.update.rereadId3TextTags && readable.update.rereadId3TextTags->empty(),
+          "MP3 reread publishes an empty tag set when tags were removed");
+
+    FakeOperationPort unreadable;
+    unreadable.metadataResult = false;
+    Check(RescanSelectedRecord(item, unreadable) == SelectedRecordRescanItemResult::Updated &&
+              !unreadable.update.rereadId3TextTags,
+          "MP3 reread keeps saved tags when the tag read fails");
+}
+
 struct FakeBatchPort final : SelectedRecordRescanBatchPort {
     std::vector<SelectedRecordRescanItemResult> results;
     std::vector<std::string> trace;
@@ -236,6 +281,8 @@ int main() {
     TestMissingFileStopsWithoutMutation();
     TestMetadataPrecedenceAndUpdateOrder();
     TestWaveformRecoveryConditions();
+    TestMp3RereadFillsMissingTagsWithoutOverwritingLibraryEdits();
+    TestMp3RereadDistinguishesEmptyFromUnavailableTags();
     TestBatchLifecycleAndCounts();
     if (g_failed != 0) {
         std::cerr << "FAIL: " << g_failed

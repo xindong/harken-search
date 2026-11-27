@@ -143,6 +143,8 @@ struct AudioRecord {
     //    Key = DB column name (e.g., "subcategory", "library", "designer", "composer")
     //    All extended professional-audio/BWF/iXML fields stored here; kept off hot path.
     std::unordered_map<std::string, std::string> meta;
+    std::unordered_map<std::string, std::string> id3TextTags;
+    bool id3TextTagsRead = false;
 
     // Convenience accessor for extended meta (returns empty string if missing)
     const std::string& getMeta(const std::string& key) const {
@@ -150,6 +152,12 @@ struct AudioRecord {
         auto it = meta.find(key);
         return it != meta.end() ? it->second : kEmpty;
     }
+};
+
+struct SearchMetadataFieldMatch {
+    std::string field;
+    std::string value;
+    bool custom = false;
 };
 
 // F-006 metadata patch: only fields present in the maps are updated.
@@ -661,6 +669,13 @@ public:
     /// 每条记录可使用不同 patch；按「更新字段掩码」分组，每组仅 prepare 一次再 bind/step
     BatchMetadataApplyResult applyMetadataPatchMany(
         const std::vector<std::pair<int64_t, MetadataEditPatch>>& items);
+    /// 单列原值复核后整批写入：每条 patch 只能含 expectedColumn 一个字段，
+    /// 且该记录当前值必须仍等于 expectedValues；任一不符则整批不写（独立事务）。
+    /// expectedColumn 必须是 EditableTextColumns() 中的列。
+    BatchMetadataApplyResult applyMetadataPatchManyGuarded(
+        const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+        const std::string& expectedColumn,
+        const std::unordered_map<int64_t, std::string>& expectedValues);
 
     bool removeFile(int64_t id);
     bool removeFileByPath(const std::string& filePath);
@@ -690,6 +705,8 @@ public:
 
     // Search and query
     std::vector<AudioRecord> searchFiles(const SearchFilter& filter, int limit = 1000, int offset = 0);
+    static std::vector<SearchMetadataFieldMatch> findOptionalMetadataMatches(
+        const AudioRecord& record, const std::string& query);
     int64_t searchFilesCount(const SearchFilter& filter);
     std::vector<AudioRecord> searchFilesRandom(const SearchFilter& filter, int limit = 500);
     std::vector<AudioRecord> getAllFiles(int limit = 10000, int offset = 0);
@@ -1680,6 +1697,7 @@ public:
     std::atomic<uint64_t> m_dataRevision{1};
     std::string m_lastError;
     std::string m_mainDbPath;  // 主数据库路径（meta.db）
+    bool m_hasId3TextTags = false;
     bool m_isPrimaryConnection = false;  // true only for the single app-owned DB connection
     // True only for databases created fresh under the adaptive mini-waveform regime
     // (app_meta 'mini_waveform_density' == "adaptive"). Legacy DBs stay on the fixed

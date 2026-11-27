@@ -197,7 +197,6 @@
     ["src/main.cpp","assignment:modeText","TIGHT",1],
     ["src/main.cpp","assignment:modeText","WIDE",1],
     ["src/main.cpp","assignment:recentHistoryLabel","Recent Delivery",1],
-    ["src/main.cpp","assignment:s_batchMetaSaveMsg","成功",1],
     ["src/main.cpp","assignment:sendToEditorLabel","Send to Editor",1],
     ["src/main.cpp","assignment:sendToEditorLabel","发送到宿主",1],
     ["src/main.cpp","displayName","[OK]",1],
