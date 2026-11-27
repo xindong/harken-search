@@ -9,8 +9,24 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifdef AURO_DURABLE_FILE_OPS_TESTING
+#include "durable_file_ops_macos_test_hooks.h"
+#endif
+
 namespace Platform::FileSystem {
 namespace {
+
+#ifdef AURO_DURABLE_FILE_OPS_TESTING
+Platform::FileSystem::Testing::DurableFileOpFaultScript* g_faultScript = nullptr;
+
+int InjectedFullsyncError() { return g_faultScript ? g_faultScript->fullsyncError : 0; }
+int InjectedFsyncError() { return g_faultScript ? g_faultScript->fsyncError : 0; }
+int InjectedDirectoryOpenError() { return g_faultScript ? g_faultScript->directoryOpenError : 0; }
+#else
+int InjectedFullsyncError() { return 0; }
+int InjectedFsyncError() { return 0; }
+int InjectedDirectoryOpenError() { return 0; }
+#endif
 
 DurableFileOpResult Result(DurableFileOpStatus status, int error = 0) {
     DurableFileOpResult result;
@@ -39,20 +55,27 @@ bool FullsyncUnsupported(int error) {
 // "on the platter" promise the Win32 write-through path makes.
 // Filesystems that reject the command still get the portable fsync fallback.
 bool FlushDescriptor(int fd, int& error) {
-    if (::fcntl(fd, F_FULLFSYNC) == 0) {
+    const int injectedFullsync = InjectedFullsyncError();
+    const int fullsyncError = injectedFullsync != 0
+        ? injectedFullsync
+        : (::fcntl(fd, F_FULLFSYNC) == 0 ? 0 : errno);
+    if (fullsyncError == 0) {
         error = 0;
         return true;
     }
-    const int fullsyncError = errno;
     if (!FullsyncUnsupported(fullsyncError)) {
         error = fullsyncError;
         return false;
     }
-    if (::fsync(fd) == 0) {
+    const int injectedFsync = InjectedFsyncError();
+    const int fsyncError = injectedFsync != 0
+        ? injectedFsync
+        : (::fsync(fd) == 0 ? 0 : errno);
+    if (fsyncError == 0) {
         error = 0;
         return true;
     }
-    error = errno;
+    error = fsyncError;
     return false;
 }
 
@@ -74,6 +97,11 @@ bool FlushPath(const std::string& path, int& openError, int& flushError) {
 bool FlushDirectoryOf(const std::string& path, int& openError, int& flushError) {
     openError = 0;
     flushError = 0;
+    const int injectedOpen = InjectedDirectoryOpenError();
+    if (injectedOpen != 0) {
+        openError = injectedOpen;
+        return false;
+    }
     const std::string directory = ParentDirectoryOf(path);
     const int fd = ::open(directory.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) {
@@ -229,5 +257,15 @@ DurableFileOpResult DeleteFileIfPresent(const std::string& pathUtf8) {
 }
 
 } // namespace Platform::FileSystem
+
+#ifdef AURO_DURABLE_FILE_OPS_TESTING
+namespace Platform::FileSystem::Testing {
+
+void SetDurableFileOpFaultScript(DurableFileOpFaultScript* script) {
+    g_faultScript = script;
+}
+
+} // namespace Platform::FileSystem::Testing
+#endif
 
 #endif // __APPLE__

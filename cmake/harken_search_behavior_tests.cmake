@@ -4916,6 +4916,25 @@ endif()
 add_test(NAME TestPlatformDurableFileOpsCopy COMMAND TestPlatformDurableFileOpsCopy)
 aura_set_test_labels(TestPlatformDurableFileOpsCopy core)
 
+# Failure branches that need a filesystem which fails on demand: a real write
+# error must not be masked by the fsync fallback, and a directory sync failure
+# must not be swallowed. The seam only exists in this target's compile.
+if(APPLE)
+    add_executable(TestPlatformDurableFileOpsMacosFaults EXCLUDE_FROM_ALL
+        tests/test_platform_durable_file_ops_macos_faults.cpp
+        src/platform/durable_file_ops_macos.cpp
+    )
+    target_include_directories(TestPlatformDurableFileOpsMacosFaults PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(TestPlatformDurableFileOpsMacosFaults PRIVATE cxx_std_17)
+    target_compile_definitions(TestPlatformDurableFileOpsMacosFaults PRIVATE
+        AURO_DURABLE_FILE_OPS_TESTING
+    )
+    add_test(NAME TestPlatformDurableFileOpsMacosFaults COMMAND TestPlatformDurableFileOpsMacosFaults)
+    aura_set_test_labels(TestPlatformDurableFileOpsMacosFaults core)
+endif()
+
 add_executable(TestPlatformDurableFileOpsReplaceDelete EXCLUDE_FROM_ALL
     tests/test_platform_durable_file_ops_replace_delete.cpp
 )
