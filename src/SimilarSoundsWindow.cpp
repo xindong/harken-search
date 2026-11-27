@@ -7,6 +7,7 @@
 #include "imgui_internal.h"
 #include "Localization.h"
 #include "SimilarityQueryV2.h"
+#include "SimilarAnalysisReportLayout.h"
 #include "Utils.h"
 #include "Theme.h"
 #include "ThemeInspector.h"
@@ -479,30 +480,91 @@ void InvalidateSimilarSoundsWindow(AppState& state) {
 }
 
 static void DrawSimilarAnalysisReport(AppState& state) {
-    if (state.showSimilarAnalysisReport) {
+    namespace report_layout = HarkenSearch::similar_analysis_report;
+    const bool opening = state.showSimilarAnalysisReport;
+    if (opening) {
         ImGui::OpenPopup(L(Similar_AnalysisReport));
         state.showSimilarAnalysisReport = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(660, 380), ImGuiCond_FirstUseEver);
-    if (aura::ui::BeginAlertDialog(L(Similar_AnalysisReport), L(Similar_AnalysisReport))) {
+    // The work area, not the whole viewport: the dialog must stay clear of the
+    // taskbar/dock and of the main window's own chrome.
+    const ImGuiViewport* mainViewport = ImGui::GetMainViewport();
+    const report_layout::Rect workArea{
+        mainViewport->WorkPos.x, mainViewport->WorkPos.y,
+        mainViewport->WorkSize.x, mainViewport->WorkSize.y};
+    const report_layout::Rect storedSize{
+        0.0f, 0.0f, state.settings.similarAnalysisReportWidth,
+        state.settings.similarAnalysisReportHeight};
+    const report_layout::Rect openSize = report_layout::ClampSize(storedSize, workArea);
+    // First frame of every open: apply the remembered size. Later frames leave
+    // the size alone so a drag of the edge is not overwritten.
+    ImGui::SetNextWindowSize(ImVec2(openSize.w, openSize.h),
+                             opening ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(
+        ImVec2(report_layout::kMinimumWidth, report_layout::kMinimumHeight),
+        ImVec2(FLT_MAX, FLT_MAX));
+    // BeginAlertDialog defaults to ImGuiWindowFlags_AlwaysAutoResize, which
+    // fits the dialog to its content and makes edge resizing impossible. This
+    // one owns its size, so it must opt out and let the remembered size land.
+    if (aura::ui::BeginAlertDialog(L(Similar_AnalysisReport), L(Similar_AnalysisReport),
+                                  ImGuiWindowFlags_None)) {
         if (state.manualSimilarityTask) state.manualSimilarityResultVisibleFrame = ImGui::GetFrameCount();
+        if (opening || ImGui::IsWindowAppearing()) {
+            // ImGui recycles the popup window, so a dialog dragged past the
+            // main window edge returns mostly off-screen. Only an overflowing
+            // dialog moves; a visible one keeps the user's position.
+            const ImVec2 position = ImGui::GetWindowPos();
+            const ImVec2 size = ImGui::GetWindowSize();
+            const report_layout::Rect clamped = report_layout::ClampToWorkArea(
+                report_layout::Rect{position.x, position.y, size.x, size.y}, workArea);
+            if (clamped.x != position.x || clamped.y != position.y)
+                ImGui::SetWindowPos(ImVec2(clamped.x, clamped.y));
+        }
         std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
         const auto& report = state.batchFeatureResult;
         ImGui::Text(L(Similar_AnalysisSummaryFmt), report.progress.saved, report.progress.skipped, report.progress.failed);
         if (report.cancelled) ImGui::TextWrapped("%s", L(Similar_AnalysisCancelled));
         if (!report.modelError.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisModelMissing));
         if (!report.error.empty()) ImGui::TextWrapped("%s", L(Similar_AnalysisFailed));
-        if (ImGui::BeginChild("##SimilarAnalysisFailures", ImVec2(0, -42), false)) {
+        const ImVec4 secondaryText = SimilarSecondaryText(state);
+        if (ImGui::BeginChild("##SimilarAnalysisFailures",
+                              ImVec2(0, -report_layout::kFooterStripHeight), false)) {
             const char* reasons[] = {L(Similar_FailureUnreadable), L(Similar_FailureSilent), L(Similar_FailureChanged), L(Similar_FailureModel), L(Similar_FailureSave)};
-            ImGuiListClipper clipper; clipper.Begin(static_cast<int>(report.issues.size()), ImGui::GetTextLineHeightWithSpacing() * 2);
+            // One failure per row: the reason and the file share a line and the
+            // path trails it without wrapping, so 44 failures stay readable
+            // instead of doubling in height. The full path stays one hover away.
+            const float rowHeight = report_layout::FailureRowHeight(
+                ImGui::GetTextLineHeight(), ImGui::GetStyle().ItemSpacing.y);
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(report.issues.size()), rowHeight);
             while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {
                 const auto& issue = report.issues[index];
+                ImGui::PushID(index);
                 ImGui::Text("%s: %s", reasons[static_cast<int>(issue.reason)], issue.file.name.c_str());
-                ImGui::TextUnformatted(issue.file.path.c_str());
+                if (ImGui::IsItemHovered() && !issue.file.path.empty())
+                    ImGui::SetTooltip("%s", issue.file.path.c_str());
+                if (!issue.file.path.empty()) {
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Text, secondaryText);
+                    ImGui::TextUnformatted(issue.file.path.c_str());
+                    ImGui::PopStyleColor();
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", issue.file.path.c_str());
+                }
+                ImGui::PopID();
             }
         }
         ImGui::EndChild();
         if (aura::ui::ActionButton(L(Close), ImVec2(100, 28), aura::ui::ButtonVariant::Quiet)) ImGui::CloseCurrentPopup();
+        // Remember whatever the user settled on, including a drag this frame.
+        const ImVec2 settled = ImGui::GetWindowSize();
+        if (settled.x > 0.0f && settled.y > 0.0f &&
+            (std::abs(settled.x - state.settings.similarAnalysisReportWidth) >= 1.0f ||
+             std::abs(settled.y - state.settings.similarAnalysisReportHeight) >= 1.0f)) {
+            state.settings.similarAnalysisReportWidth = settled.x;
+            state.settings.similarAnalysisReportHeight = settled.y;
+            state.settingsDirty = true;
+            state.settingsDirtyAt = ImGui::GetTime();
+        }
         aura::ui::EndAlertDialog();
     }
 }

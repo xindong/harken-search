@@ -5903,6 +5903,11 @@ void LoadAppSettings(AppState& state) {
     state.settings.similarityAnalysisConcurrency = std::clamp(
         ParseInt(kv["similarityAnalysisConcurrency"], state.settings.similarityAnalysisConcurrency),
         1, HarkenSearch::kMaxSimilarityConcurrency);
+    // 相似分析「分析结果」弹窗尺寸：非法或缺失时回到默认 1180x780
+    state.settings.similarAnalysisReportWidth = ParseFloat(kv["similarAnalysisReportWidth"],
+        state.settings.similarAnalysisReportWidth);
+    state.settings.similarAnalysisReportHeight = ParseFloat(kv["similarAnalysisReportHeight"],
+        state.settings.similarAnalysisReportHeight);
 
     // Send-to-DAW targets
     state.settings.reaperSetupNoticeDismissed = ParseInt(kv["reaperSetupNoticeDismissed"], 0) != 0;
@@ -6735,6 +6740,10 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"similarityAnalysisConcurrency",
                      std::to_string(std::clamp(state.settings.similarityAnalysisConcurrency, 1,
                                                HarkenSearch::kMaxSimilarityConcurrency))});
+    items.push_back({"similarAnalysisReportWidth",
+                     std::to_string(state.settings.similarAnalysisReportWidth)});
+    items.push_back({"similarAnalysisReportHeight",
+                     std::to_string(state.settings.similarAnalysisReportHeight)});
 
     // Send-to-DAW targets
     items.push_back({"reaperSetupNoticeDismissed", state.settings.reaperSetupNoticeDismissed ? "1" : "0"});

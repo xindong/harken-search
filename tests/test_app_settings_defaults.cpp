@@ -84,6 +84,14 @@ int main() {
                     settings.readingFontSize, settings.listFontSize);
         return 1;
     }
+    // The Similar Sounds analysis report opens at a size that leaves its
+    // failure list readable; the old 660x380 default is retired.
+    if (settings.similarAnalysisReportWidth != 1180.0f ||
+        settings.similarAnalysisReportHeight != 780.0f) {
+        std::printf("FAIL: analysis report default size should be 1180x780, got %.0fx%.0f\n",
+                    settings.similarAnalysisReportWidth, settings.similarAnalysisReportHeight);
+        return 1;
+    }
     if (kChromeFontPx != 14 ||
         ResolveReadingFontSize(true, 22, true, 20, true, 13, 16) != 22 ||
         ResolveReadingFontSize(false, 0, true, 20, true, 13, 16) != 20 ||
