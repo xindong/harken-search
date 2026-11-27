@@ -48,12 +48,17 @@ int MaxDepth(const FolderInfo& node) {
 }
 
 std::string EnvValue(const char* name) {
+#ifdef _WIN32
     size_t length = 0;
     char* buffer = nullptr;
     if (_dupenv_s(&buffer, &length, name) != 0 || !buffer) return {};
     std::string value(buffer);
     std::free(buffer);
     return value;
+#else
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : std::string();
+#endif
 }
 
 }  // namespace

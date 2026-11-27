@@ -8,6 +8,7 @@
 #include "MemoryBudget.h"
 #include "PerformanceMonitor.h"
 #include "Theme.h"
+#include "TooltipHoverDelay.h"
 #include "../ThemeModuleColors.h"
 #include "TransientScrollbarHost.h"
 #include "platform/system.h"
@@ -435,8 +436,8 @@ float DrawExportAction(const Layout& ui) {
         ui.FitText(kPadding, actionX - 8.0f, statusY, status, kCaptionSize, ui.muted);
     }
     if (hovered) {
-        if (!task.path.empty()) ImGui::SetTooltip("%s\n%s", L(DiagnosticOverlay_ExportHint), task.path.c_str());
-        else ImGui::SetTooltip("%s", L(DiagnosticOverlay_ExportHint));
+        if (!task.path.empty()) HarkenSearch::SetTooltipUngated("%s\n%s", L(DiagnosticOverlay_ExportHint), task.path.c_str());
+        else HarkenSearch::SetTooltipUngated("%s", L(DiagnosticOverlay_ExportHint));
     }
     return actionY + actionHeight;
 }

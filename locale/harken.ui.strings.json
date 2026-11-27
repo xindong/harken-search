@@ -15222,6 +15222,19 @@
     {"id":"Batch_RuleEditSeparator","type":"ui","zh":"分隔符","en":"Separator","ja":"区切り文字"},
     {"id":"Batch_RuleModeSetFixed","type":"ui","zh":"设为固定值","en":"Set fixed value","ja":"固定値に設定"},
     {"id":"Batch_RuleModeAppendBefore","type":"ui","zh":"追加到前面","en":"Append before","ja":"前に追加"},
-    {"id":"Batch_RuleModeAppendAfter","type":"ui","zh":"追加到后面","en":"Append after","ja":"後ろに追加"}
+    {"id":"Batch_RuleModeAppendAfter","type":"ui","zh":"追加到后面","en":"Append after","ja":"後ろに追加"},
+    {"id":"MacBaseline_OpenLibrary","type":"ui","zh":"打开素材库…","en":"Open Library...","ja":"ライブラリを開く…"},
+    {"id":"MacBaseline_OpenLibraryTitle","type":"ui","zh":"打开 Harken Search 素材库","en":"Open Harken Search Library","ja":"Harken Search ライブラリを開く"},
+    {"id":"MacBaseline_OpenLibraryError","type":"ui","zh":"无法打开素材库：%s","en":"Could not open library: %s","ja":"ライブラリを開けませんでした：%s"},
+    {"id":"MacBaseline_NotLibrary","type":"ui","zh":"此文件不是 Harken Search 素材库。","en":"This file is not a Harken Search library.","ja":"このファイルは Harken Search ライブラリではありません。"},
+    {"id":"MacBaseline_OpenLibraryHint","type":"ui","zh":"打开现有素材库以搜索音频文件。","en":"Open an existing library to search its audio files.","ja":"既存のライブラリを開いてオーディオファイルを検索します。"},
+    {"id":"MacBaseline_SearchPlaceholder","type":"ui","zh":"搜索音频文件","en":"Search audio files","ja":"オーディオファイルを検索"},
+    {"id":"MacBaseline_Search","type":"ui","zh":"搜索","en":"Search","ja":"検索"},
+    {"id":"MacBaseline_Results","type":"ui","zh":"%lld 条结果","en":"%lld results","ja":"%lld 件の結果"},
+    {"id":"MacBaseline_ResultLimit","type":"ui","zh":"显示前 %d 条结果","en":"Showing the first %d results","ja":"最初の %d 件の結果を表示"},
+    {"id":"MacBaseline_AllFolders","type":"ui","zh":"所有目录","en":"All folders","ja":"すべてのフォルダー"},
+    {"id":"MacBaseline_RenamePrefix","type":"ui","zh":"给当前结果加前缀（仅预览）","en":"Preview a filename prefix for these results","ja":"表示中のファイル名に付ける接頭辞をプレビュー"},
+    {"id":"MacBaseline_RenameInvalidPrefix","type":"ui","zh":"前缀不能包含路径分隔符。","en":"A prefix cannot contain path separators.","ja":"接頭辞にパスの区切り文字は使えません。"},
+    {"id":"MacBaseline_RenameReady","type":"ui","zh":"可改名","en":"Ready","ja":"変更可能"}
   ]
 }
