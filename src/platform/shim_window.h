@@ -80,23 +80,10 @@ enum : DWORD {
     GetFileExInfoStandard = 0,
 };
 
-// Saved window placement. macOS keeps this in the same shape so the restore
-// path in main.cpp stays one code path; the values are only meaningful when
-// handed back to SetWindowPlacement/GetWindowPlacement.
-enum : DWORD {
-    WPF_SETMINPOSITION = 0x0001,
-    WPF_RESTORETOMAXIMIZED = 0x0002,
-    WPF_ASYNCWINDOWPLACEMENT = 0x0004,
-};
-
-struct WINDOWPLACEMENT {
-    UINT length = sizeof(WINDOWPLACEMENT);
-    UINT flags = 0;
-    UINT showCmd = 0;
-    POINT ptMinPosition{};
-    POINT ptMaxPosition{};
-    RECT rcNormalPosition{};
-};
+// Saved window placement lives in WindowsMain.h (the shared front-end contract
+// header) so both front ends see one definition; see the non-Windows branch
+// there. Only the flags that main.cpp ORs into it are needed here, and they are
+// guarded so a future WindowsMain.h addition cannot collide.
 
 // Show-window commands used by the tray/drag-hide path.
 enum : int {

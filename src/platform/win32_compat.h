@@ -87,6 +87,13 @@ inline int strncpy_s(char* destination, std::size_t destinationSize,
     return 0;
 }
 
+// MSVC also offers an array form that derives the destination size; the shared
+// UI uses it, so the shim has to as well.
+template <std::size_t N>
+inline int strncpy_s(char (&destination)[N], const char* source, std::size_t count) {
+    return strncpy_s(static_cast<char*>(destination), N, source, count);
+}
+
 inline int strcpy_s(char* destination, std::size_t destinationSize, const char* source) {
     const std::size_t length = source ? std::strlen(source) : 0;
     if (!destination || length + 1 > destinationSize) {
