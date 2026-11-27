@@ -11,6 +11,11 @@ its content is untouched.
 | `02-library-open-24-results.png` | an isolated test library (`QA Demo.db`, 24 audio files) opened through the native panel: library path, folder tree, search field, rename-prefix field and the results list. |
 | `mac-frontend-merge-qa.mov` | 44 s window recording of the same build: results, reopening the library through the native panel, results again. 1552x968 pt (3104x1936 px), ~57 fps. |
 
+`06-merged-qa-current-shell.png` and `07-merged-qa-current-library-open.png` are the
+same check re-run from the merge commit GitHub produced (`d92f6c6`, whose base had
+moved on to `ced244f`): it rebuilds clean and shows the same shell and the same
+24 results, so the merged tree — not just the branch tip — is what was verified.
+
 Local build notes:
 
 * Apple Silicon, `cmake -G Ninja -DCMAKE_BUILD_TYPE=Release`, AppleClang 21, macOS 26.5.1.
