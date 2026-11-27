@@ -171,6 +171,42 @@ bool WaitMigrated(Database& db, int timeoutMs) {
     return false;
 }
 
+void AppendVorbisLe32(std::string& bytes, uint32_t value) {
+    bytes.push_back(static_cast<char>(value & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 8) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 16) & 0xFF));
+    bytes.push_back(static_cast<char>((value >> 24) & 0xFF));
+}
+
+std::string BuildVorbisFlacFixture(const std::vector<std::string>& entries) {
+    std::string comment;
+    const std::string vendor = "Harken Search test";
+    AppendVorbisLe32(comment, static_cast<uint32_t>(vendor.size()));
+    comment += vendor;
+    AppendVorbisLe32(comment, static_cast<uint32_t>(entries.size()));
+    for (const auto& entry : entries) {
+        AppendVorbisLe32(comment, static_cast<uint32_t>(entry.size()));
+        comment += entry;
+    }
+
+    auto block = [](int type, bool last, const std::string& payload) {
+        std::string bytes;
+        bytes.push_back(static_cast<char>((last ? 0x80 : 0x00) | (type & 0x7F)));
+        const uint32_t size = static_cast<uint32_t>(payload.size());
+        bytes.push_back(static_cast<char>((size >> 16) & 0xFF));
+        bytes.push_back(static_cast<char>((size >> 8) & 0xFF));
+        bytes.push_back(static_cast<char>(size & 0xFF));
+        bytes += payload;
+        return bytes;
+    };
+
+    std::string bytes = "fLaC";
+    bytes += block(0, false, std::string(34, '\0'));
+    bytes += block(4, true, comment);
+    bytes += std::string(64, '\0');
+    return bytes;
+}
+
 bool InstallWriteFailTrigger(Database& db) {
     db.executeRawQuery("CREATE TABLE IF NOT EXISTS recompute_write_attempts(n INTEGER);");
     db.executeRawQuery("DELETE FROM recompute_write_attempts;");
@@ -280,6 +316,70 @@ int main(int argc, char** argv) {
             filter.keyword = value;
             ok &= Expect(MatchCount(database, value) == 1 && database.searchFiles(filter, 10).size() == 1, value);
         }
+        return ok ? 0 : 1;
+    }
+
+    if (argc == 2 && std::string(argv[1]) == "--flac-search") {
+        const fs::path flacPath = root / "Synthetic.flac";
+        {
+            std::ofstream out(flacPath, std::ios::binary | std::ios::trunc);
+            const std::string bytes = BuildVorbisFlacFixture({
+                "TITLE=Embedded title",
+                "COMPOSER=Azurescore",
+                "BPM=181",
+                "INITIALKEY=Dorian",
+                "DATE=2034-05-01",
+                "VENDOR LABEL=UniqueValue",
+            });
+            out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        }
+
+        Database database;
+        if (!Expect(database.open((root / "flac.db").u8string(), false), "open an isolated FLAC library")) return 1;
+        database.stopCoverPhashBackfillWorker();
+        AudioRecord record;
+        record.filePath = flacPath.u8string();
+        record.fileName = "Synthetic.flac";
+        record.extension = ".flac";
+        record.title = "Library title";
+        // The pre-Vorbis-parser build stored the year but nothing else, which is
+        // exactly the row shape the one-time backfill must still pick up.
+        record.meta = {{"track_year", "2034"}};
+        ok &= Expect(database.addFile(record), "add a FLAC row with only the legacy year");
+        database.close();
+
+        if (!Expect(database.open((root / "flac.db").u8string(), true), "reopen the FLAC library")) return 1;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        AudioRecord refreshed;
+        while (std::chrono::steady_clock::now() < deadline) {
+            refreshed = database.getFileByPath(record.filePath);
+            if (!refreshed.getMeta("composer").empty()) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        ok &= Expect(refreshed.getMeta("composer") == "Azurescore", "legacy FLAC row gains composer in the background");
+        const auto bpmValue = Scalar(database.executeRawQuery(
+            "SELECT bpm FROM audio_files WHERE id = 1;"));
+        ok &= Expect(bpmValue == "181", "legacy FLAC row gains BPM");
+        ok &= Expect(refreshed.getMeta("musical_key") == "Dorian", "legacy FLAC row gains key");
+        ok &= Expect(refreshed.getMeta("track_year") == "2034", "legacy FLAC row keeps its year");
+        ok &= Expect(refreshed.title == "Library title", "legacy backfill keeps the library title");
+        ok &= Expect(refreshed.id3TextTags.count("VENDOR LABEL") == 1,
+                     "legacy FLAC row gains its custom Vorbis tag");
+        ok &= Expect(MetaValue(database, "legacy_vorbis_metadata_refresh") == "1",
+                     "legacy FLAC backfill records that it finished");
+
+        SearchFilter filter;
+        for (const char* value : {"Azurescore", "181", "Dorian", "2034", "UniqueValue"}) {
+            filter.keyword = value;
+            const auto results = database.searchFiles(filter, 10);
+            ok &= Expect(results.size() == 1 && results.front().matchSource == SearchMatchSource::Metadata, value);
+        }
+        const auto custom = Database::findOptionalMetadataMatches(
+            database.getFileByPath(record.filePath), "UniqueValue");
+        ok &= Expect(custom.size() == 1 && custom.front().custom &&
+                         custom.front().field == "VENDOR LABEL" &&
+                         custom.front().value == "UniqueValue",
+                     "custom Vorbis tag explains the actual matching field");
         return ok ? 0 : 1;
     }
 

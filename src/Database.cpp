@@ -673,6 +673,12 @@ namespace fs = std::filesystem;
 
 namespace {
 constexpr int kSearchDataMigrationVersion = 3;
+// One-time pass that fills the music columns for FLAC/OGG rows indexed before
+// the Vorbis comment reader understood composer/BPM/key. Only empty columns are
+// written, so manual edits survive; the marker stops it from running again.
+constexpr int kLegacyVorbisMetadataRefreshVersion = 1;
+constexpr const char* kLegacyVorbisMetadataRefreshKey = "legacy_vorbis_metadata_refresh";
+constexpr const char* kLegacyVorbisMetadataCursorKey = "legacy_vorbis_metadata_refresh_cursor";
 constexpr const char* kLibraryRootsMetaKey = "library_roots_v1";
 constexpr const char* kWaveformCacheModeMetaKey = "waveform_cache_mode_v1";
 constexpr const char* kMiniWaveformFormatV2MetaKey = "mini_waveform_format_v2";
@@ -1638,7 +1644,7 @@ static void ApplyAudioMetadataToRecord(AudioRecord& record, const AudioMetadata&
         record.keywords = metadata.comment;
     }
     PopulateExtendedMeta(record.meta, metadata);
-    if (toLowerAsciiCopy(record.extension) == ".mp3" || toLowerAsciiCopy(record.extension) == "mp3") {
+    if (metadata.customTextTagsRead) {
         record.id3TextTags = metadata.customTextTags;
         record.id3TextTagsRead = true;
     }
@@ -2016,7 +2022,8 @@ bool Database::open(const std::string& dbPath, bool isPrimary) {
         sqlite3_db_readonly(m_db, "main") == 0 &&
         sqlite3_db_readonly(m_db, "waveforms_db") == 0;
     if (m_isPrimaryConnection && sqlite3_db_readonly(m_db, "main") == 0 &&
-        ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion) {
+        (ReadAppMetaInt(m_db, "search_data_migrated") != kSearchDataMigrationVersion ||
+         ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) != kLegacyVorbisMetadataRefreshVersion)) {
         startCoverPhashBackfillWorker();
     }
     return true;
@@ -9223,6 +9230,97 @@ bool Database::isCoverTileMembershipMaintenancePending() {
     return CountRows64FromTable(m_db, "cover_tile_membership") == 0;
 }
 
+/**
+ * One-time backfill for FLAC/OGG rows indexed before the Vorbis comment reader
+ * understood composer, BPM, key and custom tags. It re-reads the source file and
+ * only writes columns that are still empty, so manual edits and previously
+ * indexed values are preserved. A cursor keeps the pass resumable; the marker
+ * set at completion prevents it from ever running again.
+ *
+ * Returns >0 processed rows, 0 when there is nothing to do right now, -1 when
+ * the pass is finished or cannot run on this connection.
+ */
+int Database::refreshLegacyVorbisMetadataBatch(int batchSize) {
+    if (!m_db || batchSize <= 0) return -1;
+    if (sqlite3_db_readonly(m_db, "main") == 1) return -1;
+    if (ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) == kLegacyVorbisMetadataRefreshVersion) {
+        return -1;
+    }
+
+    std::vector<int64_t> ids;
+    const int64_t cursor = ReadAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey);
+    {
+        sqlite3_stmt* stmt = nullptr;
+        const char* sql =
+            "SELECT id FROM audio_files "
+            "WHERE id > ?1 "
+            "  AND lower(extension) IN ('flac','.flac','ogg','.ogg') "
+            "  AND IFNULL(composer,'') = '' AND IFNULL(bpm,'') = '' "
+            "  AND IFNULL(musical_key,'') = '' "
+            "  AND IFNULL(id3_text_tags,'') = '' "
+            "ORDER BY id LIMIT ?2;";
+        if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+            m_lastError = sqlite3_errmsg(m_db);
+            return -1;
+        }
+        sqlite3_bind_int64(stmt, 1, cursor);
+        sqlite3_bind_int(stmt, 2, batchSize);
+        while (sqlite3_step(stmt) == SQLITE_ROW) {
+            ids.push_back(sqlite3_column_int64(stmt, 0));
+        }
+        sqlite3_finalize(stmt);
+    }
+
+    if (ids.empty()) {
+        WriteAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey, kLegacyVorbisMetadataRefreshVersion);
+        execSqlite(m_db, "DELETE FROM app_meta WHERE key = 'legacy_vorbis_metadata_refresh_cursor';", nullptr);
+        DIAG_ACTION("Database", "LegacyVorbisMetadataRefresh finished");
+        return -1;
+    }
+
+    for (int64_t fileId : ids) {
+        AudioRecord record = getFileById(fileId);
+        if (record.id <= 0) continue;
+
+        AudioMetadata metadata;
+        const bool foundMetadata = MetadataReader::readMetadata(record.filePath, metadata);
+        if (!foundMetadata && !metadata.customTextTagsRead) continue;
+
+        bool changed = false;
+        if (record.getMeta("composer").empty() && !metadata.composer.empty()) {
+            record.meta["composer"] = metadata.composer;
+            changed = true;
+        }
+        if (record.getMeta("bpm").empty() && !metadata.bpm.empty()) {
+            record.meta["bpm"] = metadata.bpm;
+            changed = true;
+        }
+        if (record.getMeta("musical_key").empty() && !metadata.musicalKey.empty()) {
+            record.meta["musical_key"] = metadata.musicalKey;
+            changed = true;
+        }
+        if (record.getMeta("track_year").empty() && metadata.year > 0) {
+            record.meta["track_year"] = std::to_string(metadata.year);
+            changed = true;
+        }
+        if (record.id3TextTags.empty() && metadata.customTextTagsRead &&
+            !metadata.customTextTags.empty()) {
+            record.id3TextTags = metadata.customTextTags;
+            record.id3TextTagsRead = true;
+            changed = true;
+        }
+        if (changed) {
+            record.lastIndexed = std::time(nullptr);
+            updateFile(record);
+        }
+    }
+
+    WriteAppMetaInt(m_db, kLegacyVorbisMetadataCursorKey, static_cast<int>(ids.back()));
+    DIAG_ACTION_FMT("Database", "LegacyVorbisMetadataRefresh batch: cursor=%lld scanned=%d",
+                    (long long)ids.back(), static_cast<int>(ids.size()));
+    return static_cast<int>(ids.size());
+}
+
 int Database::repairCoverTileMembershipBatch(int batchSize) {
     if (!m_db || batchSize <= 0 || sqlite3_db_readonly(m_db, "main") == 1) return 0;
 
@@ -10236,9 +10334,27 @@ void Database::coverPhashBackfillWorkerMain() {
         getFileCount() > kGlobalCoverWallFallbackMaxFiles &&
         isCoverRegistryMaintenancePending();
 
+    bool legacyVorbisRefreshPending =
+        m_isPrimaryConnection &&
+        sqlite3_db_readonly(m_db, "main") != 1 &&
+        ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) != kLegacyVorbisMetadataRefreshVersion;
+
     int idleRounds = 0, totalUpdated = 0;
     while (!m_coverPhashBackfillCancel.load(std::memory_order_acquire)) {
         if (!m_db) break;
+        if (legacyVorbisRefreshPending) {
+            const int refreshed =
+                (ReadAppMetaInt(m_db, kLegacyVorbisMetadataRefreshKey) == kLegacyVorbisMetadataRefreshVersion)
+                    ? -1
+                    : refreshLegacyVorbisMetadataBatch(256);
+            if (refreshed > 0) {
+                totalUpdated += refreshed;
+                idleRounds = 0;
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            if (refreshed < 0) legacyVorbisRefreshPending = false;
+        }
         if (legacyMembershipRepairPending) {
             const int repairedMembership = repairCoverTileMembershipBatch(512);
             if (repairedMembership > 0) {

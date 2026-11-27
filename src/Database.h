@@ -764,6 +764,9 @@ public:
     int countAudioCoverKeyCandidates();
     bool isCoverTileMembershipMaintenancePending();
     int repairCoverTileMembershipBatch(int batchSize);
+    // One-time FLAC/OGG backfill: returns >0 processed rows, 0 when idle
+    // without progress, -1 when it has completed or cannot run.
+    int refreshLegacyVorbisMetadataBatch(int batchSize);
     int64_t countAudioCoverPresenceCandidates();
     int countCoverRegistryEntries();
     int pruneOrphanCoverCaches();
