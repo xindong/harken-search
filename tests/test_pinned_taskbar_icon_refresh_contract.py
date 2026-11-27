@@ -2,7 +2,6 @@
 """任务栏固定项图标刷新：只定向刷新用默认图标的自家固定项，不清缓存、不改快捷方式。"""
 
 from pathlib import Path
-import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]

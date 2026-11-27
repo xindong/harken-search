@@ -13,4 +13,8 @@ namespace Platform::WavPack {
 void ApplyDecodingBackend(ma_decoder_config& config);
 std::optional<bool> IsLossless(const ma_decoder& decoder);
 
+#ifdef HARKEN_TEST_WAVPACK_VERIFICATION_COUNT
+unsigned int CorrectionVerificationCountForTest();
+#endif
+
 }  // namespace Platform::WavPack

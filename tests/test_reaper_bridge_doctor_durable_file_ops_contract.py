@@ -43,9 +43,13 @@ class ReaperBridgeDoctorDurableFileOpsContract(unittest.TestCase):
             self.assertIn(token, WIN32)
         self.assertIn("systemError", WIN32)
 
-    def test_macos_is_explicitly_unsupported_without_side_effects(self):
-        self.assertIn("DurableFileOpStatus::Unsupported", MACOS)
-        self.assertNotIn("open(", MACOS)
+    def test_macos_implements_durable_flush_and_keeps_real_errors(self):
+        for token in ("F_FULLFSYNC", "FlushDescriptor", "FlushFailed", "OpenFailed"):
+            self.assertIn(token, MACOS)
+        # Plain fsync may only stand in for a filesystem that rejects the
+        # command; a real write error such as EIO must surface.
+        self.assertIn("FullsyncUnsupported", MACOS)
+        self.assertNotIn("DurableFileOpStatus::Unsupported", MACOS)
         self.assertNotIn("FlushFileBuffers", MACOS)
 
     def test_doctor_delegates_and_preserves_other_write_operations(self):

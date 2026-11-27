@@ -55,19 +55,24 @@ int32_t WriteBlock(void* id, void* data, int32_t byteCount) {
 }
 
 bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int channels,
-                  int channelMask, int floatExponent = 0, bool hybrid = false) {
+                  int channelMask, int floatExponent = 0, bool hybrid = false,
+                  bool writeCorrection = false) {
+    fs::path correctionPath = path;
+    correctionPath.replace_extension(".wvc");
+    auto openOutput = [](const fs::path& output) {
 #ifdef _WIN32
-    std::FILE* file = _wfopen(path.wstring().c_str(), L"wb");
+        return _wfopen(output.c_str(), L"wb");
 #else
-    std::FILE* file = std::fopen(path.string().c_str(), "wb");
+        return std::fopen(output.c_str(), "wb");
 #endif
-    if (!file) return false;
-
-    WavpackContext* context = WavpackOpenFileOutput(WriteBlock, file, nullptr);
-    if (!context) {
-        std::fclose(file);
-        return false;
-    }
+    };
+    using File = std::unique_ptr<std::FILE, decltype(&std::fclose)>;
+    File file(openOutput(path), std::fclose);
+    File correction(writeCorrection ? openOutput(correctionPath) : nullptr, std::fclose);
+    if (!file || (writeCorrection && !correction)) return false;
+    std::unique_ptr<WavpackContext, decltype(&WavpackCloseFile)> context(
+        WavpackOpenFileOutput(WriteBlock, file.get(), correction.get()), WavpackCloseFile);
+    if (!context) return false;
 
     WavpackConfig config{};
     config.bytes_per_sample = floatExponent == 0 ? 2 : 4;
@@ -78,31 +83,20 @@ bool EncodeWavPack(const fs::path& path, std::vector<int32_t> samples, int chann
     config.sample_rate = kSampleRate;
     config.block_samples = 1024;
     if (hybrid) {
-        config.flags = CONFIG_HYBRID_FLAG;
+        config.flags = CONFIG_HYBRID_FLAG | (writeCorrection ? CONFIG_CREATE_WVC : 0);
         config.bitrate = 3.5f;
     }
 
-    if (!WavpackSetConfiguration64(context, &config, kFrames, nullptr) ||
-        !WavpackPackInit(context)) {
-        WavpackCloseFile(context);
-        std::fclose(file);
-        return false;
-    }
+    if (!WavpackSetConfiguration64(context.get(), &config, kFrames, nullptr) ||
+        !WavpackPackInit(context.get())) return false;
 
     for (int offset = 0; offset < kFrames; offset += 4096) {
         const int frames = std::min(4096, kFrames - offset);
-        if (!WavpackPackSamples(context, samples.data() + static_cast<size_t>(offset) * channels,
-                                static_cast<uint32_t>(frames))) {
-            WavpackCloseFile(context);
-            std::fclose(file);
-            return false;
-        }
+        if (!WavpackPackSamples(context.get(), samples.data() + static_cast<size_t>(offset) * channels,
+                                static_cast<uint32_t>(frames))) return false;
     }
 
-    const bool flushed = WavpackFlushSamples(context) != 0;
-    WavpackCloseFile(context);
-    std::fclose(file);
-    return flushed;
+    return WavpackFlushSamples(context.get()) != 0;
 }
 
 std::optional<bool> ReadWavPackLosslessness(const fs::path& path) {
@@ -244,6 +238,47 @@ int main() {
     check(sampleRate == kSampleRate, "decoded sample rate matches");
     check(length == static_cast<Platform::AudioDataSource::FrameCount>(kFrames),
           "decoded frame count matches");
+
+    {
+        const auto correctedPath = temp / fs::u8path("校正试听.WV");
+        const auto correctionPath = temp / fs::u8path("校正试听.wvc");
+        const auto savedCorrection = temp / "matched.wvc";
+        check(EncodeWavPack(correctedPath, std::vector<int32_t>(pcm.begin(), pcm.end()),
+                            kChannels, 0x3, 0, true, true),
+              "encoder writes a hybrid pair with real correction blocks");
+        fs::copy_file(correctionPath, savedCorrection);
+        std::vector<float> corrected;
+        const auto checksBefore = Platform::WavPack::CorrectionVerificationCountForTest();
+        check(ReadWavPackLosslessness(correctedPath) == true,
+              "hybrid WV with matching WVC is selectable as lossless");
+        check(DecodeAll(correctedPath.u8string(), corrected, channels, sampleRate, length) &&
+                  corrected == decoded,
+              "matching WVC restores all 96000 original PCM samples");
+        check(Platform::WavPack::CorrectionVerificationCountForTest() == checksBefore + 1,
+              "metadata and playback reuse the verification of the same correction pair");
+        fs::remove(correctionPath);
+        std::vector<float> lossy;
+        check(ReadWavPackLosslessness(correctedPath) == false,
+              "removing WVC immediately restores lossy classification");
+        check(DecodeAll(correctedPath.u8string(), lossy, channels, sampleRate, length) &&
+                  lossy != decoded,
+              "the same main file plays without WVC, but its PCM is lossy");
+        auto otherPcm = std::vector<int32_t>(pcm.begin(), pcm.end());
+        std::reverse(otherPcm.begin(), otherPcm.end());
+        check(EncodeWavPack(temp / "other.wv", std::move(otherPcm), kChannels, 0x3, 0, true, true),
+              "encoder writes an incompatible WVC with the same audio dimensions");
+        fs::copy_file(temp / "other.wvc", correctionPath);
+        check(ReadWavPackLosslessness(correctedPath) == false &&
+                  DecodeAll(correctedPath.u8string(), corrected, channels, sampleRate, length) &&
+                  corrected == lossy,
+              "wrong WVC falls back to the original lossy PCM without silence or a false lossless flag");
+        fs::copy_file(savedCorrection, correctionPath, fs::copy_options::overwrite_existing);
+        fs::resize_file(correctionPath, fs::file_size(correctionPath) / 2);
+        check(ReadWavPackLosslessness(correctedPath) == false &&
+                  DecodeAll(correctedPath.u8string(), corrected, channels, sampleRate, length) &&
+                  corrected == lossy,
+              "WVC with a correct prefix but truncated blocks also falls back");
+    }
 
     if (decoded.size() == static_cast<size_t>(kFrames) * kChannels) {
         float worst = 0.0f;

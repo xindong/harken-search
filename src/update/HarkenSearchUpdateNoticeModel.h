@@ -12,6 +12,8 @@ struct ReleaseNotesItem {
     std::string title;
     std::string text;
     std::string author;
+    std::string titleEn;
+    std::string textEn;
 };
 
 struct ReleaseNotesEntry {
@@ -21,6 +23,7 @@ struct ReleaseNotesEntry {
     std::vector<std::string> contributors;
     std::vector<ReleaseNotesItem> items;
     std::vector<std::string> notes;
+    std::string headlineEn;
 };
 
 struct ReleaseNotesUiState {
@@ -45,6 +48,8 @@ struct ReleaseNotesUiState {
 
 // The same parser is used for installed history and the verified update ZIP.
 bool ParseHarkenSearchReleaseNotes(std::string_view bytes, std::vector<ReleaseNotesEntry>& out);
+std::string_view HarkenSearchReleaseNoteText(std::string_view original, std::string_view english,
+    bool useEnglish);
 const ReleaseNotesEntry* FindHarkenSearchReleaseNotes(
     const std::vector<ReleaseNotesEntry>& releases, std::string_view version);
 void SyncHarkenSearchCandidateReleaseNotes(ReleaseNotesUiState& notes,

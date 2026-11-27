@@ -255,8 +255,9 @@ def test_filter_and_info_keep_their_internal_styles_and_receive_only_the_common_
     assert "CoreWorkspace" not in info_style
     assert "filterBrowserSelection" not in module_shell
     assert "infoPanelAccent" not in module_shell
-    assert main.count("RenderSidebarPanelContent(state,") == 4
-    assert main.count("RenderFileInfoPanelContent(state,") == 4
+    shared_body = between(main, "const auto renderToolContent", "const auto drawSimilarBodyPerimeter")
+    assert "RenderSidebarPanelContent(state, sidebarScope)" in shared_body
+    assert "RenderFileInfoPanelContent(state, width)" in shared_body
     for panel_id in ("##FloatingSidebar", "##FloatingFileInfo", "##DockedFilter", "##DockedFileInfo"):
         assert panel_id in main
     assert "beginSharedDockWindowHost(" in main
@@ -326,11 +327,10 @@ def test_shipping_workspace_style_pushes_and_pops_stay_balanced():
     assert main.count("popDockedToolAppearance(appearance);") == appearance_pushes
     for name in set(names):
         assert main.count(f"PopStyleColor({name})") == names.count(name)
-    group_style = between(main, "const int dockGroupStyleCount", "if (filterStyle) pushFilterFrameStyle")
-    assert "filterStyle ? PushSidebarShellStyle(theme)" in group_style
-    assert "usesDockToolPalette(selected) ? pushDockToolBodyStyle(resolveDockToolPalette(selected))" in group_style
-    assert "PushFileInfoShellStyle(theme);" in group_style
-    assert main.count("PopStyleColor(dockGroupStyleCount)") == 1
+    group_style = between(main, "const auto appearance = pushDockedToolAppearance(selected);",
+                          "renderFloatingToolBody(selected, size")
+    assert "beginFilterStyleFloatingWindow(" in group_style
+    assert "popDockedToolAppearance(appearance);" in main
     waveform = between(main, 'BeginTransientScrollbarChild("WaveformPanel"', "// FLOATING PANELS")
     assert "ThemeColors::waveformPanelBG(waveformShellTheme)" in waveform
     assert "const ImVec4 waveShellEdge = workspacePalette.perimeter" in waveform
@@ -528,7 +528,7 @@ def test_dock_widths_round_trip_in_workspace_units():
     main = read(MAIN_CPP)
     commit = between(main, "static void MirrorDockCommitToPanel", "static void ApplyDockedPanel(")
     assert "logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);" in commit
-    assert "ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);" in commit
+    assert "ApplyDockCommitToPanel(mirror, side, logicalRect);" in commit
     assert "const float logicalWidth = aura::ui::dpi::LogicalPx(rect.width);" in commit
     assert "state.panelSidebar.dockedWidth = logicalWidth;" in commit
     assert "state.panelFileInfo.dockedWidth = logicalWidth;" in commit
@@ -1011,7 +1011,7 @@ def test_native_scrollbars_use_independent_region_visibility_gates():
     dock_content = between(main, "const auto beginDockContentViewport", "auto renderFunctionDockedModule")
     assert "ImGui::SetNextWindowContentSize" in dock_content
     assert "flags &= ~(ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)" in dock_content
-    assert "return BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
+    assert "BeginTransientScrollbarChild(childId, bodySize, false, flags);" in dock_content
     similar = between(main, '"similar-sounds", "##IndependentSimilarSoundsContent"', "ImGui::EndChild();")
     assert "ImGuiWindowFlags_NoBackground" in similar
     assert "ImGuiWindowFlags_NoScrollWithMouse" not in similar

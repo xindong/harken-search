@@ -18,6 +18,31 @@ int main() {
         std::ofstream(target, std::ios::binary) << "old";
     }
 
+#ifdef __APPLE__
+    const fs::path danglingTarget = root / "dangling.bin";
+    fs::create_symlink("missing.bin", danglingTarget);
+    const auto exclusiveRejected = Platform::FileSystem::ReplaceFileWriteThrough(
+        source.u8string(), danglingTarget.u8string(), false);
+    if (exclusiveRejected.status != Platform::FileSystem::DurableFileOpStatus::TargetExists ||
+        exclusiveRejected.systemError == 0 || !fs::exists(source) ||
+        !fs::is_symlink(danglingTarget)) {
+        std::cerr << "exclusive rename did not preserve a dangling destination link and source\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    const fs::path exclusiveTarget = root / "exclusive.bin";
+    const auto exclusiveMoved = Platform::FileSystem::ReplaceFileWriteThrough(
+        source.u8string(), exclusiveTarget.u8string(), false);
+    if (exclusiveMoved.status != Platform::FileSystem::DurableFileOpStatus::Success ||
+        exclusiveMoved.systemError != 0 || fs::exists(source) ||
+        std::ifstream(exclusiveTarget, std::ios::binary).get() != 'n') {
+        std::cerr << "exclusive rename did not move the source to a vacant destination\n";
+        fs::remove_all(root);
+        return 1;
+    }
+    fs::rename(exclusiveTarget, source);
+#endif
+
     const auto replaced = Platform::FileSystem::ReplaceFileWriteThrough(
         source.u8string(), target.u8string());
     if (replaced.status != Platform::FileSystem::DurableFileOpStatus::Success) {

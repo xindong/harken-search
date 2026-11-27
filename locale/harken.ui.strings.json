@@ -1,6 +1,50 @@
 {
   "schema_version": 1,
   "entries": [
+    {"id": "Wf_NodeUnknownName", "type": "ui", "zh": "未知节点", "en": "Unknown Node", "ja": "不明なノード"},
+    {"id": "Wf_NodeSetFieldName", "type": "ui", "zh": "设置字段", "en": "Set Field", "ja": "フィールドを設定"},
+    {"id": "Wf_NodeCopyFieldName", "type": "ui", "zh": "复制字段", "en": "Copy Field", "ja": "フィールドをコピー"},
+    {"id": "Wf_NodeFindAndReplaceName", "type": "ui", "zh": "查找替换", "en": "Find and Replace", "ja": "検索と置換"},
+    {"id": "Wf_NodeFindAndReplaceWordName", "type": "ui", "zh": "查找替换单词", "en": "Find and Replace Word", "ja": "単語の検索と置換"},
+    {"id": "Wf_NodeChangeCaseName", "type": "ui", "zh": "大小写转换", "en": "Change Case", "ja": "大文字・小文字を変換"},
+    {"id": "Wf_NodeAddRemoveCharsName", "type": "ui", "zh": "添加或移除字符", "en": "Add/Remove Chars", "ja": "文字を追加・削除"},
+    {"id": "Wf_NodeAppendPrependFieldName", "type": "ui", "zh": "在字段前后追加", "en": "Append/Prepend Field", "ja": "フィールドの前後に追加"},
+    {"id": "Wf_NodeRemoveWordsName", "type": "ui", "zh": "移除单词", "en": "Remove Words", "ja": "単語を削除"},
+    {"id": "Wf_NodeRemoveOccurrencesName", "type": "ui", "zh": "移除匹配内容", "en": "Remove Occurrences", "ja": "一致する箇所を削除"},
+    {"id": "Wf_NodeRemoveMultipleSpacesName", "type": "ui", "zh": "移除多余空格", "en": "Remove Multiple Spaces", "ja": "余分な空白を削除"},
+    {"id": "Wf_NodeTakeFirstWordsName", "type": "ui", "zh": "保留开头的词", "en": "Take First Words", "ja": "先頭の単語を残す"},
+    {"id": "Wf_NodeTakeLastWordsName", "type": "ui", "zh": "保留末尾的词", "en": "Take Last Words", "ja": "末尾の単語を残す"},
+    {"id": "Wf_NodeSplitAndSortName", "type": "ui", "zh": "拆分排序", "en": "Split and Sort", "ja": "分割して並べ替え"},
+    {"id": "Wf_NodeSeparateItemsName", "type": "ui", "zh": "分隔项目", "en": "Separate Items", "ja": "項目を分離"},
+    {"id": "Wf_NodeSeparateLastItemsName", "type": "ui", "zh": "分隔末尾项目", "en": "Separate Last Items", "ja": "末尾の項目を分離"},
+    {"id": "Wf_NodeCopyFirstRecordName", "type": "ui", "zh": "复制第一条记录", "en": "Copy First Record", "ja": "最初のレコードをコピー"},
+    {"id": "Wf_NodeCopyFolderNameName", "type": "ui", "zh": "复制文件夹名", "en": "Copy Folder Name", "ja": "フォルダー名をコピー"},
+    {"id": "Wf_NodeFilePathExtractorName", "type": "ui", "zh": "提取文件路径信息", "en": "FilePath Extractor", "ja": "ファイルパスから抽出"},
+    {"id": "Wf_NodeFieldBuildName", "type": "ui", "zh": "组合字段", "en": "Field Build", "ja": "フィールドを結合"},
+    {"id": "Wf_NodeAutoSplitName", "type": "ui", "zh": "自动拆分", "en": "Auto Split", "ja": "自動分割"},
+    {"id": "Wf_NodeAssignCatsName", "type": "ui", "zh": "分配分类", "en": "Assign Categories", "ja": "カテゴリを割り当て"},
+    {"id": "Wf_NodeUCSBuildName", "type": "ui", "zh": "组合 UCS 分类", "en": "UCS Build", "ja": "UCS カテゴリを構成"},
+    {"id": "Wf_NodeSetRatingName", "type": "ui", "zh": "设置评分", "en": "Set Rating", "ja": "評価を設定"},
+    {"id": "Wf_NodeSetColourName", "type": "ui", "zh": "设置颜色标记", "en": "Set Colour", "ja": "色ラベルを設定"},
+    {"id": "Wf_NodeNumberName", "type": "ui", "zh": "自动编号", "en": "Number", "ja": "連番"},
+    {"id": "Wf_NodeDateName", "type": "ui", "zh": "日期", "en": "Date", "ja": "日付"},
+    {"id": "Wf_NodeSetUniqueIDName", "type": "ui", "zh": "设置唯一标识", "en": "Set Unique ID", "ja": "一意の ID を設定"},
+    {"id": "Wf_NodeProcessIfName", "type": "ui", "zh": "条件处理", "en": "Process If", "ja": "条件付き処理"},
+    {"id": "Wf_NodeCommentName", "type": "ui", "zh": "注释", "en": "Comment", "ja": "コメント"},
+    {"id": "Wf_NodeCodeExecuteName", "type": "ui", "zh": "执行代码", "en": "Code Execute", "ja": "コードを実行"},
+    {"id": "Wf_NodeFindAndPlaceName", "type": "ui", "zh": "查找并放置", "en": "Find and Place", "ja": "検索して配置"},
+    {"id": "Wf_NodePublisherCheckName", "type": "ui", "zh": "检查发行方", "en": "Publisher Check", "ja": "発行元を確認"},
+    {"id": "Wf_NodeSetFieldHelp", "type": "ui", "zh": "将字段设为固定值。", "en": "Set a field to a fixed value.", "ja": "フィールドを固定値に設定します。"},
+    {"id": "Wf_NodeCopyFieldHelp", "type": "ui", "zh": "将一个字段的值复制、追加或前置到另一个字段。", "en": "Copy, append, or prepend one field to another.", "ja": "フィールドの値を別のフィールドにコピーするか、先頭または末尾に追加します。"},
+    {"id": "Wf_NodeFindAndReplaceHelp", "type": "ui", "zh": "查找并替换文本，支持正则表达式。", "en": "Find and replace text (supports regular expressions).", "ja": "テキストを検索して置換します。正規表現に対応しています。"},
+    {"id": "Wf_NodeChangeCaseHelp", "type": "ui", "zh": "将文本改为大写、小写或标题式大小写。", "en": "Change text to uppercase, lowercase, or title case.", "ja": "大文字、小文字、またはタイトルケースに変換します。"},
+    {"id": "Wf_NodeRemoveMultipleSpacesHelp", "type": "ui", "zh": "移除字段中的多余空格。", "en": "Remove extra spaces from a field.", "ja": "フィールド内の余分な空白を削除します。"},
+    {"id": "Wf_NodeTakeFirstWordsHelp", "type": "ui", "zh": "只保留开头的 N 个词。", "en": "Keep only the first N words.", "ja": "先頭から N 個の単語だけを残します。"},
+    {"id": "Wf_NodeTakeLastWordsHelp", "type": "ui", "zh": "只保留末尾的 N 个词。", "en": "Keep only the last N words.", "ja": "末尾から N 個の単語だけを残します。"},
+    {"id": "Wf_NodeCopyFolderNameHelp", "type": "ui", "zh": "将文件夹名复制到指定字段。", "en": "Copy the folder name to a field.", "ja": "フォルダー名をフィールドにコピーします。"},
+    {"id": "Wf_NodeNumberHelp", "type": "ui", "zh": "添加连续编号。", "en": "Add sequential numbers.", "ja": "連番を追加します。"},
+    {"id": "Wf_NodeProcessIfHelp", "type": "ui", "zh": "只在满足条件时执行。", "en": "Execute only if the condition is met.", "ja": "条件を満たす場合にのみ実行します。"},
+    {"id": "Wf_NodeCommentHelp", "type": "ui", "zh": "添加注释，不执行操作。", "en": "Add a comment without running an action.", "ja": "コメントを追加します。処理は実行されません。"},
     {"id": "Task_BackfillCovers", "type": "ui", "zh": "补全封面", "en": "Backfilling covers", "ja": "カバーを補完"},
     {"id": "Task_BackfillWaveforms", "type": "ui", "zh": "补全波形", "en": "Backfilling waveforms", "ja": "波形を補完"},
     {"id": "Task_BackfillMetadata", "type": "ui", "zh": "补全音频信息", "en": "Backfilling metadata", "ja": "メタデータを補完"},
@@ -816,9 +860,9 @@
     {
       "id": "Dlg_BatchOp",
       "type": "ui",
-      "zh": "批量操作",
-      "en": "Batch Operations",
-      "ja": "一括操作"
+      "zh": "批量编辑",
+      "en": "Batch Edit",
+      "ja": "一括編集"
     },
     {
       "id": "Dlg_ScanFolder",
@@ -1255,6 +1299,34 @@
       "ja": "リストフォントサイズ"
     },
     {
+      "id": "Set_ChineseFontFamily",
+      "type": "ui",
+      "zh": "中文字族",
+      "en": "Chinese Font Family",
+      "ja": "中国語のフォント"
+    },
+    {
+      "id": "Set_EnglishFontFamily",
+      "type": "ui",
+      "zh": "英文字族",
+      "en": "English Font Family",
+      "ja": "英語のフォント"
+    },
+    {
+      "id": "Set_NumeralFontFamily",
+      "type": "ui",
+      "zh": "数字字族",
+      "en": "Numeral Font Family",
+      "ja": "数字のフォント"
+    },
+    {
+      "id": "Set_BuiltinSourceHanSans",
+      "type": "ui",
+      "zh": "思源黑体 SC",
+      "en": "Source Han Sans SC",
+      "ja": "源ノ角ゴシック SC"
+    },
+    {
       "id": "Set_SkipLeadingSilence",
       "type": "ui",
       "zh": "跳过开头无声部分",
@@ -1568,69 +1640,6 @@
       "zh": "执行重命名",
       "en": "Execute Rename",
       "ja": "リネーム実行"
-    },
-    {
-      "id": "Batch_ApplyMeta",
-      "type": "ui",
-      "zh": "应用元数据",
-      "en": "Apply Metadata",
-      "ja": "メタデータを適用"
-    },
-    {
-      "id": "Batch_EditMeta",
-      "type": "ui",
-      "zh": "批量编辑选中文件的元数据",
-      "en": "Batch edit metadata for selected files",
-      "ja": "選択ファイルのメタデータを一括編集"
-    },
-    {
-      "id": "Batch_WriteMode",
-      "type": "ui",
-      "zh": "写入模式:",
-      "en": "Write Mode:",
-      "ja": "書き込みモード:"
-    },
-    {
-      "id": "Batch_Replace",
-      "type": "ui",
-      "zh": "替换现有内容",
-      "en": "Replace Existing",
-      "ja": "既存を置換"
-    },
-    {
-      "id": "Batch_Append",
-      "type": "ui",
-      "zh": "追加到现有内容",
-      "en": "Append to Existing",
-      "ja": "既存に追記"
-    },
-    {
-      "id": "Batch_Description",
-      "type": "ui",
-      "zh": "描述:",
-      "en": "Description:",
-      "ja": "説明:"
-    },
-    {
-      "id": "Batch_Keywords",
-      "type": "ui",
-      "zh": "关键词 - 用逗号分隔:",
-      "en": "Keywords (comma separated):",
-      "ja": "キーワード - カンマ区切り:"
-    },
-    {
-      "id": "Batch_Category",
-      "type": "ui",
-      "zh": "分类:",
-      "en": "Category:",
-      "ja": "分類:"
-    },
-    {
-      "id": "Batch_AffectedFiles",
-      "type": "ui",
-      "zh": "将影响以下文件:",
-      "en": "Affected files:",
-      "ja": "対象ファイル:"
     },
     {
       "id": "FolderRename_Rule",
@@ -2275,6 +2284,27 @@
       "zh": "专辑",
       "en": "Album",
       "ja": "アルバム"
+    },
+    {
+      "id": "Col_Composer",
+      "type": "ui",
+      "zh": "作曲者",
+      "en": "Composer",
+      "ja": "作曲者"
+    },
+    {
+      "id": "Col_Year",
+      "type": "ui",
+      "zh": "年份",
+      "en": "Year",
+      "ja": "年"
+    },
+    {
+      "id": "Col_Advanced",
+      "type": "ui",
+      "zh": "高级",
+      "en": "Advanced",
+      "ja": "詳細"
     },
     {
       "id": "Col_Rating",
@@ -6231,6 +6261,55 @@
       "ja": "やり直し"
     },
     {
+      "id": "Undo_UndoActionFmt",
+      "type": "ui",
+      "zh": "撤销「%s」",
+      "en": "Undo \"%s\"",
+      "ja": "「%s」を元に戻す"
+    },
+    {
+      "id": "Undo_RedoActionFmt",
+      "type": "ui",
+      "zh": "重做「%s」",
+      "en": "Redo \"%s\"",
+      "ja": "「%s」をやり直す"
+    },
+    {
+      "id": "Undo_EditColumnFmt",
+      "type": "ui",
+      "zh": "编辑%s",
+      "en": "Edit %s",
+      "ja": "%sを編集"
+    },
+    {
+      "id": "Undo_BatchEditColumnFmt",
+      "type": "ui",
+      "zh": "批量编辑%s",
+      "en": "Batch edit %s",
+      "ja": "%sを一括編集"
+    },
+    {
+      "id": "Undo_BatchEditMetadata",
+      "type": "ui",
+      "zh": "批量编辑元数据",
+      "en": "Batch edit metadata",
+      "ja": "メタデータを一括編集"
+    },
+    {
+      "id": "Undo_RenameFileFmt",
+      "type": "ui",
+      "zh": "重命名 %s",
+      "en": "Rename %s",
+      "ja": "%sをリネーム"
+    },
+    {
+      "id": "Undo_BatchRenameFilesFmt",
+      "type": "ui",
+      "zh": "批量重命名（%d 个文件）",
+      "en": "Batch rename (%d files)",
+      "ja": "一括リネーム（%d ファイル）"
+    },
+    {
       "id": "Undo_ClearAll",
       "type": "ui",
       "zh": "清空历史",
@@ -8268,20 +8347,6 @@
       "ja": "参照...##TransferBrowse"
     },
     {
-      "id": "Main_BatchRenameTab",
-      "type": "ui",
-      "zh": "批量重命名",
-      "en": "Batch rename",
-      "ja": "一括リネーム"
-    },
-    {
-      "id": "Main_BatchMetaTab",
-      "type": "ui",
-      "zh": "批量元数据",
-      "en": "Batch metadata",
-      "ja": "一括メタデータ"
-    },
-    {
       "id": "Main_MatchLocationLabel",
       "type": "ui",
       "zh": "匹配位置",
@@ -9103,9 +9168,51 @@
     {
       "id": "Main_NoSnippetText",
       "type": "ui",
-      "zh": "No preview snippet available for this match.",
+      "zh": "此命中无预览片段。",
       "en": "No preview snippet available for this match.",
       "ja": "このヒット箇所のプレビューはありません。"
+    },
+    {
+      "id": "Main_SearchMatchName",
+      "type": "ui",
+      "zh": "命中：文件名",
+      "en": "Matched in: Name",
+      "ja": "一致箇所：ファイル名"
+    },
+    {
+      "id": "Main_SearchMatchPath",
+      "type": "ui",
+      "zh": "命中：路径",
+      "en": "Matched in: Path",
+      "ja": "一致箇所：パス"
+    },
+    {
+      "id": "Main_SearchMatchDescription",
+      "type": "ui",
+      "zh": "命中：描述",
+      "en": "Matched in: Description",
+      "ja": "一致箇所：説明"
+    },
+    {
+      "id": "Main_SearchMatchKeywords",
+      "type": "ui",
+      "zh": "命中：关键词",
+      "en": "Matched in: Keywords",
+      "ja": "一致箇所：キーワード"
+    },
+    {
+      "id": "Main_SearchMatchMetadata",
+      "type": "ui",
+      "zh": "命中：元数据",
+      "en": "Matched in: Metadata",
+      "ja": "一致箇所：メタデータ"
+    },
+    {
+      "id": "Main_SearchMatchFuzzyName",
+      "type": "ui",
+      "zh": "命中：文件名模糊匹配",
+      "en": "Matched by: Fuzzy name match",
+      "ja": "ファイル名のあいまい一致"
     },
     {
       "id": "Main_FileCountsFmt",
@@ -15080,6 +15187,55 @@
     {"id":"ExtAi_SaveFailed","type":"ui","zh":"保存失败，请检查设置目录后重试。","en":"Could not save. Check the settings folder and try again.","ja":"保存できませんでした。設定フォルダーを確認して再試行してください。"},
     {"id":"ExtAi_NoLibrary","type":"ui","zh":"请先打开一个素材库。","en":"Open a library first.","ja":"先にライブラリを開いてください。"},
     {"id":"ExtAi_Unavailable","type":"ui","zh":"当前库无法生成授权标识。","en":"This library cannot get an authorization identity.","ja":"このライブラリの認可 ID を生成できません。"},
-    {"id":"ExtAi_Unsaved","type":"ui","zh":"有未保存的授权修改","en":"Authorization changes are not saved yet","ja":"未保存の認可変更があります"}
+    {"id":"ExtAi_Unsaved","type":"ui","zh":"有未保存的授权修改","en":"Authorization changes are not saved yet","ja":"未保存の認可変更があります"},
+    {"id":"TransferOption_SingleFolder","type":"ui","zh":"一个文件夹","en":"Build Using Single Folder","ja":"単一フォルダー"},
+    {"id":"TransferOption_ByCategory","type":"ui","zh":"按分类","en":"Build Using Category","ja":"分類で整理"},
+    {"id":"TransferOption_ByCategorySubCategory","type":"ui","zh":"按分类 → 子分类","en":"Build Using Category then SubCategory","ja":"分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByCategoryOptionalSubCategory","type":"ui","zh":"按分类 → 子分类（可选）","en":"Build Using Category then [optional] SubCategory","ja":"分類 → サブカテゴリ（任意）"},
+    {"id":"TransferOption_ByCategorySubCategoryCDTitle","type":"ui","zh":"按分类 → 子分类 → 光盘标题","en":"Build Using Category then SubCategory then CDTitle","ja":"分類 → サブカテゴリ → CD タイトル"},
+    {"id":"TransferOption_ByLibraryCategory","type":"ui","zh":"按音效库 → 分类","en":"Build Using Library then Category","ja":"ライブラリ → 分類"},
+    {"id":"TransferOption_ByLibraryCategorySubCategory","type":"ui","zh":"按音效库 → 分类 → 子分类","en":"Build Using Library then Category then SubCategory","ja":"ライブラリ → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByLibraryVolume","type":"ui","zh":"按音效库 → 卷号","en":"Build Using Library then Volume","ja":"ライブラリ → 巻番号"},
+    {"id":"TransferOption_ByLibraryVolumeCDTitle","type":"ui","zh":"按音效库 → 卷号 → 光盘标题","en":"Build Using Library then Volume then CDTitle","ja":"ライブラリ → 巻番号 → CD タイトル"},
+    {"id":"TransferOption_ByLibraryCDTitle","type":"ui","zh":"按音效库 → 光盘标题","en":"Build Using Library then CDTitle","ja":"ライブラリ → CD タイトル"},
+    {"id":"TransferOption_ByShowCategory","type":"ui","zh":"按节目 → 分类","en":"Build Using Show then Category","ja":"番組 → 分類"},
+    {"id":"TransferOption_ByShowCategorySubCategory","type":"ui","zh":"按节目 → 分类 → 子分类","en":"Build Using Show then Category then SubCategory","ja":"番組 → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByShowCategoryOptionalSubCategory","type":"ui","zh":"按节目 → 分类 → 子分类（可选）","en":"Build Using Show then Category then [optional] SubCategory","ja":"番組 → 分類 → サブカテゴリ（任意）"},
+    {"id":"TransferOption_ByDesignerCategorySubCategory","type":"ui","zh":"按设计师 → 分类 → 子分类","en":"Build Using Designer then Category then SubCategory","ja":"デザイナー → 分類 → サブカテゴリ"},
+    {"id":"TransferOption_ByComposer","type":"ui","zh":"按作曲者","en":"Build Using Composer","ja":"作曲者で整理"},
+    {"id":"TransferOption_ByChannelLayout","type":"ui","zh":"按声道布局","en":"Build Using ChannelLayout","ja":"チャンネル構成で整理"},
+    {"id":"TransferOption_MirrorSource","type":"ui","zh":"沿用源文件夹结构","en":"Mirror Source Folder Structure","ja":"元のフォルダー構成を維持"},
+    {"id":"TransferOption_WAV","type":"ui","zh":"广播 WAV（BWF）","en":"Broadcast Wave","ja":"放送用 WAV（BWF）"},
+    {"id":"TransferOption_AIFF","type":"ui","zh":"AIFF","en":"AIFF","ja":"AIFF"},
+    {"id":"TransferOption_FLAC","type":"ui","zh":"FLAC（无损）","en":"FLAC (Lossless)","ja":"FLAC（可逆圧縮）"},
+    {"id":"TransferOption_MP3","type":"ui","zh":"MP3","en":"MP3","ja":"MP3"},
+    {"id":"TransferOption_SourceFormat","type":"ui","zh":"源格式","en":"Source Format","ja":"元の形式"},
+    {"id":"TransferOption_AlwaysCreateNew","type":"ui","zh":"总是新建","en":"Always Create New","ja":"常に新規作成"},
+    {"id":"TransferOption_SkipExisting","type":"ui","zh":"跳过已存在文件","en":"Skip Existing","ja":"既存ファイルをスキップ"},
+    {"id":"TransferOption_UpdateMetadata","type":"ui","zh":"仅更新元数据","en":"Update Metadata","ja":"メタデータのみ更新"},
+    {"id":"TransferOption_ReplaceExisting","type":"ui","zh":"替换已存在文件","en":"Replace Existing","ja":"既存ファイルを置き換え"},
+    {"id":"Batch_EditTarget","type":"ui","zh":"目标:","en":"Target:","ja":"対象:"},
+    {"id":"Batch_EditTargetFileName","type":"ui","zh":"文件名","en":"File name","ja":"ファイル名"},
+    {"id":"Batch_EditTargetTitle","type":"ui","zh":"标题","en":"Title","ja":"タイトル"},
+    {"id":"Batch_EditTargetDescription","type":"ui","zh":"描述","en":"Description","ja":"説明"},
+    {"id":"Batch_EditTargetKeywords","type":"ui","zh":"关键词","en":"Keywords","ja":"キーワード"},
+    {"id":"Batch_EditTargetCategory","type":"ui","zh":"分类","en":"Category","ja":"分類"},
+    {"id":"Batch_EditRules","type":"ui","zh":"编辑规则","en":"Edit rules","ja":"編集ルール"},
+    {"id":"Batch_RuleEditApplyBtn","type":"ui","zh":"应用改动","en":"Apply changes","ja":"変更を適用"},
+    {"id":"Batch_RuleEditStale","type":"ui","zh":"条件已改变，请重新预览","en":"Conditions changed, preview again","ja":"条件が変わったため、もう一度プレビューしてください"},
+    {"id":"Batch_RuleEditAppliedFmt","type":"ui","zh":"已应用 %d 条","en":"Applied %d","ja":"%d 件を適用しました"},
+    {"id":"Batch_RuleEditFailedFmt","type":"ui","zh":"应用失败：%s","en":"Apply failed: %s","ja":"適用に失敗しました: %s"},
+    {"id":"Batch_RuleEditNoChanges","type":"ui","zh":"没有可应用的改动","en":"Nothing to apply","ja":"適用する変更がありません"},
+    {"id":"Batch_RuleEditBlocked","type":"ui","zh":"会变成空白","en":"Would become blank","ja":"空になります"},
+    {"id":"Batch_RuleEditUnsupportedRule","type":"ui","zh":"规则无效","en":"Invalid rule","ja":"無効なルール"},
+    {"id":"Batch_RuleEditEmptyValue","type":"ui","zh":"（空）","en":"(empty)","ja":"（空）"},
+    {"id":"Batch_RuleEditOldValue","type":"ui","zh":"原值","en":"Original value","ja":"元の値"},
+    {"id":"Batch_RuleEditNewValue","type":"ui","zh":"新值","en":"New value","ja":"新しい値"},
+    {"id":"Batch_RuleEditValue","type":"ui","zh":"文本","en":"Text","ja":"テキスト"},
+    {"id":"Batch_RuleEditFixedValue","type":"ui","zh":"固定值","en":"Fixed value","ja":"固定値"},
+    {"id":"Batch_RuleEditSeparator","type":"ui","zh":"分隔符","en":"Separator","ja":"区切り文字"},
+    {"id":"Batch_RuleModeSetFixed","type":"ui","zh":"设为固定值","en":"Set fixed value","ja":"固定値に設定"},
+    {"id":"Batch_RuleModeAppendBefore","type":"ui","zh":"追加到前面","en":"Append before","ja":"前に追加"},
+    {"id":"Batch_RuleModeAppendAfter","type":"ui","zh":"追加到后面","en":"Append after","ja":"後ろに追加"}
   ]
 }

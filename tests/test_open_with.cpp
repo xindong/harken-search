@@ -2,7 +2,9 @@
 // Unit tests for F-034 Open With / Default Player integration.
 // Tests: IsAudioFileSupported extension check, path encoding round-trip,
 //        registry write/read/delete round-trip.
+#ifdef _WIN32
 #include <windows.h>
+#endif
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -11,11 +13,13 @@
 #include <vector>
 #include "Utils.h"   // IsAudioFileSupported, WideToUtf8, Utf8ToWide
 
+#ifdef _WIN32
 #if __has_include("platform/explorer_shell_path.h")
 #include "platform/explorer_shell_path.h"
 #define AURA_HAS_EXPLORER_SHELL_PATH 1
 #else
 #define AURA_HAS_EXPLORER_SHELL_PATH 0
+#endif
 #endif
 
 // ---- Test helpers ----
@@ -26,6 +30,7 @@ static int g_pass = 0, g_fail = 0;
 #define EXPECT_FALSE(expr) EXPECT_TRUE(!(expr))
 #define EXPECT_EQ(a,b) EXPECT_TRUE((a)==(b))
 
+#ifdef _WIN32
 static void expectNamed(bool cond, const char* name) {
     if (cond) {
         printf("PASS: %s\n", name);
@@ -44,6 +49,7 @@ static std::string readRepoTextFile(const std::filesystem::path& relativePath) {
     ss << in.rdbuf();
     return ss.str();
 }
+#endif
 
 // ---- Test 1: IsAudioFileSupported extension check ----
 static void test_audio_extensions() {
@@ -93,6 +99,7 @@ static void test_path_encoding() {
 }
 
 // ---- Test 3: Registry write / read / delete round-trip ----
+#ifdef _WIN32
 static void test_registry_roundtrip() {
     const wchar_t* testKey = L"Software\\HarkenSearchTest_F034";
     const wchar_t* testVal = L"TestProgId";
@@ -170,14 +177,17 @@ static void test_explorer_reveal_contract() {
     expectNamed(platformSource.find("ShellExecuteW(nullptr, L\"open\", L\"explorer.exe\", nullptr") == std::string::npos,
                 "Explorer reveal does not fall back to unrelated Desktop");
 }
+#endif
 
 int main() {
     printf("=== TestOpenWith ===\n");
     test_audio_extensions();
     test_path_encoding();
+#ifdef _WIN32
     test_registry_roundtrip();
     test_explorer_shell_path_preparation();
     test_explorer_reveal_contract();
+#endif
     printf("\nResults: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;
 }

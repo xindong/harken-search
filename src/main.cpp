@@ -31,6 +31,9 @@
 #include "imgui_impl_win32.h"
 #elif defined(__APPLE__)
 #include "imgui_impl_osx.h"
+// The shared UI keeps MSVC CRT spellings and Win32 type names; the macOS shim
+// supplies them without a Windows SDK. Windows uses the real headers.
+#include "platform/harken_macos_win32_shim.h"
 #endif
 #include "imgui_impl_opengl3.h"
 
@@ -156,6 +159,7 @@
 #include "frontend/AuditionFrontendController.h"
 #include "ui/AuditionTransportView.h"
 #include "ui/CoreWorkspaceStyle.h"
+#include "ui/DatabaseBreadcrumbScroll.h"
 #include "ui/ResultsPanelLayout.h"
 #include "ui/ResultRowFilenameLayout.h"
 #include "ui/ToolbarSearchControls.h"
@@ -328,6 +332,7 @@ static std::string FeedbackErrorText(const CueviFeedback::Result& result) {
 #include "MemoryBudget.h"
 #include "TagSystem.h"
 #include "TransferEngine.h"
+#include "TransferOptionLabels.h"
 #include "ResultActionMenu.h"
 #include "ExternalAiAuthorizationStore.h"
 #include "ExternalAiBridgeServer.h"
@@ -1642,9 +1647,7 @@ static void ProcessKeybindings(AppState& state) {
                 // Resolve selection through getSelectedRecords so virtual select-all is honored.
                 auto selectedRecords = state.getSelectedRecords();
                 if (state.viewMode != ViewMode::Browser && selectedRecords.size() > 1) {
-                    state.showBatchRenameDialog = true;
-                    state.renameRuleQueue.clear();
-                    state.renamePreviewList.clear();
+                    state.openBatchEdit();
                 }
             }
             if (IsShortcutPressedSnapshot(ShortcutAction::ClearSelection, ks)) {
@@ -3534,6 +3537,10 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
         DragCardOrigin regionOrigin = origin ? *origin : MakeRegionDragOrigin(engine, false, RECT{ 0, 0, 0, 0 });
         if (regionOrigin.displayName.empty()) {
             regionOrigin.displayName = DisplayNameForDragPath(engine.getFileInfo().filePath);
+        }
+        if (files.front() != engine.getFileInfo().filePath) {
+            regionOrigin.peakChannels = 1;
+            WaveformExtractor::ExtractExactMonoEnvelope(files.front(), 100, regionOrigin.peaks);
         }
         StartFileDrag(files, &regionOrigin);
     } else {
@@ -5593,6 +5600,7 @@ void LoadAppSettings(AppState& state) {
     loadPanel("panelTagBrowser", state.panelTagBrowser);
     loadPanel("panelWorkflow", state.panelWorkflow);
     loadPanel("panelTransfer", state.panelTransfer);
+    loadPanel("panelBatchEdit", state.panelBatchEdit);
     state.dockTabGroups.Load(kv["dockTabGroups"]);
     if (state.dockTabGroups.Find("similar-sounds"))
         loadPanel("panelDockSimilar", state.panelSimilarSounds);
@@ -5638,6 +5646,11 @@ void LoadAppSettings(AppState& state) {
         state.settings.listFontSize = itList != kv.end()
             ? std::clamp(ParseInt(itList->second, kDefaultListFontPx), 10, kMaxListFontPx)
             : kDefaultListFontPx;
+        state.settings.uiFontFamilies = {
+            kv["chineseFontFamily"] == UiFontFamilies::SourceHanSans,
+            kv["englishFontFamily"] == UiFontFamilies::Inter,
+            kv["numeralFontFamily"] == UiFontFamilies::JetBrainsMono
+        };
     }
     state.settings.rowHeight = ParseInt(kv["rowHeight"], state.settings.rowHeight);
     state.settings.listDensity = static_cast<ListDensity>(ParseInt(kv["listDensity"], (int)state.settings.listDensity));
@@ -6580,6 +6593,7 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     savePanel("panelTagBrowser", state.panelTagBrowser);
     savePanel("panelWorkflow", state.panelWorkflow);
     savePanel("panelTransfer", state.panelTransfer);
+    savePanel("panelBatchEdit", state.panelBatchEdit);
     items.push_back({"dockTabGroups", state.dockTabGroups.Save()});
     if (state.dockTabGroups.Find("similar-sounds"))
         savePanel("panelDockSimilar", state.panelSimilarSounds);
@@ -6599,6 +6613,10 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"uiScalePercent", std::to_string(aura::ui::dpi::ResolveInterfaceScalePercent(
         persistedAppearance.uiScalePercent))});
     items.push_back({"listFontSize", std::to_string(persistedAppearance.listFontSize)});
+    const auto& fontFamilies = persistedAppearance.uiFontFamilies;
+    items.push_back({"chineseFontFamily", fontFamilies.chinese ? UiFontFamilies::SourceHanSans : "default"});
+    items.push_back({"englishFontFamily", fontFamilies.english ? UiFontFamilies::Inter : "default"});
+    items.push_back({"numeralFontFamily", fontFamilies.numerals ? UiFontFamilies::JetBrainsMono : "default"});
     items.push_back({"rowHeight", std::to_string(persistedAppearance.rowHeight)});
     items.push_back({"listDensity", std::to_string((int)persistedAppearance.listDensity)});
     items.push_back({"settingsDialogWidth", std::to_string(state.settings.settingsDialogWidth)});
@@ -7486,6 +7504,104 @@ void FlushSettingsDirty(AppState& state) {
     if (TrySaveAppSettings(state)) {
         state.settingsDirty = false;
     }
+}
+
+static constexpr int kResultsCoverColumnIndex = 17;
+static constexpr int kResultsLegacyColumnCount = kResultsCoverColumnIndex + 4;
+static constexpr int kResultsNewMetadataColumnCount = 2;
+
+static void MigrateResultsColumnSettings(ImGuiID tableId, int totalColumns, int coverColumnCount) {
+    ImGuiTableSettings* saved = ImGui::TableSettingsFindByID(tableId);
+    if (!saved || saved->ColumnsCount == totalColumns) return;
+    const int savedCount = saved->ColumnsCount;
+    const int savedExtraColumns = savedCount - kResultsLegacyColumnCount;
+    if (savedExtraColumns < 0 || savedExtraColumns > kResultsNewMetadataColumnCount + 1) return;
+
+    const int savedCoverCount = savedExtraColumns < kResultsNewMetadataColumnCount
+        ? savedExtraColumns : savedExtraColumns - kResultsNewMetadataColumnCount;
+    auto& settings = GImGui->SettingsTables;
+    const int savedOffset = settings.offset_from_ptr(saved);
+    ImGuiTableSettings* migrated = ImGui::TableSettingsCreate(tableId, totalColumns);
+    saved = settings.ptr_from_offset(savedOffset);
+    migrated->SaveFlags = saved->SaveFlags;
+    migrated->RefScale = saved->RefScale;
+    auto* columns = migrated->GetColumnSettings();
+    if (savedExtraColumns < kResultsNewMetadataColumnCount) {
+        for (int index = totalColumns - kResultsNewMetadataColumnCount; index < totalColumns; ++index) {
+            columns[index].Index = static_cast<ImGuiTableColumnIdx>(index);
+            columns[index].DisplayOrder = static_cast<ImGuiTableColumnIdx>(index + savedCoverCount);
+            columns[index].WidthOrWeight = -1.0f;
+            columns[index].IsEnabled = 0;
+        }
+    }
+    for (int index = 0; index < savedCount; ++index) {
+        const auto& column = saved->GetColumnSettings()[index];
+        if (column.Index < 0 || (savedCoverCount && !coverColumnCount && index == kResultsCoverColumnIndex)) continue;
+        const int target = index < kResultsCoverColumnIndex + savedCoverCount
+            ? index : index + coverColumnCount - savedCoverCount;
+        columns[target] = column;
+        columns[target].Index = static_cast<ImGuiTableColumnIdx>(target);
+    }
+    saved->ID = 0;
+}
+
+static void DrawResultsColumnSelector(ImGuiTable* table, int legacyColumnCount) {
+    if (!ImGui::TableBeginContextMenuPopup(table)) return;
+    ImGui::TableDrawDefaultContextMenu(table, table->Flags & ~ImGuiTableFlags_Hideable);
+    ImGui::Separator();
+    ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
+
+    const auto drawColumn = [table](int index) {
+        auto& column = table->Columns[index];
+        if (column.Flags & ImGuiTableColumnFlags_Disabled) return;
+        const bool canToggle = !(column.Flags & ImGuiTableColumnFlags_NoHide) &&
+            (!column.IsUserEnabled || table->ColumnsEnabledCount > 1);
+        ImGui::PushID(index);
+        if (ImGui::MenuItem(ImGui::TableGetColumnName(table, index), nullptr, column.IsUserEnabled, canToggle))
+            column.IsUserEnabledNextFrame = !column.IsUserEnabled;
+        ImGui::PopID();
+    };
+    constexpr SortColumn commonMetadata[] = {
+        SortColumn::Description, SortColumn::Keywords, SortColumn::Artist, SortColumn::Album,
+        SortColumn::Category, SortColumn::BPM, SortColumn::MusicalKey,
+    };
+    const auto isAdvanced = [](SortColumn field) {
+        switch (field) {
+        case SortColumn::Mood:
+        case SortColumn::DateAdded:
+        case SortColumn::FilePath:
+        case SortColumn::Loudness:
+        case SortColumn::RMS:
+        case SortColumn::TruePeak:
+        case SortColumn::Rating:
+            return true;
+        default:
+            return false;
+        }
+    };
+    for (const auto field : commonMetadata) {
+        for (int index = 0; index < legacyColumnCount; ++index) {
+            if (table->Columns[index].UserID == static_cast<ImGuiID>(field)) {
+                drawColumn(index);
+                break;
+            }
+        }
+    }
+    ImGui::Separator();
+    for (int index = 0; index < legacyColumnCount; ++index) {
+        const auto field = static_cast<SortColumn>(table->Columns[index].UserID);
+        if (!isAdvanced(field) && std::find(std::begin(commonMetadata), std::end(commonMetadata), field) == std::end(commonMetadata))
+            drawColumn(index);
+    }
+    if (ImGui::BeginMenu(L(Col_Advanced))) {
+        for (int index = legacyColumnCount; index < table->ColumnsCount; ++index) drawColumn(index);
+        for (int index = 0; index < legacyColumnCount; ++index) {
+            if (isAdvanced(static_cast<SortColumn>(table->Columns[index].UserID))) drawColumn(index);
+        }
+        ImGui::EndMenu();
+    }
+    ImGui::PopItemFlag();
+    ImGui::EndPopup();
 }
 
 // Sort search results
@@ -9645,14 +9761,31 @@ static void DrawResultRowFilename(const std::string& displayName,
 
 static const char* GetSearchMatchSourceLabel(SearchMatchSource source) {
     switch (source) {
-    case SearchMatchSource::Name: return "Matched in: Name";
-    case SearchMatchSource::Path: return "Matched in: Path";
-    case SearchMatchSource::Description: return "Matched in: Description";
-    case SearchMatchSource::Keywords: return "Matched in: Keywords";
-    case SearchMatchSource::Metadata: return "Matched in: Metadata";
-    case SearchMatchSource::FuzzyName: return "Matched by: Fuzzy name match";
+    case SearchMatchSource::Name: return L(Main_SearchMatchName);
+    case SearchMatchSource::Path: return L(Main_SearchMatchPath);
+    case SearchMatchSource::Description: return L(Main_SearchMatchDescription);
+    case SearchMatchSource::Keywords: return L(Main_SearchMatchKeywords);
+    case SearchMatchSource::Metadata: return L(Main_SearchMatchMetadata);
+    case SearchMatchSource::FuzzyName: return L(Main_SearchMatchFuzzyName);
     default: return nullptr;
     }
+}
+
+static std::vector<SearchMetadataFieldMatch> FindOptionalSearchTooltipMatches(
+    const AppState& state, const AudioRecord& record) {
+    if (state.viewMode != ViewMode::Database || state.searchExactMode || state.lastAppliedSearchText.empty())
+        return {};
+    return Database::findOptionalMetadataMatches(record, state.lastAppliedSearchText);
+}
+
+static const char* GetSearchMetadataFieldLabel(const SearchMetadataFieldMatch& match) {
+    if (match.custom) return match.field.c_str();
+    if (match.field == "composer") return L(Col_Composer);
+    if (match.field == "track_year") return L(Col_Year);
+    if (match.field == "bpm") return L(Col_BPM);
+    if (match.field == "musical_key") return L(Col_MusicalKey);
+    if (match.field == "mood") return L(Col_Mood);
+    return match.field.c_str();
 }
 
 static const std::string* PickFallbackSearchField(const AudioRecord& record) {
@@ -9815,18 +9948,27 @@ static void LogSearchExplainabilityTooltipDiag(const AudioRecord& record,
 
 static void RenderSearchExplainability(const AudioRecord& record,
                                        const std::string& query,
-                                       const ImVec4& highlightColor) {
+                                       const ImVec4& highlightColor,
+                                       const std::vector<SearchMetadataFieldMatch>& metadataMatches) {
     const char* sourceLabel = GetSearchMatchSourceLabel(record.matchSource);
+    const bool hasMetadataDetails = !metadataMatches.empty();
+    const bool hasMetadataSource = record.matchSource == SearchMatchSource::Metadata;
     const std::string snippet = !record.matchSnippet.empty()
         ? record.matchSnippet
-        : BuildFallbackSearchSnippet(record, query);
+        : (hasMetadataSource && hasMetadataDetails ? std::string() : BuildFallbackSearchSnippet(record, query));
     if (sourceLabel) {
         ImGui::TextDisabled("%s", sourceLabel);
     }
     if (!snippet.empty()) {
         RenderInlineHighlightedText(snippet, highlightColor);
-    } else if (sourceLabel) {
-        ImGui::TextDisabled(L(Main_NoSnippetText));
+    } else if (sourceLabel && !(hasMetadataSource && hasMetadataDetails)) {
+        ImGui::TextDisabled("%s", L(Main_NoSnippetText));
+    }
+    if (hasMetadataDetails && !hasMetadataSource) {
+        ImGui::TextDisabled("%s", L(Main_SearchMatchMetadata));
+    }
+    for (const auto& match : metadataMatches) {
+        ImGui::Text("%s: %s", GetSearchMetadataFieldLabel(match), match.value.c_str());
     }
 }
 
@@ -10826,6 +10968,7 @@ static void ConfigureDatabaseRuntimeForFilePlayerMount(AppState& state,
     PushRecentDbPath(state, dbPathUtf8);
     CoverModule::SetDatabase(&state.database);
     CoverModule::SetAppState(&state);
+    aura::cover_cache::BindPersistence(state.database);
     state.database.setSettings(&state.settings);
     state.musicQueue.init(state.database.db());
     state.gaplessEngine.init(&state.audioEngine);
@@ -11304,6 +11447,7 @@ void ResetDatabaseState(AppState& state) {
     CoverModule::ClearAllCoverCaches();
     CoverModule::SetDatabase(&state.database);
     CoverModule::SetAppState(&state);  // 设置 AppState 指针，用于访问性能模式设置
+    aura::cover_cache::BindPersistence(state.database);
     state.database.setSettings(&state.settings);  // 设置性能模式访问器
 
 // 3. 搜索结果 & 分页
@@ -11678,6 +11822,7 @@ static bool SwitchDatabase(AppState& state,
         [&state, initialWaveformCacheMode, allowCreate, overwriteExisting, replacingCurrent,
          featureStatistics = state.featureIndexStatistics,
          idleStatistics = state.idleAssetStatistics]() {
+        aura::cover_cache::StopPersistence();
         // Cancel on the UI immediately, but drain connections only here. Windows
         // package replacement must not race a statistics reader's file handle.
         if (featureStatistics) featureStatistics->CancelAndWait();
@@ -13377,7 +13522,9 @@ public:
         const std::string& filePath,
         aura::record_rescan::SelectedRecordRescanMetadata& out) override {
         AudioMetadata metadata;
-        if (!MetadataReader::readMetadata(filePath, metadata)) return false;
+        bool mp3CustomTagsRead = false;
+        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata, &mp3CustomTagsRead);
+        if (!foundMetadata && !mp3CustomTagsRead) return false;
         out.title = metadata.title;
         out.artist = metadata.artist;
         out.album = metadata.album;
@@ -13387,6 +13534,7 @@ public:
         out.keywords = metadata.keywords;
         out.comment = metadata.comment;
         PopulateExtendedMeta(out.extendedMetadata, metadata);
+        if (mp3CustomTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
         return true;
     }
 
@@ -13429,6 +13577,10 @@ public:
         record.category = update.category;
         record.keywords = update.keywords;
         record.meta = update.extendedMetadata;
+        if (update.rereadId3TextTags) {
+            record.id3TextTags = *update.rereadId3TextTags;
+            record.id3TextTagsRead = true;
+        }
         record.sampleRate = update.sampleRate;
         record.channels = update.channels;
         record.totalFrames = update.totalFrames;
@@ -13876,8 +14028,7 @@ static const char* GetRenameModeDescription(AppState::RenameMode mode) {
 
 
 // Generate rename preview for selected files
-static void GenerateBatchRenamePreview(AppState& state) {
-    const auto selectedRecords = state.getSelectedRecords();
+static void GenerateBatchRenamePreview(AppState& state, const std::vector<AudioRecord>& selectedRecords) {
     std::vector<aura::rename::PreviewInput> inputs;
     inputs.reserve(selectedRecords.size());
     for (const auto& record : selectedRecords) {
@@ -13895,9 +14046,376 @@ static void GenerateBatchRenamePreview(AppState& state) {
     };
     state.renamePreviewList =
         aura::rename::BuildPreview(inputs, state.renameRuleQueue, labels);
+    state.renamePreviewDbPath = state.currentDbPathUtf8;
 }
 
 // Execute batch rename
+// Unified batch edit (REQ-20261126-UNIFIED-BATCH-EDIT).
+// One target column per batch: each row starts from its stored value, the
+// ordered rules transform it, and only the confirmed preview is written.
+
+static aura::metadata::RuleEditColumn BatchRuleEditColumnOf(const AppState& state) {
+    switch (state.batchEditTarget) {
+    case 1: return aura::metadata::RuleEditColumn::Title;
+    case 2: return aura::metadata::RuleEditColumn::Description;
+    case 3: return aura::metadata::RuleEditColumn::Keywords;
+    case 4: return aura::metadata::RuleEditColumn::Category;
+    default: return aura::metadata::RuleEditColumn::FileName;
+    }
+}
+
+static std::vector<aura::metadata::RuleEditRecord> CollectRuleEditRecords(
+    const std::vector<AudioRecord>& selectedRecords) {
+    std::vector<aura::metadata::RuleEditRecord> records;
+    records.reserve(selectedRecords.size());
+    for (const auto& record : selectedRecords) {
+        aura::metadata::RuleEditRecord row;
+        row.id = record.id;
+        row.fileName = PathToUtf8Main(Utf8ToPathMain(record.filePath).filename());
+        row.title = record.title;
+        row.description = record.description;
+        row.keywords = record.keywords;
+        row.category = record.category;
+        records.push_back(std::move(row));
+    }
+    return records;
+}
+
+static void InvalidateBatchMetadataPreview(AppState& state, bool stale);
+
+static bool ValidateBatchMetadataPreview(AppState& state) {
+    const auto& preview = state.batchRuleEditPreview;
+    if (preview.rows.empty()) return false;
+    const auto column = BatchRuleEditColumnOf(state);
+    if (preview.column != column ||
+        state.batchRuleEditPreviewDbPath != state.currentDbPathUtf8 ||
+        state.batchRuleEditPreviewAllSelected != state.allSelected ||
+        (!state.allSelected && state.batchRuleEditPreviewSelection != state.selectedIndicesSet)) {
+        InvalidateBatchMetadataPreview(state, true);
+        return false;
+    }
+    const auto resultsGeneration = state.searchResultsGen_;
+    const auto dataRevision = state.database.dataRevision();
+    if (state.batchRuleEditPreviewResultsGeneration == resultsGeneration &&
+        state.batchRuleEditPreviewDataRevision == dataRevision) {
+        return true;
+    }
+    const auto records = CollectRuleEditRecords(state.getSelectedRecords());
+    if (preview.signature != aura::metadata::BuildRuleEditSignature(column, records, state.batchRuleEditRules)) {
+        InvalidateBatchMetadataPreview(state, true);
+        return false;
+    }
+    state.batchRuleEditPreviewResultsGeneration = resultsGeneration;
+    state.batchRuleEditPreviewDataRevision = dataRevision;
+    return true;
+}
+
+namespace aura::ui {
+
+void RefreshBatchRuleEditPreview(AppState& state) {
+    state.batchRuleEditPreview = aura::metadata::BuildRuleEditPreview(
+        BatchRuleEditColumnOf(state), CollectRuleEditRecords(state.getSelectedRecords()),
+        state.batchRuleEditRules);
+    state.batchRuleEditPreviewDbPath = state.currentDbPathUtf8;
+    state.batchRuleEditPreviewAllSelected = state.allSelected;
+    state.batchRuleEditPreviewSelection.clear();
+    if (!state.allSelected) state.batchRuleEditPreviewSelection = state.selectedIndicesSet;
+    state.batchRuleEditPreviewResultsGeneration = state.searchResultsGen_;
+    state.batchRuleEditPreviewDataRevision = state.database.dataRevision();
+    state.batchRuleEditStale = false;
+    state.batchRuleEditMessage.clear();
+    state.batchRuleEditFailed = false;
+}
+
+bool ApplyBatchRuleEdit(AppState& state) {
+    auto& preview = state.batchRuleEditPreview;
+    if (!ValidateBatchMetadataPreview(state) || !preview.CanApply()) return false;
+
+    const std::string column = aura::metadata::RuleEditColumnName(preview.column);
+    std::vector<std::pair<int64_t, MetadataEditPatch>> items;
+    std::unordered_map<int64_t, std::string> expected;
+    auto undoOp = std::make_unique<MetadataPatchOp>();
+    undoOp->editKind = MetadataUndoKind::BatchEdit;
+    undoOp->targetColumn = column;
+    items.reserve(preview.rows.size());
+    undoOp->entries.reserve(preview.rows.size());
+    for (const auto& row : preview.rows) {
+        if (!row.error.empty() || row.blockedEmpty || !row.changed) continue;
+        MetadataEditPatch patch;
+        patch.set(column, row.newValue);
+        items.push_back({row.id, std::move(patch)});
+        expected[row.id] = row.oldValue;
+        undoOp->entries.push_back({row.id, {{column, row.oldValue}}, {{column, row.newValue}}});
+    }
+    if (items.empty()) {
+        state.batchRuleEditMessage = L(Batch_RuleEditNoChanges);
+        state.batchRuleEditFailed = true;
+        state.batchRuleEditPreview = {};
+        return false;
+    }
+
+    BatchMetadataApplyResult result =
+        state.database.applyMetadataPatchManyGuarded(items, column, expected);
+    if (result.failed == 0 && result.success > 0) {
+        state.undoStack.push(std::move(undoOp));
+        char buffer[256];
+        std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditAppliedFmt), result.success);
+        state.batchRuleEditMessage = buffer;
+        state.batchRuleEditFailed = false;
+        state.batchRuleEditPreview = {};
+        state.batchRuleEditStale = false;
+        RefreshSearchResults(state, false);
+        return true;
+    }
+    const std::string reason =
+        result.errors.empty() ? std::string(L(Batch_RuleEditStale)) : result.errors.front();
+    char buffer[512];
+    std::snprintf(buffer, sizeof(buffer), L(Batch_RuleEditFailedFmt), reason.c_str());
+    state.batchRuleEditMessage = buffer;
+    state.batchRuleEditFailed = true;
+    state.batchRuleEditPreview = {};
+    state.batchRuleEditStale = true;
+    return false;
+}
+
+} // namespace aura::ui
+
+struct BatchEditPaneLayout {
+    float rulesWidth;
+    float rulesHeight;
+    float previewHeight;
+    bool stacked;
+};
+
+static BatchEditPaneLayout ResolveBatchEditPaneLayout() {
+    const ImVec2 available = ImGui::GetContentRegionAvail();
+    const float scale = aura::ui::dpi::UiScale();
+    const float frameRow = ImGui::GetFrameHeightWithSpacing();
+    const float footer = frameRow + 2.0f * ImGui::GetStyle().ItemSpacing.y + 1.0f;
+    const bool stacked = available.x < 430.0f * scale;
+    const float rulesWidth = stacked ? 0.0f
+        : std::clamp(available.x * 0.38f, 228.0f * scale, 440.0f * scale);
+    const float bodyHeight = std::max(available.y - footer, 12.0f * frameRow);
+    return {rulesWidth, stacked ? 18.0f * frameRow : bodyHeight,
+            stacked ? 12.0f * frameRow : bodyHeight, stacked};
+}
+
+static float BatchEditQueueHeight(float footerHeight = 0.0f) {
+    const float footer = footerHeight > 0.0f ? footerHeight + ImGui::GetStyle().ItemSpacing.y : 0.0f;
+    return std::max(5.0f * ImGui::GetTextLineHeightWithSpacing(),
+        ImGui::GetContentRegionAvail().y - footer);
+}
+
+static void DrawBatchEditRuleHint(const char* hint) {
+    if (hint) {
+        ImGui::TextDisabled(L(Main_CheckedItemFmt), hint);
+    } else {
+        ImGui::Dummy(ImVec2(0.0f, ImGui::GetTextLineHeight()));
+    }
+    ImGui::Spacing();
+}
+
+static void InvalidateBatchMetadataPreview(AppState& state, bool stale = false) {
+    state.batchRuleEditPreview = {};
+    state.batchRuleEditStale = stale;
+    state.batchRuleEditMessage.clear();
+}
+
+static void DrawBatchMetadataRuleForm(AppState& state) {
+    using Mode = aura::metadata::RuleEditMode;
+    const char* modes[] = {L(RenMode_Replace), L(RenMode_AddPrefix), L(RenMode_AddSuffix),
+                           L(Batch_RuleModeSetFixed), L(Batch_RuleModeAppendBefore),
+                           L(Batch_RuleModeAppendAfter)};
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::Combo("##RuleEditMode", &state.batchRuleEditModeIndex, modes, IM_ARRAYSIZE(modes));
+
+    const auto mode = static_cast<Mode>(state.batchRuleEditModeIndex);
+    const char* hint = mode == Mode::Replace ? GetRenameModeDescription(AppState::RenameMode::TextReplace)
+        : mode == Mode::AddPrefix ? GetRenameModeDescription(AppState::RenameMode::AddPrefix)
+        : mode == Mode::AddSuffix ? GetRenameModeDescription(AppState::RenameMode::AddSuffix)
+        : nullptr;
+    DrawBatchEditRuleHint(hint);
+
+    if (mode != Mode::SetFixed) {
+        const char* valueLabel = mode == Mode::Replace ? L(RenField_Search)
+            : mode == Mode::AddPrefix ? L(RenField_Prefix)
+            : mode == Mode::AddSuffix ? L(RenField_Suffix)
+            : L(Batch_RuleEditValue);
+        ImGui::TextUnformatted(valueLabel);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##RuleEditSearch", state.batchRuleEditSearch, sizeof(state.batchRuleEditSearch));
+    }
+    if (mode == Mode::Replace || mode == Mode::SetFixed) {
+        ImGui::TextUnformatted(mode == Mode::Replace ? L(RenField_ReplaceWith) : L(Batch_RuleEditFixedValue));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##RuleEditReplace", state.batchRuleEditReplace, sizeof(state.batchRuleEditReplace));
+    }
+    if (mode == Mode::AppendBefore || mode == Mode::AppendAfter) {
+        ImGui::TextUnformatted(L(Batch_RuleEditSeparator));
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##RuleEditSeparator", state.batchRuleEditSeparator, sizeof(state.batchRuleEditSeparator));
+    }
+
+    ImGui::Spacing();
+    if (aura::ui::ActionButton(L(Batch_AddToQueue), ImVec2(150.0f, 0.0f))) {
+        state.batchRuleEditRules.push_back({mode, state.batchRuleEditSearch, state.batchRuleEditReplace,
+                                           state.batchRuleEditSeparator});
+        std::memset(state.batchRuleEditSearch, 0, sizeof(state.batchRuleEditSearch));
+        std::memset(state.batchRuleEditReplace, 0, sizeof(state.batchRuleEditReplace));
+        std::memset(state.batchRuleEditSeparator, 0, sizeof(state.batchRuleEditSeparator));
+        InvalidateBatchMetadataPreview(state);
+    }
+}
+
+static std::string DescribeBatchEditRule(const aura::metadata::RuleEditRule& rule) {
+    using Mode = aura::metadata::RuleEditMode;
+    switch (rule.mode) {
+        case Mode::Replace:
+            return std::string(L(RenMode_Replace)) + ": '" + rule.value + "' -> '" + rule.replacement + "'";
+        case Mode::AddPrefix:
+            return std::string(L(RenMode_AddPrefix)) + ": '" + rule.value + "'";
+        case Mode::AddSuffix:
+            return std::string(L(RenMode_AddSuffix)) + ": '" + rule.value + "'";
+        case Mode::SetFixed:
+            return std::string(L(Batch_RuleModeSetFixed)) + ": '" + rule.replacement + "'";
+        case Mode::AppendBefore:
+            return std::string(L(Batch_RuleModeAppendBefore)) + ": '" + rule.value + rule.separator + "'";
+        case Mode::AppendAfter:
+            return std::string(L(Batch_RuleModeAppendAfter)) + ": '" + rule.separator + rule.value + "'";
+    }
+    return L(Batch_RuleEditUnsupportedRule);
+}
+
+template <typename Rule, typename DrawLabel>
+static bool DrawBatchEditQueue(std::vector<Rule>& rules, int& selection, DrawLabel drawLabel) {
+    const int count = static_cast<int>(rules.size());
+    if (selection >= count) selection = -1;
+
+    ImGui::Separator();
+    ImGui::Text(L(Main_ActionQueueFmt), count);
+    BeginTransientScrollbarChild("##BatchEditQueue",
+        ImVec2(0.0f, BatchEditQueueHeight(ImGui::GetFrameHeightWithSpacing())), true);
+    bool changed = false;
+    for (int index = 0; index < count; ++index) {
+        ImGui::PushID(index);
+        const auto description = drawLabel(rules[index], changed);
+        if (ImGui::Selectable(description.c_str(), index == selection)) selection = index;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", description.c_str());
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+
+    const auto action = [](const char* label, bool enabled, bool destructive = false) {
+        ImGui::BeginDisabled(!enabled);
+        const bool pressed = destructive
+            ? aura::ui::ActionButton(label, ImVec2(0, 0), aura::ui::ButtonVariant::Danger)
+            : aura::ui::ActionButton(label);
+        ImGui::EndDisabled();
+        return pressed;
+    };
+    if (action(L(Main_MoveUpBtn), selection > 0)) {
+        std::swap(rules[selection], rules[selection - 1]);
+        --selection;
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (action(L(Main_MoveDownBtn), selection >= 0 && selection + 1 < count)) {
+        std::swap(rules[selection], rules[selection + 1]);
+        ++selection;
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (action(L(Main_RemoveBtn2), selection >= 0, true)) {
+        rules.erase(rules.begin() + selection);
+        selection = rules.empty() ? -1 : std::min(selection, static_cast<int>(rules.size()) - 1);
+        changed = true;
+    }
+    ImGui::SameLine();
+    if (action(L(Main_ClearQueueBtn), !rules.empty(), true)) {
+        rules.clear();
+        selection = -1;
+        changed = true;
+    }
+    return changed;
+}
+
+enum class BatchEditRowTone { Ready, Unchanged, Problem };
+
+struct BatchEditDisplayRow {
+    const char* status;
+    const char* before;
+    const char* after;
+    BatchEditRowTone tone;
+    const char* fileName = nullptr;
+};
+
+static BatchEditDisplayRow PresentBatchEditRow(const RenamePreview& row) {
+    const auto tone = row.status == u8"OK" ? BatchEditRowTone::Ready
+        : (row.status == L(RenStatus_NoChange) || row.status == L(RenStatus_NoRules))
+            ? BatchEditRowTone::Unchanged : BatchEditRowTone::Problem;
+    return {row.status.c_str(), row.oldName.c_str(), row.newName.c_str(), tone};
+}
+
+static BatchEditDisplayRow PresentBatchEditRow(const aura::metadata::RuleEditRow& row) {
+    const char* status = !row.error.empty() ? L(Batch_RuleEditUnsupportedRule)
+        : row.blockedEmpty ? L(Batch_RuleEditBlocked)
+        : row.changed ? u8"OK" : L(RenStatus_NoChange);
+    const auto tone = !row.error.empty() || row.blockedEmpty ? BatchEditRowTone::Problem
+        : row.changed ? BatchEditRowTone::Ready : BatchEditRowTone::Unchanged;
+    return {status, row.oldValue.empty() ? L(Batch_RuleEditEmptyValue) : row.oldValue.c_str(),
+            row.newValue.empty() ? L(Batch_RuleEditEmptyValue) : row.newValue.c_str(),
+            tone, row.fileName.c_str()};
+}
+
+static void DrawBatchEditPreviewCell(const char* text, const char* fileName = nullptr) {
+    ImGui::TextUnformatted(text);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip()) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
+        if (fileName) {
+            ImGui::TextUnformatted(fileName);
+            ImGui::Separator();
+        }
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+}
+
+template <typename Row>
+static void DrawBatchEditPreviewTable(const std::vector<Row>& rows, const char* beforeLabel, const char* afterLabel) {
+    if (!BeginTransientScrollbarTable("##BatchEditPreview", 3,
+        ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
+        ImVec2(0.0f, ImGui::GetContentRegionAvail().y))) return;
+
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableSetupColumn(L(RenTable_Status), ImGuiTableColumnFlags_WidthFixed, 80);
+    ImGui::TableSetupColumn(beforeLabel, ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn(afterLabel, ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableHeadersRow();
+
+    const auto& theme = ThemeColors::current();
+    const ImVec4 inactive = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    for (const auto& row : rows) {
+        const auto display = PresentBatchEditRow(row);
+        ImGui::TableNextRow();
+        if (ImGui::TableNextColumn()) {
+            const ImVec4 color = display.tone == BatchEditRowTone::Ready ? theme.controlAccent
+                : display.tone == BatchEditRowTone::Problem ? theme.meterClip : inactive;
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            DrawBatchEditPreviewCell(display.status, display.fileName);
+            ImGui::PopStyleColor();
+        }
+        if (ImGui::TableNextColumn()) DrawBatchEditPreviewCell(display.before, display.fileName);
+        if (ImGui::TableNextColumn()) {
+            const ImVec4 color = display.tone == BatchEditRowTone::Ready ? theme.controlAccent : inactive;
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            DrawBatchEditPreviewCell(display.after, display.fileName);
+            ImGui::PopStyleColor();
+        }
+    }
+    ImGui::EndTable();
+}
+
 static void ExecuteBatchRename(AppState& state) {
     const aura::rename::BatchRenameExecutionLabels labels{
         u8"OK",
@@ -13927,6 +14445,254 @@ static void ExecuteBatchRename(AppState& state) {
     state.setFolderHierarchy(state.database.getFolderHierarchy(state.settings.folderTreePathMode), state.currentDbPathUtf8);
     RefreshSearchResults(state, true);
     state.clearSelection();
+}
+
+static void DrawBatchRenameForm(AppState& state) {
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    {
+        // Build \0-separated combo string from localized mode names
+        auto modeLabel = [](int i) { return GetRenameModeName((AppState::RenameMode)i); };
+        std::string comboStr;
+        for (int i = 0; i < (int)AppState::RenameMode::COUNT; ++i) {
+            comboStr += modeLabel(i);
+            comboStr += '\0';
+        }
+        comboStr += '\0';
+        ImGui::Combo("##RenameMode", &state.renameModeIndex, comboStr.c_str());
+    }
+
+    // Mode description
+    AppState::RenameMode currentMode = (AppState::RenameMode)state.renameModeIndex;
+    DrawBatchEditRuleHint(GetRenameModeDescription(currentMode));
+
+    // Input fields based on mode
+    bool needsSearch = (currentMode == AppState::RenameMode::TextReplace ||
+                       currentMode == AppState::RenameMode::RegexReplace ||
+                       currentMode == AppState::RenameMode::DeleteText ||
+                       currentMode == AppState::RenameMode::AddPrefix ||
+                       currentMode == AppState::RenameMode::AddSuffix ||
+                       currentMode == AppState::RenameMode::DeleteStartChars ||
+                       currentMode == AppState::RenameMode::DeleteEndChars ||
+                       currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd ||
+                       currentMode == AppState::RenameMode::RemoveExtraBrackets ||
+                       currentMode == AppState::RenameMode::InsertSequenceNumber ||
+                       currentMode == AppState::RenameMode::ReplaceSpaces);
+
+    bool needsReplace = (currentMode == AppState::RenameMode::TextReplace ||
+                        currentMode == AppState::RenameMode::RegexReplace ||
+                        currentMode == AppState::RenameMode::InsertSequenceNumber);
+    const bool needsOccurrenceSelector =
+        (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd);
+
+    if (needsSearch) {
+        const char* searchLabel = L(RenField_Search);
+        if (currentMode == AppState::RenameMode::AddPrefix ||
+            currentMode == AppState::RenameMode::AddSuffix) {
+            searchLabel = currentMode == AppState::RenameMode::AddPrefix ? L(RenField_Prefix) : L(RenField_Suffix);
+        } else if (currentMode == AppState::RenameMode::DeleteStartChars ||
+                  currentMode == AppState::RenameMode::DeleteEndChars) {
+            searchLabel = L(RenField_CharCount);
+        } else if (currentMode == AppState::RenameMode::RemoveExtraBrackets) {
+            searchLabel = L(RenField_BracketType);
+        } else if (currentMode == AppState::RenameMode::InsertSequenceNumber) {
+            searchLabel = L(RenField_SeqFormat);
+        } else if (currentMode == AppState::RenameMode::ReplaceSpaces) {
+            searchLabel = L(RenField_ReplaceChar);
+        } else if (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd) {
+            searchLabel = L(Ren_HitWord);
+        }
+
+        ImGui::Text("%s", searchLabel);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##RenameSearch", state.renameSearchBuffer, sizeof(state.renameSearchBuffer));
+    }
+
+    if (needsReplace) {
+        const char* replaceLabel = L(RenField_ReplaceWith);
+        if (currentMode == AppState::RenameMode::InsertSequenceNumber) {
+            replaceLabel = L(RenField_Position);
+        }
+        ImGui::Text("%s", replaceLabel);
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText("##RenameReplace", state.renameReplaceBuffer, sizeof(state.renameReplaceBuffer));
+    }
+    if (needsOccurrenceSelector) {
+        ImGui::TextUnformatted(L(Main_MatchLocationLabel));
+        std::string occurrenceItems = L(Occur_FirstHit);
+        occurrenceItems.push_back('\0');
+        occurrenceItems += L(Occur_LastHit);
+        occurrenceItems.push_back('\0');
+        occurrenceItems.push_back('\0');
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::Combo("##RenameDeleteToEndOccurrence", &state.renameDeleteToEndOccurrence, occurrenceItems.c_str());
+    }
+
+    ImGui::Spacing();
+
+    // Add to queue button
+    if (aura::ui::ActionButton(L(Batch_AddToQueue), ImVec2(150, 0))) {
+        AppState::RenameRule rule;
+        rule.mode = currentMode;
+        rule.searchText = state.renameSearchBuffer;
+        rule.replaceText = needsOccurrenceSelector
+            ? (state.renameDeleteToEndOccurrence == 0 ? "first" : "last")
+            : state.renameReplaceBuffer;
+
+        // Generate description
+        const char* modeName = GetRenameModeName(currentMode);
+        if (currentMode == AppState::RenameMode::TextReplace ||
+            currentMode == AppState::RenameMode::RegexReplace) {
+            rule.description = std::string(modeName) + ": '" + rule.searchText + "' -> '" + rule.replaceText + "'";
+        } else if (currentMode == AppState::RenameMode::AddPrefix ||
+                  currentMode == AppState::RenameMode::AddSuffix) {
+            rule.description = std::string(modeName) + ": '" + rule.searchText + "'";
+        } else if (currentMode == AppState::RenameMode::DeleteStartChars ||
+                  currentMode == AppState::RenameMode::DeleteEndChars) {
+            rule.description = std::string(modeName) + ": " + rule.searchText;
+        } else if (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd) {
+            rule.description = std::string(modeName) + ": '" + rule.searchText + "' (" +
+                (rule.replaceText == "last" ? L(Occur_LastHit) : L(Occur_FirstHit)) + ")";
+        } else {
+            rule.description = modeName;
+        }
+
+        state.renameRuleQueue.push_back(rule);
+        state.renamePreviewList.clear();
+
+        // Clear input fields
+        memset(state.renameSearchBuffer, 0, sizeof(state.renameSearchBuffer));
+        memset(state.renameReplaceBuffer, 0, sizeof(state.renameReplaceBuffer));
+    }
+}
+
+static void ValidateBatchEditPreview(AppState& state) {
+    if (state.batchEditTarget == 0) {
+        if (state.renamePreviewList.empty()) return;
+        const auto selectedRecords = state.getSelectedRecords();
+        if (state.renamePreviewDbPath != state.currentDbPathUtf8 ||
+             state.renamePreviewList.size() != selectedRecords.size() ||
+             !std::equal(state.renamePreviewList.begin(), state.renamePreviewList.end(),
+                         selectedRecords.begin(), [](const RenamePreview& preview, const AudioRecord& record) {
+                             return preview.recordId == record.id && preview.filePath == record.filePath &&
+                                    preview.oldName == record.fileName;
+                         })) {
+            state.renamePreviewList.clear();
+        }
+    } else {
+        ValidateBatchMetadataPreview(state);
+    }
+}
+
+static void DrawBatchEditPanel(AppState& state) {
+    ReadingTextScope readingBatchEdit;
+    const auto selectedCount = state.allSelected ? state.searchResults.size() :
+        static_cast<size_t>(std::count_if(state.selectedIndicesSet.begin(), state.selectedIndicesSet.end(),
+            [&](int index) { return index >= 0 && static_cast<size_t>(index) < state.searchResults.size(); }));
+    const char* targets[] = {
+        L(Batch_EditTargetFileName), L(Batch_EditTargetTitle), L(Batch_EditTargetDescription),
+        L(Batch_EditTargetKeywords), L(Batch_EditTargetCategory),
+    };
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(L(Batch_EditTarget));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(180.0f * aura::ui::dpi::UiScale());
+    if (ImGui::Combo("##BatchEditTarget", &state.batchEditTarget, targets, IM_ARRAYSIZE(targets))) {
+        state.renamePreviewList.clear();
+        InvalidateBatchMetadataPreview(state);
+    }
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text(L(Dlg_SelectedNFiles), static_cast<int>(selectedCount));
+    ImGui::Separator();
+
+    ValidateBatchEditPreview(state);
+    const bool fileNameTarget = state.batchEditTarget == 0;
+    const auto layout = ResolveBatchEditPaneLayout();
+    BeginTransientScrollbarChild("##BatchEditRules", ImVec2(layout.rulesWidth, layout.rulesHeight), true);
+    ImGui::TextUnformatted(fileNameTarget ? L(Batch_RenameRules) : L(Batch_EditRules));
+    ImGui::Separator();
+    ImGui::TextUnformatted(L(Batch_OpMode));
+    if (fileNameTarget) {
+        DrawBatchRenameForm(state);
+        if (DrawBatchEditQueue(state.renameRuleQueue, state.renameRuleSelectedIndex,
+                [](const AppState::RenameRule& rule, bool&) { return rule.description; })) {
+            state.renamePreviewList.clear();
+        }
+    } else {
+        DrawBatchMetadataRuleForm(state);
+        if (DrawBatchEditQueue(state.batchRuleEditRules, state.batchRuleEditSelectedIndex,
+                [](aura::metadata::RuleEditRule& rule, bool& changed) {
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 0.0f));
+                    changed = ImGui::Checkbox("##RuleEnabled", &rule.enabled) || changed;
+                    ImGui::PopStyleVar();
+                    ImGui::SameLine();
+                    return DescribeBatchEditRule(rule);
+                })) {
+            InvalidateBatchMetadataPreview(state);
+        }
+    }
+    ImGui::EndChild();
+
+    if (!layout.stacked) ImGui::SameLine();
+    BeginTransientScrollbarChild("##BatchEditPreviewPane", ImVec2(0.0f, layout.previewHeight), true);
+    ImGui::BeginDisabled(selectedCount == 0);
+    if (aura::ui::ActionButton(L(Batch_GenPreview))) {
+        if (fileNameTarget) GenerateBatchRenamePreview(state, state.getSelectedRecords());
+        else aura::ui::RefreshBatchRuleEditPreview(state);
+    }
+    ImGui::EndDisabled();
+
+    if (fileNameTarget) {
+        if (!state.renamePreviewList.empty()) {
+            int ready = 0;
+            int unchanged = 0;
+            int problems = 0;
+            for (const auto& preview : state.renamePreviewList) {
+                if (preview.status == u8"OK") ++ready;
+                else if (preview.status == L(RenStatus_NoChange)) ++unchanged;
+                else ++problems;
+            }
+            ImGui::Text(L(RenPreview_Summary), ready, unchanged, problems);
+        }
+    } else if (!state.batchRuleEditPreview.rows.empty()) {
+        const auto& preview = state.batchRuleEditPreview;
+        ImGui::Text(L(RenPreview_Summary), preview.changeCount, preview.unchangedCount,
+                    preview.blockedCount + preview.errorCount);
+    } else if (state.batchRuleEditStale) {
+        ImGui::TextWrapped("%s", L(Batch_RuleEditStale));
+    }
+    ImGui::Separator();
+    if (fileNameTarget) {
+        DrawBatchEditPreviewTable(state.renamePreviewList, L(RenTable_OldName), L(RenTable_NewName));
+    } else {
+        DrawBatchEditPreviewTable(state.batchRuleEditPreview.rows, L(Batch_RuleEditOldValue), L(Batch_RuleEditNewValue));
+    }
+    ImGui::EndChild();
+
+    ImGui::Separator();
+    const bool canApply = fileNameTarget
+        ? std::any_of(state.renamePreviewList.begin(), state.renamePreviewList.end(),
+                      [](const RenamePreview& row) { return row.status == u8"OK" && row.willChange; })
+        : state.batchRuleEditPreview.CanApply();
+    ImGui::BeginDisabled(!canApply);
+    if (aura::ui::ActionButton(fileNameTarget ? L(Batch_ExecRename) : L(Batch_RuleEditApplyBtn),
+            ImVec2(150.0f, 0.0f), aura::ui::ButtonVariant::PrimarySearch)) {
+        if (fileNameTarget) {
+            ExecuteBatchRename(state);
+            state.renameRuleQueue.clear();
+            state.renamePreviewList.clear();
+            state.renameRuleSelectedIndex = -1;
+        } else {
+            aura::ui::ApplyBatchRuleEdit(state);
+        }
+    }
+    ImGui::EndDisabled();
+    if (!fileNameTarget && !state.batchRuleEditMessage.empty()) {
+        ImGui::SameLine();
+        const auto& theme = ThemeColors::current();
+        ImGui::TextColored(state.batchRuleEditFailed ? theme.meterClip : theme.controlAccent,
+                           "%s", state.batchRuleEditMessage.c_str());
+    }
 }
 
 // Helper: check if folder name matches search (case-insensitive)
@@ -14265,6 +15031,9 @@ static void RenderBrowserSystemFolderNode(AppState& state,
         }
     }
     ImGui::PushID(folderPath.c_str());
+    if (hasChildren) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserFolders")));
+    }
     const bool opened = ImGui::TreeNodeEx(displayName.c_str(), flags);
     if (flash > 0.0f) {
         ImGui::PopStyleColor(3);
@@ -14337,6 +15106,9 @@ static void RenderBrowserSystemFolderSearchNode(AppState& state,
         ImGui::PushStyleColor(ImGuiCol_Text, modules.filterBrowser.searchHitText);
     }
     ImGui::PushID(node.path.c_str());
+    if (!node.children.empty()) {
+        ImGui::SetNextItemStorageID(ImHashStr(canonicalFolder.c_str(), 0, ImHashStr("SidebarBrowserSearchResults")));
+    }
     const bool opened = ImGui::TreeNodeEx(node.displayName.c_str(), flags);
     if (node.directHit && ImGui::IsItemVisible()) {
         ImVec2 rMin = ImGui::GetItemRectMin();
@@ -14599,6 +15371,7 @@ static void RenderFolderTreeExplorerList(
     float treeH,
     bool collapseAll,
     bool useRoundedChrome,
+    ImGuiStorage& expansionStorage,
     const std::function<void()>& renderRows)
 {
     const ThemeColorScheme& theme = ThemeColors::current();
@@ -14612,13 +15385,13 @@ static void RenderFolderTreeExplorerList(
         styleVars = 2;
     }
     BeginTransientScrollbarChild(childId, ImVec2(-1, treeH), true);
+    ImGuiStorage* previousStorage = ImGui::GetStateStorage();
+    ImGui::SetStateStorage(&expansionStorage);
     if (collapseAll) {
-        ImGuiWindow* tw = ImGui::GetCurrentWindow();
-        if (tw && tw->DC.StateStorage) {
-            tw->DC.StateStorage->Clear();
-        }
+        expansionStorage.Clear();
     }
     renderRows();
+    ImGui::SetStateStorage(previousStorage);
     ImGui::EndChild();
     if (styleVars > 0) {
         ImGui::PopStyleVar(styleVars);
@@ -14756,11 +15529,13 @@ static void RenderBrowserFolderTreeSidebarPanel(
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(previousFramePadding.x, compactTreePadY));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(previousItemSpacing.x, compactTreeSpacingY));
             ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, compactTreeIndentSpacing);
+            static ImGuiStorage browserExpansion;
             RenderFolderTreeExplorerList(
                 browserSource.treeListChildId,
                 treeH,
                 g_browserSystemFolderTreeCollapseAll,
                 false,
+                browserExpansion,
                 [&state, &controls, searchQuery]() {
                     if (!searchQuery.empty()) {
                         RenderBrowserSystemFolderSearchTree(state);
@@ -15182,7 +15957,8 @@ static void RenderFolderTreeNode(AppState& state,
                                  FolderTreeSelectionMode mode,
                                  bool revealSubtree = false,
                                  FolderTreeRowMetrics* modernRow = nullptr, bool nested = false,
-                                 aura::folder_tree::controls::LocateFeedback* locate = nullptr) {
+                                 aura::folder_tree::controls::LocateFeedback* locate = nullptr,
+                                 ImGuiID expansionSeed = 0) {
     // Use the precomputed folderSearchHits set for constant-time membership.
     // 杜绝调用 FolderOrChildMatchesSearch 这种每帧递归的"性能黑洞"
     if (!search.empty() && !revealSubtree) {
@@ -15234,6 +16010,8 @@ static void RenderFolderTreeNode(AppState& state,
     // node ignores unless _FramePadding is set.
     if (modernRow) flags |= ImGuiTreeNodeFlags_FramePadding;
     if (!hasChildren) flags |= ImGuiTreeNodeFlags_Leaf;
+    if (hasChildren && expansionSeed)
+        ImGui::SetNextItemStorageID(ImHashStr(folder.path.c_str(), 0, expansionSeed));
     if (state.folderTreeCollapseAll && !shouldAutoOpen) ImGui::SetNextItemOpen(false);
     else if (shouldAutoOpen) ImGui::SetNextItemOpen(true);
 
@@ -15305,6 +16083,14 @@ static void RenderFolderTreeNode(AppState& state,
     // 手动绘制搜索命中 / 选中 / 待确认(pending) / 定位高亮 / 悬停背景
     const ImVec2 rowMin = ImGui::GetItemRectMin();
     const ImVec2 rowMax = ImGui::GetItemRectMax();
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    if (expansionSeed && !nested && hasChildren && ImGui::IsItemVisible()) {
+        const ImVec4 toggle(rowMin.x, rowMin.y, rowMin.x + arrowWidth, rowMax.y);
+        state.qaFilterUiRects["folder_tree_root_toggle"] = toggle;
+        if (nodeOpen) state.qaFilterUiRects["folder_tree_root_open"] = toggle;
+        else state.qaFilterUiRects.erase("folder_tree_root_open");
+    }
+#endif
     const bool rowHovered = ImGui::IsItemHovered();
     const bool hasStateFill = isSelected || isPending || rowHovered;
     const bool isLightTreeTheme = (tcs.filterBrowserBG.x + tcs.filterBrowserBG.y + tcs.filterBrowserBG.z) > 2.15f;
@@ -15452,7 +16238,7 @@ static void RenderFolderTreeNode(AppState& state,
         //    in reveal mode), so the user keeps control of further expansion.
         const bool revealChildren = revealSubtree || isSearchTerminalHit;
         for (const auto& sub : folder.subfolders) {
-            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true, locate);
+            RenderFolderTreeNode(state, sub, search, mode, revealChildren, modernRow, true, locate, expansionSeed);
         }
         ImGui::Unindent();
     }
@@ -16654,6 +17440,10 @@ static void RenderCurrentPlaylistFolderTreePanel(AppState& state) {
 
 // SECTION 8 - Sidebar Panel
 
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+static void RecordDockQaBody(std::string_view module);
+#endif
+
 static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     struct SidebarRenderInstance {
         std::string_view id;
@@ -16691,7 +17481,10 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
     const float railWidth   = SidebarRailWidth(state);
 
     // Left: VS Code-style activity bar (52px * size factor).
-    BeginTransientScrollbarChild("##SidebarRail", ImVec2(railWidth, totalAvail), false, ImGuiWindowFlags_NoScrollbar);
+    BeginTransientScrollbarChild("##SidebarRail", ImVec2(railWidth, totalAvail), false);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+    RecordDockQaBody("filter-rail");
+#endif
     DrawSidebarActivityBar(state);
     ImGui::EndChild();
 
@@ -17087,6 +17880,12 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, treeRowIndentSpacing);
         const bool collapseFolderTree = state.folderTreeCollapseAll;
+        static std::string expansionDatabase;
+        static ImGuiStorage folderExpansion;
+        if (expansionDatabase != state.currentDbPathUtf8) {
+            folderExpansion.Clear();
+            expansionDatabase = state.currentDbPathUtf8;
+        }
         if (collapseFolderTree) {
             state.folderTreeCollapseAll = false;
         }
@@ -17095,6 +17894,7 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
             treeH,
             collapseFolderTree,
             false,
+            folderExpansion,
             [&]() {
         if (folderTreeLoading && activeFolderHierarchy.subfolders.empty()) {
             ImGui::TextDisabled("%s", L(Nav_BuildingTree));
@@ -17256,14 +18056,14 @@ static void RenderSidebarPanelContent(AppState& state, const char* idScope) {
                 ClearPlaylistFolderFilter(state);
             }
         }
+        const ImGuiID expansionSeed = playlistScopedFolderTree
+            ? ImHashData(&effectivePlaylistFolderTreeId, sizeof(effectivePlaylistFolderTreeId), ImHashStr("SidebarPlaylistFolders"))
+            : ImHashStr("SidebarDatabaseFolders");
         for (const auto& folder : activeFolderHierarchy.subfolders) {
-            if (playlistScopedFolderTree) {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter,
-                                     false, &treeRowMetrics, false, &controls.locate);
-            } else {
-                RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter,
-                                     false, &treeRowMetrics, false, &controls.locate);
-            }
+            RenderFolderTreeNode(state, folder, folderSearch,
+                                 playlistScopedFolderTree ? FolderTreeSelectionMode::PlaylistFilter
+                                                          : FolderTreeSelectionMode::DatabaseFilter,
+                                 false, &treeRowMetrics, false, &controls.locate, expansionSeed);
         }
         state.folderTreeExpandSearchHitsOnce = false;  // 展开仅作用一帧
         }
@@ -18638,7 +19438,8 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     if(keys) basePatch.setKeywords(values.keywords);
     if(cat) basePatch.setCategory(values.category);
     auto undo=std::make_unique<MetadataPatchOp>();
-    undo->operationName=state.metadataBatchMode?"Batch edit metadata":"Edit metadata";
+    undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
+    if (patch.fields.size() == 1) undo->targetColumn = patch.fields.begin()->first;
     std::vector<int64_t> ids;
     std::vector<std::pair<int64_t, MetadataEditPatch>> perFile;
     for(const auto& original:state.infoEditRecords) {
@@ -27328,6 +28129,16 @@ struct DockQaPanelSnapshot {
     std::string windowName;
 };
 static std::map<std::string, DockQaPanelSnapshot> g_dockQaPanels;
+struct DockQaBodySnapshot {
+    ImRect bounds;
+    ImVec2 scroll;
+    ImVec2 scrollMax;
+    float fontSize;
+    ImU32 textColor;
+    ImU32 backgroundColor;
+    int frame;
+};
+static std::map<std::string, DockQaBodySnapshot> g_dockQaBodies;
 static std::map<int, std::pair<ImRect, int>> g_resultsTabQaRects;
 static std::map<std::string, std::pair<ImRect, int>> g_dockGroupTabQaRects;
 
@@ -27336,6 +28147,14 @@ static void RecordDockQaPanel(const char* module, AppState::PanelState& panel,
     g_dockQaPanels[module] = {&panel, {pos.x, pos.y, size.x, size.y}, title, label,
         ImGui::GetWindowViewport()->ID, ImGui::GetFrameCount(),
         ImGui::IsItemHovered(), ImGui::IsItemActive(), ImGui::GetCurrentWindow()->Name};
+}
+
+static void RecordDockQaBody(std::string_view module) {
+    const auto* window = ImGui::GetCurrentWindowRead();
+    if (window->SkipItems) return;
+    g_dockQaBodies[std::string(module)] = {
+        window->InnerRect, window->Scroll, window->ScrollMax, ImGui::GetFontSize(),
+        ImGui::GetColorU32(ImGuiCol_Text), ImGui::GetColorU32(ImGuiCol_ChildBg), ImGui::GetFrameCount()};
 }
 
 static nlohmann::json DockQaNode(const aura::ui::dock::DockNode* node) {
@@ -27431,6 +28250,12 @@ std::string GetDockQaState() {
             {"window_name", entry.windowName},
             {"title", rectJson(entry.title)}, {"label", rectJson(entry.label)}};
     }
+    for (const auto& [module, entry] : g_dockQaBodies) {
+        if (entry.frame + 1 < ImGui::GetFrameCount()) continue;
+        out["content"][module] = {{"rect", rectJson(entry.bounds)},
+            {"scroll", {entry.scroll.x, entry.scroll.y}}, {"scroll_max", {entry.scrollMax.x, entry.scrollMax.y}},
+            {"font_size", entry.fontSize}, {"text_color", entry.textColor}, {"background_color", entry.backgroundColor}};
+    }
     for (auto side : {aura::ui::dock::DockSide::Left, aura::ui::dock::DockSide::Right,
                      aura::ui::dock::DockSide::Top, aura::ui::dock::DockSide::Bottom})
         out["layout"].push_back(DockQaNode(g_dockLayout.RegionRoot(side)));
@@ -27525,6 +28350,7 @@ std::string SetupDockGestureFixtureForQa(AppState& state, std::string_view resiz
             {"mod-tag-browser", &state.panelTagBrowser, &state.showTagBrowser},
             {"mod-workflow", &state.panelWorkflow, &state.showWorkflowDialog},
             {"mod-transfer", &state.panelTransfer, &state.showTransferDialog},
+            {"mod-batch-edit", &state.panelBatchEdit, nullptr},
         };
         const FixturePanel* target = nullptr;
         for (const auto& entry : modules) {
@@ -27677,10 +28503,10 @@ static aura::ui::dock::DockSide LandedDockSideForModule(const char* moduleId) {
     return aura::ui::dock::DockSide::Left;
 }
 
-static void MirrorDockCommitToPanel(AppState::PanelState& panel,
+static void MirrorDockCommitToPanel(AppState& state, AppState::PanelState& panel,
                                     aura::ui::dock::DockSide side,
-                                    aura::ui::dock::DockSide extentSide,
                                     const aura::ui::dock::DockRect& incoming) {
+    using RootSide = aura::ui::dock::DockSide;
     aura::ui::dock::PanelDockState mirror;
     mirror.dockSide = static_cast<int>(panel.dockSide);
     mirror.floating = panel.floating;
@@ -27688,10 +28514,12 @@ static void MirrorDockCommitToPanel(AppState::PanelState& panel,
     mirror.dockedHeight = panel.dockedHeight;
     auto logicalRect = incoming;
     logicalRect.width = aura::ui::dpi::LogicalPx(incoming.width);
-    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, extentSide, logicalRect);
+    aura::ui::dock::ApplyDockCommitToPanel(mirror, side, logicalRect);
     panel.dockSide = static_cast<DockSide>(mirror.dockSide);
     panel.floating = mirror.floating;
-    panel.dockedWidth = mirror.dockedWidth;
+    if ((&panel != &state.panelSidebar || side == RootSide::Left) &&
+        (&panel != &state.panelFileInfo || side == RootSide::Right))
+        panel.dockedWidth = mirror.dockedWidth;
     panel.dockedHeight = mirror.dockedHeight;
 }
 
@@ -27710,7 +28538,8 @@ static void MirrorDockRootExtent(AppState& state, aura::ui::dock::DockSide root,
         const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
             {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
             {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
-            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer},
+            {"mod-batch-edit", &state.panelBatchEdit}};
         for (const auto& entry : entries)
             if (aura::ui::dock::DockSubtreeContainsModule(g_dockLayout.RegionRoot(root), entry.id))
                 entry.panel->dockedHeight = rect.height;
@@ -27721,34 +28550,21 @@ static void ApplyDockedPanel(
     AppState& state,
     const char* moduleId,
     AppState::PanelState& panel,
-    ImVec2 size,
     const aura::ui::dock::DockHit& hit,
     const aura::ui::dock::DockRect& work,
     float menuBarAndToolbar,
     float statusBar,
-    const aura::ui::dock::DockRootSlots& rootSlots) {
+    const aura::ui::dock::DockRootSlots& rootSlots,
+    float minReadableCenterWidth) {
     const auto plan = aura::ui::dock::PlanReadableDockDrop(g_dockLayout, hit, moduleId,
-        work, menuBarAndToolbar, statusBar, rootSlots, ImGui::GetMainViewport()->DpiScale);
-    if (!plan.accepted) return;
+        work, menuBarAndToolbar, statusBar, rootSlots, ImGui::GetMainViewport()->DpiScale,
+        minReadableCenterWidth);
+    if (!plan.accepted || !plan.candidate) return;
     ++g_dockGeometryRevision;
-    g_dockLayout.RemoveFloat(moduleId);
-    if (g_dockLayout.Find(moduleId)) g_dockLayout.Detach(moduleId);
-    g_dockLayout.RemoveFloat(moduleId);
-    bool inserted = false;
-    if (hit.kind == aura::ui::dock::DockHitKind::Module && !hit.targetModuleId.empty() &&
-        hit.targetModuleId != moduleId) {
-        inserted = g_dockLayout.InsertAdjacent(hit.targetModuleId, moduleId, hit.side, aura::ui::dock::kDockIncomingShare);
-    } else if (hit.kind != aura::ui::dock::DockHitKind::None) {
-        inserted = g_dockLayout.InsertModule(moduleId, hit.side, aura::ui::dock::kDockIncomingShare);
-    }
-    if (!inserted) {
-        g_dockLayout.EnsureFloat(moduleId);
-        panel.floating = true;
-        return;
-    }
+    g_dockLayout = *plan.candidate;
     panel.floating = false;
     const aura::ui::dock::DockSide landedSide = LandedDockSideForModule(moduleId);
-    MirrorDockCommitToPanel(panel, landedSide, landedSide, plan.rootRect);
+    MirrorDockCommitToPanel(state, panel, landedSide, plan.rootRect);
     MirrorDockRootExtent(state, landedSide, plan.rootRect);
     if (std::find(g_dockCommittedThisFrame.begin(), g_dockCommittedThisFrame.end(), moduleId) ==
         g_dockCommittedThisFrame.end()) {
@@ -27774,6 +28590,8 @@ static bool FloatDockedPanel(
 
 static void CancelDockTitleGesture() {
     if (!g_dockTitleGesture.Active()) return;
+    if (ImGui::GetCurrentContext() && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        ImGui::SetKeyOwner(ImGuiKey_Escape, ImGuiKeyOwner_Any, ImGuiInputFlags_LockThisFrame);
     if (g_dockDrag.OwnsDrag(g_dockTitleGesture.ModuleId())) g_dockDrag.Cancel();
     if (g_dockTabDragSnapshot && g_appState) {
         g_appState->dockTabGroups = std::move(*g_dockTabDragSnapshot);
@@ -31048,7 +31866,11 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
         const bool updateDownloading = update.phase == aris::update::HarkenSearchUpdateUiPhase::Downloading;
         const bool updateVisible = state.showUpdateCenter;
         if (update.phase != aris::update::HarkenSearchUpdateUiPhase::Error) state.updateTaskDismissed = false;
-        if (updateDownloading) {
+        if (update.SuppressesDownloadNotice()) {
+            state.updateTaskWasActive = false;
+            state.updateTaskDoneAt = 0.0;
+            state.updateTaskDismissed = false;
+        } else if (updateDownloading) {
             state.updateTaskWasActive = true;
             state.updateTaskDoneAt = 0.0;
             std::string detail;
@@ -31348,6 +32170,13 @@ static void PumpExternalAiWriteBridge(AppState& state) {
         return HarkenSearch::HandleExternalAiPlaylistWriteRequest(
             state.database, libraryId, document, receipts, request);
     });
+}
+
+static std::string RenderUndoMenuLabel(LStr emptyLabel, LStr actionFormat, std::string action) {
+    if (action.empty()) return GetLocalizedString(emptyLabel);
+    LedgerText label;
+    label.setKeyStr(actionFormat, std::move(action));
+    return label.Render();
 }
 
 void RenderUI(AppState& state) {
@@ -32042,9 +32871,10 @@ void RenderUI(AppState& state) {
         if (!state.transferUseSourceFormat) {
             static auto fileTypes = TransferEngine::getFileTypeChoices();
             ImGui::SetNextItemWidth(150);
-            if (BeginTransientScrollbarCombo(L(Export_OutputFormat), state.transferFileType < (int)fileTypes.size() ? fileTypes[state.transferFileType].first.c_str() : "WAV")) {
+            if (BeginTransientScrollbarCombo(L(Export_OutputFormat),
+                    aura::ui::TransferOptionPreview(fileTypes, state.transferFileType, "WAV"))) {
                 for (int i = 0; i < (int)fileTypes.size(); i++) {
-                    if (ImGui::Selectable(fileTypes[i].first.c_str(), state.transferFileType == i)) {
+                    if (ImGui::Selectable(aura::ui::TransferOptionLabel(fileTypes[i]), state.transferFileType == i)) {
                         state.transferFileType = i;
                         CaptureDialogTransferSettings(state);
                         MarkSettingsDirty(state);
@@ -32057,9 +32887,10 @@ void RenderUI(AppState& state) {
         // Folder organization strategy
         static auto strategies = TransferEngine::getFolderStrategyList();
         ImGui::SetNextItemWidth(250);
-        if (BeginTransientScrollbarCombo(L(Export_DirStrategy), state.transferFolderStrategy < (int)strategies.size() ? strategies[state.transferFolderStrategy].second.c_str() : "SingleFolder")) {
+        if (BeginTransientScrollbarCombo(L(Export_DirStrategy),
+                aura::ui::TransferOptionPreview(strategies, state.transferFolderStrategy, "SingleFolder"))) {
             for (int i = 0; i < (int)strategies.size(); i++) {
-                if (ImGui::Selectable(strategies[i].second.c_str(), state.transferFolderStrategy == i)) {
+                if (ImGui::Selectable(aura::ui::TransferOptionLabel(strategies[i]), state.transferFolderStrategy == i)) {
                     state.transferFolderStrategy = i;
                     CaptureDialogTransferSettings(state);
                     MarkSettingsDirty(state);
@@ -32071,9 +32902,10 @@ void RenderUI(AppState& state) {
         // Existing file behavior
         static auto behaviors = TransferEngine::getExistingBehaviorChoices();
         ImGui::SetNextItemWidth(200);
-        if (BeginTransientScrollbarCombo(L(Export_ExistingFile), state.transferExistingBehavior < (int)behaviors.size() ? behaviors[state.transferExistingBehavior].first.c_str() : "Skip")) {
+        if (BeginTransientScrollbarCombo(L(Export_ExistingFile),
+                aura::ui::TransferOptionPreview(behaviors, state.transferExistingBehavior, "Skip"))) {
             for (int i = 0; i < (int)behaviors.size(); i++) {
-                if (ImGui::Selectable(behaviors[i].first.c_str(), state.transferExistingBehavior == i)) {
+                if (ImGui::Selectable(aura::ui::TransferOptionLabel(behaviors[i]), state.transferExistingBehavior == i)) {
                     state.transferExistingBehavior = i;
                     CaptureDialogTransferSettings(state);
                     MarkSettingsDirty(state);
@@ -32235,464 +33067,6 @@ void RenderUI(AppState& state) {
                 ImGui::CloseCurrentPopup();
             }
         }
-        }
-        aura::ui::EndAlertDialog();
-    }
-
-    // Batch Rename Dialog
-
-    if (state.showBatchRenameDialog) {
-        ImGui::OpenPopup(L(Dlg_BatchOp));
-        state.showBatchRenameDialog = false;
-    }
-    if (aura::ui::BeginAlertDialog(L(Dlg_BatchOp), L(Dlg_BatchOp), ImGuiWindowFlags_None)) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        EscClosePopup();
-        ImGui::SetWindowSize(ImVec2(900, 650), ImGuiCond_FirstUseEver);
-
-        // Selected files count
-        auto selectedRecords = state.getSelectedRecords();
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f),
-            L(Dlg_SelectedNFiles), (int)selectedRecords.size());
-
-        // Tab bar for Rename vs Metadata
-        if (ImGui::BeginTabBar("##BatchOperationTabs")) {
-            if (ImGui::BeginTabItem(L(Main_BatchRenameTab))) {
-                state.batchDialogTab = 0;
-                ImGui::EndTabItem();
-            }
-            if (ImGui::BeginTabItem(L(Main_BatchMetaTab))) {
-                state.batchDialogTab = 1;
-                ImGui::EndTabItem();
-            }
-            ImGui::EndTabBar();
-        }
-
-        ImGui::Separator();
-
-        if (state.batchDialogTab == 0) {
-// RENAME TAB
-        // Two columns: left for rules, right for preview
-        float rulesPanelWidth = 380.0f;
-
-        // Left panel - Rule configuration
-        BeginTransientScrollbarChild("RulesPanel", ImVec2(rulesPanelWidth, 450), true);
-        {
-            ImGui::Text("%s", L(Batch_RenameRules));
-            ImGui::Separator();
-
-            // Mode selection
-            ImGui::Text("%s", L(Batch_OpMode));
-            ImGui::SetNextItemWidth(300);
-            {
-                // Build \0-separated combo string from localized mode names
-                auto modeLabel = [](int i) { return GetRenameModeName((AppState::RenameMode)i); };
-                std::string comboStr;
-                for (int i = 0; i < (int)AppState::RenameMode::COUNT; ++i) {
-                    comboStr += modeLabel(i);
-                    comboStr += '\0';
-                }
-                comboStr += '\0';
-                ImGui::Combo("##RenameMode", &state.renameModeIndex, comboStr.c_str());
-            }
-
-            // Mode description
-            AppState::RenameMode currentMode = (AppState::RenameMode)state.renameModeIndex;
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), L(Main_CheckedItemFmt),
-                GetRenameModeDescription(currentMode));
-
-            ImGui::Spacing();
-
-            // Input fields based on mode
-            bool needsSearch = (currentMode == AppState::RenameMode::TextReplace ||
-                               currentMode == AppState::RenameMode::RegexReplace ||
-                               currentMode == AppState::RenameMode::DeleteText ||
-                               currentMode == AppState::RenameMode::AddPrefix ||
-                               currentMode == AppState::RenameMode::AddSuffix ||
-                               currentMode == AppState::RenameMode::DeleteStartChars ||
-                               currentMode == AppState::RenameMode::DeleteEndChars ||
-                               currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd ||
-                               currentMode == AppState::RenameMode::RemoveExtraBrackets ||
-                               currentMode == AppState::RenameMode::InsertSequenceNumber ||
-                               currentMode == AppState::RenameMode::ReplaceSpaces);
-
-            bool needsReplace = (currentMode == AppState::RenameMode::TextReplace ||
-                                currentMode == AppState::RenameMode::RegexReplace ||
-                                currentMode == AppState::RenameMode::InsertSequenceNumber);
-            const bool needsOccurrenceSelector =
-                (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd);
-
-            if (needsSearch) {
-                const char* searchLabel = L(RenField_Search);
-                if (currentMode == AppState::RenameMode::AddPrefix ||
-                    currentMode == AppState::RenameMode::AddSuffix) {
-                    searchLabel = currentMode == AppState::RenameMode::AddPrefix ? L(RenField_Prefix) : L(RenField_Suffix);
-                } else if (currentMode == AppState::RenameMode::DeleteStartChars ||
-                          currentMode == AppState::RenameMode::DeleteEndChars) {
-                    searchLabel = L(RenField_CharCount);
-                } else if (currentMode == AppState::RenameMode::RemoveExtraBrackets) {
-                    searchLabel = L(RenField_BracketType);
-                } else if (currentMode == AppState::RenameMode::InsertSequenceNumber) {
-                    searchLabel = L(RenField_SeqFormat);
-                } else if (currentMode == AppState::RenameMode::ReplaceSpaces) {
-                    searchLabel = L(RenField_ReplaceChar);
-                } else if (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd) {
-                    searchLabel = L(Ren_HitWord);
-                }
-
-                ImGui::Text("%s", searchLabel);
-                ImGui::SetNextItemWidth(300);
-                ImGui::InputText("##RenameSearch", state.renameSearchBuffer, sizeof(state.renameSearchBuffer));
-            }
-
-            if (needsReplace) {
-                const char* replaceLabel = L(RenField_ReplaceWith);
-                if (currentMode == AppState::RenameMode::InsertSequenceNumber) {
-                    replaceLabel = L(RenField_Position);
-                }
-                ImGui::Text("%s", replaceLabel);
-                ImGui::SetNextItemWidth(300);
-                ImGui::InputText("##RenameReplace", state.renameReplaceBuffer, sizeof(state.renameReplaceBuffer));
-            }
-            if (needsOccurrenceSelector) {
-                ImGui::TextUnformatted(L(Main_MatchLocationLabel));
-                std::string occurrenceItems = L(Occur_FirstHit);
-                occurrenceItems.push_back('\0');
-                occurrenceItems += L(Occur_LastHit);
-                occurrenceItems.push_back('\0');
-                occurrenceItems.push_back('\0');
-                ImGui::SetNextItemWidth(300);
-                ImGui::Combo("##RenameDeleteToEndOccurrence", &state.renameDeleteToEndOccurrence, occurrenceItems.c_str());
-            }
-
-            ImGui::Spacing();
-
-            // Add to queue button
-            if (aura::ui::ActionButton(L(Batch_AddToQueue), ImVec2(150, 0))) {
-                AppState::RenameRule rule;
-                rule.mode = currentMode;
-                rule.searchText = state.renameSearchBuffer;
-                rule.replaceText = needsOccurrenceSelector
-                    ? (state.renameDeleteToEndOccurrence == 0 ? "first" : "last")
-                    : state.renameReplaceBuffer;
-
-                // Generate description
-                const char* modeName = GetRenameModeName(currentMode);
-                if (currentMode == AppState::RenameMode::TextReplace ||
-                    currentMode == AppState::RenameMode::RegexReplace) {
-                    rule.description = std::string(modeName) + ": '" + rule.searchText + "' -> '" + rule.replaceText + "'";
-                } else if (currentMode == AppState::RenameMode::AddPrefix ||
-                          currentMode == AppState::RenameMode::AddSuffix) {
-                    rule.description = std::string(modeName) + ": '" + rule.searchText + "'";
-                } else if (currentMode == AppState::RenameMode::DeleteStartChars ||
-                          currentMode == AppState::RenameMode::DeleteEndChars) {
-                    rule.description = std::string(modeName) + ": " + rule.searchText;
-                } else if (currentMode == AppState::RenameMode::DeleteFromMatchedTextToEnd) {
-                    rule.description = std::string(modeName) + ": '" + rule.searchText + "' (" +
-                        (rule.replaceText == "last" ? L(Occur_LastHit) : L(Occur_FirstHit)) + ")";
-                } else {
-                    rule.description = modeName;
-                }
-
-                state.renameRuleQueue.push_back(rule);
-
-                // Clear input fields
-                memset(state.renameSearchBuffer, 0, sizeof(state.renameSearchBuffer));
-                memset(state.renameReplaceBuffer, 0, sizeof(state.renameReplaceBuffer));
-            }
-
-            ImGui::Separator();
-
-            // Queue display
-            ImGui::Text(L(Main_ActionQueueFmt), (int)state.renameRuleQueue.size());
-
-            // Leave room for the ordinary queue actions below the scroll area.
-            const float queueHeight = std::clamp(ImGui::GetContentRegionAvail().y -
-                ImGui::GetFrameHeightWithSpacing() - ImGui::GetStyle().ItemSpacing.y, 40.0f, 150.0f);
-            BeginTransientScrollbarChild("RuleQueue", ImVec2(0, queueHeight), true);
-            for (int i = 0; i < (int)state.renameRuleQueue.size(); ++i) {
-                ImGui::PushID(i);
-                bool selected = (i == state.renameRuleSelectedIndex);
-                if (ImGui::Selectable(state.renameRuleQueue[i].description.c_str(), selected)) {
-                    state.renameRuleSelectedIndex = i;
-                }
-                ImGui::PopID();
-            }
-            ImGui::EndChild();
-
-            // Queue control buttons
-            if (aura::ui::ActionButton(L(Main_MoveUpBtn))) {
-                if (state.renameRuleSelectedIndex > 0 &&
-                    state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size()) {
-                    std::swap(state.renameRuleQueue[state.renameRuleSelectedIndex],
-                             state.renameRuleQueue[state.renameRuleSelectedIndex - 1]);
-                    state.renameRuleSelectedIndex--;
-                }
-            }
-            ImGui::SameLine();
-            if (aura::ui::ActionButton(L(Main_MoveDownBtn))) {
-                if (state.renameRuleSelectedIndex >= 0 &&
-                    state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size() - 1) {
-                    std::swap(state.renameRuleQueue[state.renameRuleSelectedIndex],
-                             state.renameRuleQueue[state.renameRuleSelectedIndex + 1]);
-                    state.renameRuleSelectedIndex++;
-                }
-            }
-            ImGui::SameLine();
-            if (aura::ui::ActionButton(L(Main_RemoveBtn2), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
-                if (state.renameRuleSelectedIndex >= 0 &&
-                    state.renameRuleSelectedIndex < (int)state.renameRuleQueue.size()) {
-                    state.renameRuleQueue.erase(state.renameRuleQueue.begin() + state.renameRuleSelectedIndex);
-                    if (state.renameRuleSelectedIndex >= (int)state.renameRuleQueue.size()) {
-                        state.renameRuleSelectedIndex = (int)state.renameRuleQueue.size() - 1;
-                    }
-                }
-            }
-            ImGui::SameLine();
-            if (aura::ui::ActionButton(L(Main_ClearQueueBtn), ImVec2(0, 0), aura::ui::ButtonVariant::Danger)) {
-                state.renameRuleQueue.clear();
-                state.renameRuleSelectedIndex = -1;
-            }
-        }
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        // Right panel - Preview
-        BeginTransientScrollbarChild("PreviewPanel", ImVec2(0, 450), true);
-        {
-            // Generate preview button
-            if (aura::ui::ActionButton(L(Batch_GenPreview))) {
-                GenerateBatchRenamePreview(state);
-            }
-            ImGui::SameLine();
-
-            // Stats
-            if (!state.renamePreviewList.empty()) {
-                int okCount = 0, conflictCount = 0, unchangedCount = 0;
-                for (const auto& p : state.renamePreviewList) {
-                    if (p.status == u8"OK") okCount++;
-                    else if (p.status == L(RenStatus_NoChange)) unchangedCount++;
-                    else conflictCount++;
-                }
-                ImGui::Text(L(RenPreview_Summary), okCount, unchangedCount, conflictCount);
-            }
-
-            ImGui::Separator();
-
-            // Preview table
-            if (BeginTransientScrollbarTable("RenamePreviewTable", 3,
-                ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable,
-                ImVec2(0, 380))) {
-
-                ImGui::TableSetupScrollFreeze(0, 1);
-                ImGui::TableSetupColumn(L(RenTable_Status), ImGuiTableColumnFlags_WidthFixed, 80);
-                ImGui::TableSetupColumn(L(RenTable_OldName), ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableSetupColumn(L(RenTable_NewName), ImGuiTableColumnFlags_WidthStretch);
-                ImGui::TableHeadersRow();
-
-                for (const auto& preview : state.renamePreviewList) {
-                    ImGui::TableNextRow();
-
-                    // Status column with color
-                    ImGui::TableNextColumn();
-                    if (preview.status == u8"OK") {
-                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "%s", preview.status.c_str());
-                    } else if (preview.status == L(RenStatus_NoChange) || preview.status == L(RenStatus_NoRules)) {
-                        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", preview.status.c_str());
-                    } else {
-                        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", preview.status.c_str());
-                    }
-
-                    // Old name
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", preview.oldName.c_str());
-
-                    // New name
-                    ImGui::TableNextColumn();
-                    if (preview.willChange) {
-                        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", preview.newName.c_str());
-                    } else {
-                        ImGui::TextDisabled("%s", preview.newName.c_str());
-                    }
-                }
-
-                ImGui::EndTable();
-            }
-        }
-        ImGui::EndChild();
-
-        ImGui::Separator();
-
-        // Bottom buttons
-        bool hasPreview = !state.renamePreviewList.empty();
-        bool hasOK = false;
-        for (const auto& p : state.renamePreviewList) {
-            if (p.status == u8"OK" && p.willChange) { hasOK = true; break; }
-        }
-
-        ImGui::BeginDisabled(!hasPreview || !hasOK);
-        if (aura::ui::ActionButton(L(Batch_ExecRename), ImVec2(150, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            ExecuteBatchRename(state);
-            state.renameRuleQueue.clear();
-            state.renamePreviewList.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndDisabled();
-
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
-            state.renameRuleQueue.clear();
-            state.renamePreviewList.clear();
-            ImGui::CloseCurrentPopup();
-        }
-
-        } else {
-// METADATA TAB
-        static std::string s_batchMetaSaveMsg;
-        static int s_batchMetaSaveSuccess = 0, s_batchMetaSaveSkipped = 0, s_batchMetaSaveFailed = 0;
-        ImGui::Text("%s", L(Batch_EditMeta));
-        ImGui::Separator();
-
-        ImGui::Spacing();
-
-        // Mode: Replace or Append
-        ImGui::Text("%s", L(Batch_WriteMode));
-        ImGui::RadioButton(L(Batch_Replace), &state.batchMetaAppendMode, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton(L(Batch_Append), &state.batchMetaAppendMode, 1);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Description field
-        ImGui::Text("%s", L(Batch_Description));
-        ImGui::SetNextItemWidth(600);
-        ImGui::InputTextMultiline("##BatchMetaDesc", state.batchMetaDescription,
-            sizeof(state.batchMetaDescription), ImVec2(600, 80));
-
-        ImGui::Spacing();
-
-        // Keywords field
-        ImGui::Text("%s", L(Batch_Keywords));
-        ImGui::SetNextItemWidth(600);
-        ImGui::InputTextMultiline("##BatchMetaKeywords", state.batchMetaKeywords,
-            sizeof(state.batchMetaKeywords), ImVec2(600, 60));
-
-        ImGui::Spacing();
-
-        // Category field
-        ImGui::Text("%s", L(Batch_Category));
-        ImGui::SetNextItemWidth(400);
-        ImGui::InputText("##BatchMetaCategory", state.batchMetaCategory,
-            sizeof(state.batchMetaCategory));
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Preview of affected files
-        ImGui::Text("%s", L(Batch_AffectedFiles));
-        BeginTransientScrollbarChild("##MetadataAffectedFiles", ImVec2(0, 200), true);
-        for (const auto& record : selectedRecords) {
-            fs::path p = Utf8ToPathMain(record.filePath);
-            ImGui::BulletText("%s", PathToUtf8Main(p.filename()).c_str());
-        }
-        ImGui::EndChild();
-
-        ImGui::Spacing();
-
-        // Action buttons
-        bool hasContent = (strlen(state.batchMetaDescription) > 0 ||
-                          strlen(state.batchMetaKeywords) > 0 ||
-                          strlen(state.batchMetaCategory) > 0);
-
-        ImGui::BeginDisabled(!hasContent || selectedRecords.empty());
-        if (aura::ui::ActionButton(L(Batch_ApplyMeta), ImVec2(150, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            s_batchMetaSaveSuccess = 0;
-            s_batchMetaSaveSkipped = 0;
-            s_batchMetaSaveFailed = 0;
-            auto undoOp = std::make_unique<MetadataPatchOp>();
-            undoOp->operationName = "Batch edit metadata";
-            std::vector<std::pair<int64_t, MetadataEditPatch>> patchItems;
-            bool abort = false;
-                for (const auto& record : selectedRecords) {
-                    if (!Platform::FileSystem::Exists(record.filePath)) {
-                        s_batchMetaSaveSkipped++;
-                        continue;
-                    }
-                    std::string newDesc = state.batchMetaDescription;
-                    std::string newKeywords = state.batchMetaKeywords;
-                    std::string newCategory = state.batchMetaCategory;
-                    if (state.batchMetaAppendMode) {
-                        if (!newDesc.empty() && !record.description.empty()) newDesc = record.description + " " + newDesc;
-                        else if (newDesc.empty()) newDesc = record.description;
-                        if (!newKeywords.empty() && !record.keywords.empty()) newKeywords = record.keywords + ", " + newKeywords;
-                        else if (newKeywords.empty()) newKeywords = record.keywords;
-                        if (!newCategory.empty() && !record.category.empty()) newCategory = record.category + "/" + newCategory;
-                        else if (newCategory.empty()) newCategory = record.category;
-                    }
-                    MetadataEditPatch patch;
-                    // In replace mode, only patch fields that have content — empty = skip, not clear.
-                    // In append mode, newXxx already carries the original value for empty inputs.
-                    if (!newDesc.empty())     patch.setDescription(newDesc);
-                    if (!newKeywords.empty()) patch.setKeywords(newKeywords);
-                    if (!newCategory.empty()) patch.setCategory(newCategory);
-                    MetadataPatchEntry entry;
-                    entry.fileId = record.id;
-                    entry.oldValues = {{"description", record.description}, {"keywords", record.keywords}, {"category", record.category}};
-                    entry.newValues = {{"description", newDesc}, {"keywords", newKeywords}, {"category", newCategory}};
-                    undoOp->entries.push_back(std::move(entry));
-                    if (!patch.isEmpty()) {
-                        patchItems.push_back({record.id, patch});
-                    }
-                }
-                if (!patchItems.empty()) {
-                    BatchMetadataApplyResult res = state.database.applyMetadataPatchMany(patchItems);
-                    if (res.failed == 0) {
-                        s_batchMetaSaveSuccess = res.success;
-                    } else {
-                        s_batchMetaSaveSuccess = 0;
-                        s_batchMetaSaveFailed += (int)patchItems.size();
-                        undoOp->entries.clear();
-                        abort = true;
-                    }
-                }
-                if (abort) {
-                    s_batchMetaSaveSuccess = 0;
-                    s_batchMetaSaveFailed = (int)selectedRecords.size();
-                    undoOp->entries.clear();
-                }
-            if (s_batchMetaSaveSuccess > 0) {
-                state.undoStack.push(std::move(undoOp));
-                state.database.invalidateFacetQueryCache();
-                RefreshSearchResults(state, false);
-            }
-            s_batchMetaSaveMsg = std::to_string(s_batchMetaSaveSuccess) + u8" 成功";
-            if (s_batchMetaSaveSkipped > 0)
-                s_batchMetaSaveMsg += u8", " + std::to_string(s_batchMetaSaveSkipped) + u8" 跳过（文件不在磁盘上）";
-            if (s_batchMetaSaveFailed > 0)
-                s_batchMetaSaveMsg += u8", " + std::to_string(s_batchMetaSaveFailed) + u8" 失败";
-            if (s_batchMetaSaveFailed == 0) {
-                memset(state.batchMetaDescription, 0, sizeof(state.batchMetaDescription));
-                memset(state.batchMetaKeywords, 0, sizeof(state.batchMetaKeywords));
-                memset(state.batchMetaCategory, 0, sizeof(state.batchMetaCategory));
-            }
-        }
-        ImGui::EndDisabled();
-        if (!s_batchMetaSaveMsg.empty()) {
-            ImGui::TextColored(
-                s_batchMetaSaveFailed > 0 ? ImVec4(1.0f, 0.4f, 0.4f, 1.0f) :
-                (s_batchMetaSaveSkipped > 0 ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.4f, 0.9f, 0.4f, 1.0f)),
-                "%s", s_batchMetaSaveMsg.c_str());
-        }
-        if (aura::ui::ActionButton(L(Close), ImVec2(100, 0), aura::ui::ButtonVariant::Quiet)) {
-            s_batchMetaSaveMsg.clear();
-            ImGui::CloseCurrentPopup();
-        }
-        }  // End of tab content
-
         }
         aura::ui::EndAlertDialog();
     }
@@ -36317,7 +36691,8 @@ void RenderUI(AppState& state) {
                 int svOk = 0, svSkip = 0, svFail = 0;
                 if (!patch.isEmpty()) {
                     auto undoOp = std::make_unique<MetadataPatchOp>();
-                    undoOp->operationName = state.metadataBatchMode ? "Batch edit metadata (full)" : "Edit metadata (full)";
+                    undoOp->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
+                    if (patch.fields.size() == 1) undoOp->targetColumn = patch.fields.begin()->first;
 
                     auto ids = state.metadataBatchMode ? state.metadataBatchIds
                                                       : std::vector<int64_t>{state.metadataEditFileId};
@@ -37142,14 +37517,14 @@ void RenderUI(AppState& state) {
             { ChromeTextScope _readingMenuEdit;
             // Undo / Redo
             {
-                std::string undoLabel = std::string(L(Undo_UndoBtn));
-                if (state.undoStack.canUndo()) undoLabel += "  " + state.undoStack.undoDescription();
+                const std::string undoLabel = RenderUndoMenuLabel(LStr::Undo_UndoBtn, LStr::Undo_UndoActionFmt,
+                    state.undoStack.undoDescription());
                 if (ImGui::MenuItem(undoLabel.c_str(), "Ctrl+Z", false, state.undoStack.canUndo())) {
                     state.undoStack.undo(state.database);
                     RefreshSearchResults(state, false);
                 }
-                std::string redoLabel = std::string(L(Undo_RedoBtn));
-                if (state.undoStack.canRedo()) redoLabel += "  " + state.undoStack.redoDescription();
+                const std::string redoLabel = RenderUndoMenuLabel(LStr::Undo_RedoBtn, LStr::Undo_RedoActionFmt,
+                    state.undoStack.redoDescription());
                 if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, state.undoStack.canRedo())) {
                     state.undoStack.redo(state.database);
                     RefreshSearchResults(state, false);
@@ -37535,6 +37910,9 @@ void RenderUI(AppState& state) {
                     ResetDockTestLayout();
                 }
             }
+            if (ImGui::MenuItem(L(Dlg_BatchOp), GetShortcutString(ShortcutAction::BatchRename).c_str())) {
+                state.openBatchEdit();
+            }
             if (ImGui::MenuItem(L(Tools_FolderAutoRename))) {
                 state.showFolderAutoRenameDialog = true;
                 state.folderRenamePreview.clear();
@@ -37913,6 +38291,7 @@ void RenderUI(AppState& state) {
         if (id == "mod-tag-browser") return &state.panelTagBrowser;
         if (id == "mod-workflow") return &state.panelWorkflow;
         if (id == "mod-transfer") return &state.panelTransfer;
+        if (id == "mod-batch-edit") return &state.panelBatchEdit;
         return nullptr;
     };
     const auto tabAvailable = [&](std::string_view id) {
@@ -38032,6 +38411,8 @@ void RenderUI(AppState& state) {
         state.panelWorkflow.floating, PanelSideToDockSide(state.panelWorkflow.dockSide), 0.28f);
     syncDockModuleVisibility("mod-transfer", state.panelTransfer.visible,
         state.panelTransfer.floating, PanelSideToDockSide(state.panelTransfer.dockSide), 0.28f);
+    syncDockModuleVisibility("mod-batch-edit", state.panelBatchEdit.visible,
+        state.panelBatchEdit.floating, PanelSideToDockSide(state.panelBatchEdit.dockSide), 0.40f);
 
     const auto moduleDockedInRegion = [&](const char* moduleId, aura::ui::dock::DockSide region) {
         return aura::ui::dock::DockSubtreeContainsModule(g_dockLayout.RegionRoot(region), moduleId);
@@ -38059,7 +38440,8 @@ void RenderUI(AppState& state) {
         const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
             {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
             {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
-            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer},
+            {"mod-batch-edit", &state.panelBatchEdit}};
         for (const auto& entry : entries)
             if (moduleDockedInRegion(entry.id, side)) return &entry.panel->dockedHeight;
         return nullptr;
@@ -38073,6 +38455,7 @@ void RenderUI(AppState& state) {
         if (id == "mod-tag-browser") return state.panelTagBrowser.dockedHeight;
         if (id == "mod-workflow") return state.panelWorkflow.dockedHeight;
         if (id == "mod-transfer") return state.panelTransfer.dockedHeight;
+        if (id == "mod-batch-edit") return state.panelBatchEdit.dockedHeight;
         return 0.0f;
     };
     const float dockBandSplitter = aura::ui::dock::kDockBandSplitterHeight;
@@ -38149,6 +38532,8 @@ void RenderUI(AppState& state) {
             minReadableCenterWidth, rightPanelMinWidth, leftSidebarMinWidth);
     const float leftDockColumnWidth = dockColumnBudget.leftWidth;
     const float rightDockColumnWidth = dockColumnBudget.rightWidth;
+    float pendingLeftDockWidthDelta = 0.0f;
+    float pendingRightDockWidthDelta = 0.0f;
     if (showLeftColumn) leftPanelWidth = leftDockColumnWidth;
     if (showRightColumn) rightPanelWidth = rightDockColumnWidth;
     const float resultsHomeLeftScreenX = std::trunc(viewport->WorkPos.x +
@@ -38987,27 +39372,43 @@ void RenderUI(AppState& state) {
         std::vector<const SearchCommands::SearchCommand*> cmdMatches;
         if (inCmdMenu) cmdMatches = SearchCommands::MatchCommandsByPrefix(s_cmdPrefix);
 
-        // 只有在用户停止输入 120ms 后，才真正请求数据库联想
-        if (ImGui::GetTime() >= s_searchSuggestNextQueryAt) {
-            if (lastWord != state.searchSuggestLastQueryNorm) {
-                state.searchSuggestLastQueryNorm = lastWord;
+        constexpr int kWordSuggestLimit = 8;
+        if (!inCmdMenu && !inValuePick && cleanQuery != state.searchSuggestLastQueryNorm) {
+            state.searchSuggestCandidates.clear();
+            state.searchSuggestSelected = -1;
+            state.searchSuggestUserSelected = false;
+            if (ImGui::GetTime() >= s_searchSuggestNextQueryAt) {
+                state.searchSuggestLastQueryNorm = cleanQuery;
                 if (!lastWord.empty()) {
-                    state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, 10);
-                } else {
-                    state.searchSuggestCandidates.clear();
+                    const size_t prefixBytes = cleanQuery.size() - lastWord.size();
+                    const int maxTermBytes = static_cast<int>(sizeof(state.searchBuffer) - prefixBytes - 2);
+                    state.searchSuggestCandidates = state.database.getSearchSuggestions(lastWord, kWordSuggestLimit, maxTermBytes);
                 }
-                state.searchSuggestSelected = -1;
-                state.searchSuggestUserSelected = false;
+            } else {
+                state.searchSuggestLastQueryNorm.clear();
             }
         }
 
-        bool hasSuggestCandidates = !state.searchSuggestCandidates.empty() && !currentSearch.empty();
+        ImGuiIO& io = ImGui::GetIO();
+        auto wasKeyPressed = [&](ImGuiKey key) -> bool {
+            return ImGui::IsKeyPressed(key, false) ||
+                   (io.KeysData[key - ImGuiKey_NamedKey_BEGIN].DownDuration == 0.0f &&
+                    io.KeysData[key - ImGuiKey_NamedKey_BEGIN].Down);
+        };
 
         // 用户按 ESC 或 Enter(未选) 关闭后，本输入周期内不再自动展开，避免闪烁；输入变化后允许再次展开
         static bool s_suggestPopupDismissedByUser = false;
         if (typedChanged) s_suggestPopupDismissedByUser = false;
-        if (!hasSuggestCandidates) s_suggestPopupDismissedByUser = false;
+        if (!inCmdMenu && !inValuePick && state.searchSuggestMode == SuggestMode::WordSuggest &&
+            wasKeyPressed(ImGuiKey_Escape)) {
+            s_suggestPopupDismissedByUser = true;
+            state.searchSuggestLastQueryNorm = cleanQuery;
+            state.searchSuggestCandidates.clear();
+            state.searchSuggestSelected = -1;
+            state.searchSuggestUserSelected = false;
+        }
 
+        const bool hasSuggestCandidates = !state.searchSuggestCandidates.empty() && !currentSearch.empty();
         const char* kSearchSuggestPopupId = "##SearchSuggestPopup";
         bool popupOpen = ImGui::IsPopupOpen(kSearchSuggestPopupId);
         // 展开条件：有联想且（搜索框有焦点 或 联想框已打开），且未被用户主动关闭
@@ -39026,25 +39427,17 @@ void RenderUI(AppState& state) {
         auto acceptSuggestionBySelected = [&](bool applyNow) -> bool {
             if (!showSuggestPopup || inValuePick) return false;
             if (state.searchSuggestSelected < 0 || state.searchSuggestSelected >= (int)state.searchSuggestCandidates.size()) return false;
-            const std::string& disp = state.searchSuggestCandidates[state.searchSuggestSelected];
-
             // Replace only the final token and keep the existing prefix.
-            std::string cleanQuery = TrimCopy(currentSearch);
-            size_t lastSpace = cleanQuery.find_last_of(' ');
-            std::string newQuery;
-            if (lastSpace != std::string::npos) {
-                newQuery = cleanQuery.substr(0, lastSpace + 1) + disp + " ";
-            } else {
-                newQuery = disp + " ";
-            }
-
+            std::string newQuery = (lastSpace != std::string::npos) ? cleanQuery.substr(0, lastSpace + 1) : std::string{};
+            newQuery += state.searchSuggestCandidates[state.searchSuggestSelected];
+            state.searchSuggestLastQueryNorm = newQuery;
+            newQuery.push_back(' ');
             state.searchSuggestPendingText = newQuery;
             state.searchSuggestRequestFocus = true;
             state.searchSuggestPopupOpen = false;
             state.searchSuggestCandidates.clear();
             state.searchSuggestSelected = -1;
             state.searchSuggestUserSelected = false;
-            state.searchSuggestLastQueryNorm = disp;
             ImGui::CloseCurrentPopup();
             if (applyNow) state.searchSuggestForceApply = true;
             return true;
@@ -39127,19 +39520,12 @@ void RenderUI(AppState& state) {
             return true;
         };
 
-        ImGuiIO& io = ImGui::GetIO();
-        auto wasKeyPressed = [&](ImGuiKey key) -> bool {
-            return ImGui::IsKeyPressed(key, false) ||
-                   (io.KeysData[key - ImGuiKey_NamedKey_BEGIN].DownDuration == 0.0f &&
-                    io.KeysData[key - ImGuiKey_NamedKey_BEGIN].Down);
-        };
-
         // Merge widget return state with raw Enter keys so acceptance is not lost.
         bool enterPressed = inputReturn || wasKeyPressed(ImGuiKey_Enter) || wasKeyPressed(ImGuiKey_KeypadEnter);
         bool suggestionAccepted = false;
 
         if (showSuggestPopup) {
-            if (wasKeyPressed(ImGuiKey_Escape)) {
+            if (inValuePick && wasKeyPressed(ImGuiKey_Escape)) {
                 s_suggestPopupDismissedByUser = true;
                 state.searchSuggestPopupOpen = false;
                 state.searchSuggestCandidates.clear();
@@ -39497,23 +39883,29 @@ void RenderUI(AppState& state) {
                         ImGui::PopID();
                     }
                 } else {
-                    // WordSuggest content
-                    int showN = std::min<int>(10, (int)state.searchSuggestCandidates.size());
-                    for (int i = 0; i < showN; ++i) {
-                        const std::string& disp = state.searchSuggestCandidates[i];
-                        if (disp.empty()) continue;  // 跳过空字符串，避免 ImGui 空 ID 断言崩溃
-                        bool selected = (i == state.searchSuggestSelected);
-                        ImGui::PushID(i);
+                    const int suggestionCount = static_cast<int>(state.searchSuggestCandidates.size());
+                    for (int suggestionIndex = 0; suggestionIndex < suggestionCount; ++suggestionIndex) {
+                        const std::string& term = state.searchSuggestCandidates[suggestionIndex];
+                        const bool selected = (suggestionIndex == state.searchSuggestSelected);
+                        ImGui::PushID(suggestionIndex);
+                        ImVec2 textMin = ImGui::GetCursorScreenPos();
+                        textMin.y += ImGui::GetCurrentWindow()->DC.CurrLineTextBaseOffset;
+                        const float textRight = textMin.x + ImGui::GetContentRegionAvail().x;
 
-                        if (ImGui::Selectable(disp.c_str(), selected, ImGuiSelectableFlags_None, ImVec2(0, 24.0f))) {
-                            state.searchSuggestSelected = i;
+                        if (ImGui::Selectable("##word", selected, ImGuiSelectableFlags_None, ImVec2(0, 24.0f))) {
+                            state.searchSuggestSelected = suggestionIndex;
                             acceptSuggestionBySelected(true);  // 必须在 clear 之前读取 candidates
                             ImGui::ClearActiveID();
                             ImGui::PopID();
                             break;  // candidates 已被 accept 清空，不可继续遍历
                         }
+                        if (textRight > textMin.x) {
+                            const ImVec2 textMax(textRight, textMin.y + ImGui::GetTextLineHeight());
+                            ImGui::RenderTextEllipsis(ImGui::GetWindowDrawList(), textMin, textMax, textRight,
+                                                      term.data(), term.data() + term.size(), nullptr);
+                        }
                         if (ImGui::IsItemHovered()) {
-                            state.searchSuggestSelected = i;
+                            state.searchSuggestSelected = suggestionIndex;
                             state.searchSuggestUserSelected = true;
                         }
                         if (selected) ImGui::SetItemDefaultFocus();
@@ -39603,12 +39995,13 @@ void RenderUI(AppState& state) {
         waveformPanelGapReserve + statusBottomLayoutReserve + startupListOffsetReserve +
         startupWaveformOffsetReserve + bottomLayoutReserve;
     const float minimumWaveform = showDockedWaveform ? (layoutShortHeight ? 96.0f : 150.0f) : 0.0f;
+    const float bandAvailableHeight = mainWorkH - baseOverhead - playlistQuickBarHeight - minimumWaveform;
     const float bandCenterWidth = std::max(1.0f, mainWorkW -
         (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
         (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f));
     const auto dockBandReserve = aura::ui::dock::ResolveDockBandReserve(
         g_dockLayout, dockSavedHeight, std::clamp(mainWorkH * .20f, 96.0f, 240.0f),
-        viewport->DpiScale, mainWorkH - baseOverhead - playlistQuickBarHeight - minimumWaveform,
+        viewport->DpiScale, bandAvailableHeight,
         bandCenterWidth, minContentHeight);
     const auto floatOverflowBand = [&](aura::ui::dock::DockSide side, bool overflow) {
         if (!overflow) return;
@@ -39616,7 +40009,8 @@ void RenderUI(AppState& state) {
         const Entry entries[] = {{"filter", &state.panelSidebar}, {"info", &state.panelFileInfo},
             {"similar-sounds", &state.panelSimilarSounds}, {"search-results", &g_searchResultsDockPanel},
             {"mod-ucs-browser", &state.panelUCSBrowser}, {"mod-tag-browser", &state.panelTagBrowser},
-            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer}};
+            {"mod-workflow", &state.panelWorkflow}, {"mod-transfer", &state.panelTransfer},
+            {"mod-batch-edit", &state.panelBatchEdit}};
         for (const auto& entry : entries) {
             if (!moduleDockedInRegion(entry.id, side)) continue;
             auto& panel = *entry.panel;
@@ -39660,13 +40054,15 @@ void RenderUI(AppState& state) {
     auto refreshDockLeafGeometry = [&](const aura::ui::dock::DockNode* root,
                                        const aura::ui::dock::DockRect& slot,
                                        const char* id,
+                                       bool rightAligned,
                                        float& width,
                                        float& height,
                                        float& x,
                                        float& y) {
         if (!root) return;
         aura::ui::dock::DockModuleTarget leaves[16]{};
-        const int count = aura::ui::dock::CollectLeafRects(root, slot, leaves, 16, 0, viewport->DpiScale);
+        const int count = aura::ui::dock::CollectLeafRects(
+            root, slot, leaves, 16, 0, viewport->DpiScale, rightAligned);
         for (int i = 0; i < count; ++i) {
             if (leaves[i].id != id) continue;
             width = leaves[i].rect.width;
@@ -39680,7 +40076,7 @@ void RenderUI(AppState& state) {
         refreshDockLeafGeometry(
             leftRegionRoot,
             {viewport->WorkPos.x, dockColumnTop, leftPanelWidth, sideColumnHeight},
-            "filter", filterLeafWidth, filterLeafHeight, filterLeafX, filterLeafY);
+            "filter", false, filterLeafWidth, filterLeafHeight, filterLeafX, filterLeafY);
         filterShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, leftPanelWidth, filterLeafWidth, leftSidebarMinWidth, leftSidebarMaxWidth);
     }
@@ -39688,7 +40084,7 @@ void RenderUI(AppState& state) {
         refreshDockLeafGeometry(
             rightRegionRoot,
             {viewport->WorkPos.x + mainWorkW - rightPanelWidth, dockColumnTop, rightPanelWidth, sideColumnHeight},
-            "info", infoLeafWidth, infoLeafHeight, infoLeafX, infoLeafY);
+            "info", true, infoLeafWidth, infoLeafHeight, infoLeafX, infoLeafY);
         infoShellWidth = aura::ui::dock::DockFilterShellWidth(
             true, rightPanelWidth, infoLeafWidth, rightPanelMinWidth, std::max(rightPanelMaxWidth, rightPanelWidth));
     }
@@ -39712,7 +40108,8 @@ void RenderUI(AppState& state) {
     };
     const auto usesDockToolPalette = [](std::string_view module) {
         return module == "info" || module == "similar-sounds" || module == "mod-ucs-browser" ||
-               module == "mod-tag-browser" || module == "mod-workflow" || module == "mod-transfer";
+               module == "mod-tag-browser" || module == "mod-workflow" ||
+               module == "mod-transfer" || module == "mod-batch-edit";
     };
     struct DockToolPalette {
         ImVec4 body;
@@ -40057,6 +40454,8 @@ void RenderUI(AppState& state) {
         ImGui::PushStyleColor(ImGuiCol_BorderShadow, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
         ImGuiWindowFlags floatFlags = ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse;
+        if (sharedPalette || std::strcmp(moduleId, "filter") == 0)
+            floatFlags |= ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
         // ImGui normally starts a window move from unhandled body clicks too.
         // Limit that fallback to this shared shell's title, without changing
         // movement in unrelated dialogs or disabling the native resize grips.
@@ -40120,7 +40519,11 @@ void RenderUI(AppState& state) {
             if (!(flags & ImGuiWindowFlags_NoScrollbar))
                 flags |= ImGuiWindowFlags_HorizontalScrollbar;
         }
-        return BeginTransientScrollbarChild(childId, bodySize, false, flags);
+        const bool visible = BeginTransientScrollbarChild(childId, bodySize, false, flags);
+#if ARIS_PREVIEW_ISOLATION && AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
+        if (visible) RecordDockQaBody(module);
+#endif
+        return visible;
     };
 
     const auto renderIndependentSimilarSounds = [&](const ImVec2& outerSize, const ImVec2& contentMin,
@@ -40134,68 +40537,6 @@ void RenderUI(AppState& state) {
             aura::ui::RenderSimilarSoundsContent(state, true);
         }
         ImGui::EndChild();
-    };
-
-    auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
-                                           const char* moduleId,
-                                           PanelState& panel,
-                                           bool* show,
-                                           const char* title,
-                                           void (*renderContent)(AppState&),
-                                           const char* titleId,
-                                           const char* popupId,
-                                           const char* contentId) {
-        if (leaf.id != moduleId || panel.floating) return;
-        ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(leaf.rect.width, leaf.rect.height), ImGuiCond_Always);
-        ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
-        bool open = true;
-        const auto palette = resolveDockToolPalette(moduleId);
-        const int styleCount = pushDockToolBodyStyle(palette);
-        if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
-            const ImVec2 pos = ImGui::GetWindowPos();
-            const ImVec2 size = ImGui::GetWindowSize();
-            const DockModuleShellLayout shell = drawDockModuleShell(
-                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
-                palette.body, kTitleText, false, 24.0f, moduleId);
-            ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
-            ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
-            beginDockedPanelDrag(moduleId, panel,
-                ImVec2(leaf.rect.x, leaf.rect.y), ImVec2(leaf.rect.width, leaf.rect.height));
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
-                ImGui::OpenPopup(popupId);
-            }
-            if (BeginTransientScrollbarPopup(popupId)) {
-                if (ImGui::MenuItem(L(Panel_Float))) {
-                    FloatDockedPanel(moduleId, panel, leaf.rect);
-                }
-                if (ImGui::MenuItem(L(Panel_Hide))) {
-                    panel.visible = false;
-                    *show = false;
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::SetCursorPos(ImVec2(
-                shell.insetL + shell.innerPad,
-                shell.insetT + shell.titleHeight + 4.0f));
-            const float contentWidth = std::max(1.0f,
-                size.x - shell.insetL - shell.insetR - shell.innerPad * 2.0f);
-            const float contentHeight = std::max(1.0f,
-                size.y - shell.insetT - shell.insetB - shell.titleHeight - 8.0f);
-            if (beginDockContentViewport(moduleId, contentId, size, ImVec2(contentWidth, contentHeight))) {
-                renderContent(state);
-            }
-            ImGui::EndChild();
-        }
-        if (!open || !panel.visible || !*show) {
-            g_dockLayout.Detach(moduleId);
-            panel.visible = false;
-            panel.floating = false;
-            *show = false;
-        }
-        ImGui::End();
-        ImGui::PopStyleColor(styleCount);
     };
 
     const auto selectedDockTool = [&](const aura::ui::dock::DockTabGroups::Group* group,
@@ -40331,6 +40672,8 @@ void RenderUI(AppState& state) {
             renderGroupedUtility(state.panelWorkflow, state.showWorkflowDialog, RenderWorkflowDialogContent);
         } else if (module == "mod-transfer") {
             renderGroupedUtility(state.panelTransfer, state.showTransferDialog, RenderTransferDialogContent);
+        } else if (module == "mod-batch-edit") {
+            DrawBatchEditPanel(state);
         }
     };
     const auto drawSimilarBodyPerimeter = [&](ImVec2 pos, ImVec2 size) {
@@ -40340,11 +40683,28 @@ void RenderUI(AppState& state) {
             kFilterInfoShellRadius, ImDrawFlags_RoundCornersAll,
             aura::ui::workspace::kCoreWorkspaceMetrics.perimeterWidth);
     };
+    const auto renderDockToolBody = [&](std::string_view module, const ImVec2& outerSize,
+                                        const ImVec2& bodySize, bool similarPerimeter,
+                                        const char* sidebarScope) {
+        const bool isFilter = module == "filter";
+        const bool isInfo = module == "info";
+        const bool isSimilar = module == "similar-sounds";
+        const auto bodyPos = ImGui::GetCursorScreenPos();
+        const char* childId = isFilter ? "SidebarShellContent" : isInfo ? "FileInfoContent" :
+            isSimilar ? "##DockedSimilarSoundsContent" :
+            module == "mod-transfer" ? "##DockedTransferContent" : "##DockToolContent";
+        const ImGuiWindowFlags bodyFlags = isSimilar
+            ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
+            : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
+        if (beginDockContentViewport(module, childId, outerSize, bodySize, bodyFlags))
+            renderToolContent(module, ImGui::GetContentRegionAvail().x, sidebarScope);
+        ImGui::EndChild();
+        if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
+    };
     const auto renderDockedToolBody = [&](std::string_view module, const DockModuleShellLayout& shell,
                                           float shellHeight, bool similarPerimeter, const char* sidebarScope) {
         const bool isFilter = module == "filter";
         const bool isInfo = module == "info";
-        const bool isSimilar = module == "similar-sounds";
         const float inset = similarPerimeter ? 4.0f : 0.0f;
         const float top = (isInfo ? 8.0f : 4.0f) + inset;
         const float bottom = (isInfo ? 8.0f : (isFilter ? 2.0f : 4.0f)) + inset;
@@ -40353,17 +40713,64 @@ void RenderUI(AppState& state) {
             std::max(1.0f, shellHeight - shell.titleHeight - shell.insetT - shell.insetB - top - bottom));
         ImGui::SetCursorPos(ImVec2(shell.insetL + shell.innerPad + inset,
                                   shell.insetT + shell.titleHeight + top));
-        const auto bodyPos = ImGui::GetCursorScreenPos();
-        const char* childId = isFilter ? "SidebarShellContent" :
-            isInfo ? "FileInfoContent" : isSimilar ? "##DockedSimilarSoundsContent" : "##DockedToolContent";
-        const ImGuiWindowFlags bodyFlags = isSimilar
-            ? ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse
-            : (isInfo ? ImGuiWindowFlags_NoScrollbar : ImGuiWindowFlags_None);
         const ImVec2 outerSize(shell.shellWidth + shell.insetL + shell.insetR, shellHeight);
-        const bool bodyVisible = beginDockContentViewport(module, childId, outerSize, bodySize, bodyFlags);
-        if (bodyVisible) renderToolContent(module, std::max(bodySize.x, ImGui::GetContentRegionAvail().x), sidebarScope);
-        ImGui::EndChild();
-        if (similarPerimeter) drawSimilarBodyPerimeter(bodyPos, bodySize);
+        renderDockToolBody(module, outerSize, bodySize, similarPerimeter, sidebarScope);
+    };
+    const auto renderFloatingToolBody = [&](std::string_view module, const ImVec2& outerSize,
+                                            bool similarPerimeter, const char* sidebarScope) {
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const ImVec2 bodySize(std::max(1.0f, available.x), std::max(1.0f, available.y));
+        renderDockToolBody(module, outerSize, bodySize, similarPerimeter, sidebarScope);
+    };
+
+    auto renderFunctionDockedModule = [&](const aura::ui::dock::DockModuleTarget& leaf,
+                                           const char* moduleId,
+                                           PanelState& panel,
+                                           bool* show,
+                                           const char* title,
+                                           const char* titleId,
+                                           const char* popupId) {
+        if (leaf.id != moduleId || panel.floating) return;
+        ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(leaf.rect.width, leaf.rect.height), ImGuiCond_Always);
+        ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
+        bool open = true;
+        const auto palette = resolveDockToolPalette(moduleId);
+        const int styleCount = pushDockToolBodyStyle(palette);
+        if (beginSharedDockWindowHost(titleId, &open, dockFlags)) {
+            const ImVec2 pos = ImGui::GetWindowPos();
+            const ImVec2 size = ImGui::GetWindowSize();
+            const DockModuleShellLayout shell = drawDockModuleShell(
+                ImGui::GetWindowDrawList(), pos, size.x, size.y, title,
+                palette.body, kTitleText, false, 24.0f, moduleId);
+            ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
+            ImGui::InvisibleButton(titleId, ImVec2(shell.shellWidth, shell.titleHeight));
+            beginDockedPanelDrag(moduleId, panel,
+                ImVec2(leaf.rect.x, leaf.rect.y), ImVec2(leaf.rect.width, leaf.rect.height));
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                ImGui::OpenPopup(popupId);
+            }
+            if (BeginTransientScrollbarPopup(popupId)) {
+                if (ImGui::MenuItem(L(Panel_Float))) {
+                    FloatDockedPanel(moduleId, panel, leaf.rect);
+                }
+                if (ImGui::MenuItem(L(Panel_Hide))) {
+                    panel.visible = false;
+                    *show = false;
+                }
+                ImGui::EndPopup();
+            }
+            renderDockedToolBody(moduleId, shell, size.y, false, nullptr);
+        }
+        if (!open || !panel.visible || !*show) {
+            g_dockLayout.Detach(moduleId);
+            panel.visible = false;
+            panel.floating = false;
+            *show = false;
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(styleCount);
     };
 
     // Left Column - Sidebar with title bar
@@ -40446,12 +40853,11 @@ void RenderUI(AppState& state) {
         ImGui::EndChild();
 
         if (!hideLeftSplitterInBrowser) {
-            const float previousWidth = workspacePx(state.panelSidebar.dockedWidth);
-            float dragWidth = previousWidth;
-            VerticalSplitter("##LeftSplitter", &dragWidth,
+            float dragWidth = leftPanelWidth;
+            if (VerticalSplitter("##LeftSplitter", &dragWidth,
                 leftRegionSplit ? leftSidebarMinWidth : workspacePx(120.0f), leftSidebarMaxWidth,
-                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop));
-            if (dragWidth != previousWidth) state.panelSidebar.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
+                sideColumnHeight, ImVec2(viewport->WorkPos.x + leftPanelWidth, dockColumnTop)))
+                pendingLeftDockWidthDelta = dragWidth - leftPanelWidth;
         }
     }
 
@@ -40479,6 +40885,7 @@ void RenderUI(AppState& state) {
         if (id == "mod-ucs-browser") return L(ModuleUI_UCSBrowserTitle);
         if (id == "mod-tag-browser") return L(ModuleUI_TagSystemTitle);
         if (id == "mod-workflow") return L(ModuleUI_WorkflowTitle);
+        if (id == "mod-batch-edit") return L(Dlg_BatchOp);
         return L(ModuleUI_TransferTitle);
     };
     auto detachDockTab = [&](std::string_view id, bool dragging) {
@@ -42051,6 +42458,9 @@ void RenderUI(AppState& state) {
                 const std::string breadcrumbLabel =
                     HarkenSearch::ResolveFolderBreadcrumbDisplayLabel(fullPath, L(Misc_AllFiles));
 
+                static harken::breadcrumb::ScrollState breadcrumbScroll;
+                breadcrumbScroll.setPath(fullPath);
+
                 if (!fullPath.empty()) {
                     std::vector<std::pair<std::string, std::string>> pathSegments;
 
@@ -42082,26 +42492,34 @@ void RenderUI(AppState& state) {
                         pathSegments.push_back({segment, fullPath});
                     }
 
-                    // Breadcrumb path chip flow: short segments stay in a fast
-                    // scannable row; overflow starts on a full readable line and
-                    // overlong labels are ellipsized, never squeezed into a
-                    // narrow vertical block at the right edge.
-                    const float breadcrumbPathStartX = ImGui::GetCursorScreenPos().x;
-                    const float breadcrumbContentRightX =
-                        ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-                    const float breadcrumbMinReadableChipW = 96.0f;
-                    const float breadcrumbMaxChipW = 320.0f;
-                    auto startReadableBreadcrumbLine = [&]() {
-                        ImGui::NewLine();
-                        ImGui::SetCursorScreenPos(ImVec2(breadcrumbPathStartX, ImGui::GetCursorScreenPos().y));
-                    };
-                    auto wrapBreadcrumbLineIfNeeded = [&](float neededW) {
-                        const float cursorX = ImGui::GetCursorScreenPos().x;
-                        if (cursorX > breadcrumbPathStartX + 1.0f &&
-                            cursorX + neededW > breadcrumbContentRightX) {
-                            startReadableBreadcrumbLine();
-                        }
-                    };
+                    constexpr float breadcrumbChipPadX = 2.0f;
+                    constexpr float breadcrumbSeparatorPadX = 4.0f;
+                    constexpr float breadcrumbMaxChipW = 320.0f;
+                    const float separatorW = ImGui::CalcTextSize(">").x + breadcrumbSeparatorPadX * 2.0f;
+                    std::vector<float> segmentWidths;
+                    segmentWidths.reserve(pathSegments.size());
+                    float breadcrumbContentW = 0.0f;
+                    for (const auto& segment : pathSegments) {
+                        const float chipW = std::min(breadcrumbMaxChipW,
+                            ImGui::CalcTextSize(segment.first.c_str()).x + breadcrumbChipPadX * 2.0f);
+                        if (!segmentWidths.empty()) breadcrumbContentW += separatorW;
+                        breadcrumbContentW += chipW;
+                        segmentWidths.push_back(chipW);
+                    }
+
+                    const float breadcrumbViewportW = std::max(1.0f, std::floor(ImGui::GetContentRegionAvail().x));
+                    const float breadcrumbRowH = ImGui::GetFrameHeight();
+                    const ImVec2 breadcrumbViewportMin = ImGui::GetCursorScreenPos();
+                    const ImVec2 breadcrumbViewportMax(breadcrumbViewportMin.x + breadcrumbViewportW,
+                                                       breadcrumbViewportMin.y + breadcrumbRowH);
+                    const bool breadcrumbHovered =
+                        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) &&
+                        ImGui::IsMouseHoveringRect(breadcrumbViewportMin, breadcrumbViewportMax);
+                    const float breadcrumbScrollX = breadcrumbScroll.update(
+                        breadcrumbContentW, breadcrumbViewportMin.x, breadcrumbViewportW,
+                        ImGui::GetMousePos().x, ImGui::GetIO().DeltaTime, breadcrumbHovered,
+                        ImGui::IsMouseDown(ImGuiMouseButton_Left));
+
                     auto drawBreadcrumbPathChip = [&](const char* id,
                                                       const std::string& label,
                                                       const std::string& payloadPath,
@@ -42121,8 +42539,8 @@ void RenderUI(AppState& state) {
                                 5.0f);
                         }
                         ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-                        const ImVec2 textMin(p0.x + style.FramePadding.x, p0.y + style.FramePadding.y);
-                        const ImVec2 textMax(p1.x - style.FramePadding.x, p1.y);
+                        const ImVec2 textMin(p0.x + breadcrumbChipPadX, p0.y + style.FramePadding.y);
+                        const ImVec2 textMax(p1.x - breadcrumbChipPadX, p1.y);
                         ImGui::RenderTextEllipsis(
                             ImGui::GetWindowDrawList(),
                             textMin,
@@ -42147,57 +42565,40 @@ void RenderUI(AppState& state) {
                         }
                     };
 
-                    // Render clickable segments
-                    for (size_t i = 0; i < pathSegments.size(); i++) {
-                        const float segmentTextW = ImGui::CalcTextSize(pathSegments[i].first.c_str()).x;
-                        const float rawSegmentButtonW = segmentTextW + ImGui::GetStyle().FramePadding.x * 2.0f;
-                        float segmentButtonW = std::min(rawSegmentButtonW, breadcrumbMaxChipW);
-                        const float separatorW = (i > 0) ? ImGui::CalcTextSize(" > ").x : 0.0f;
-                        wrapBreadcrumbLineIfNeeded(separatorW + segmentButtonW);
-                        if (i > 0) {
-                            ImGui::SameLine(0, 0);
-                            ImGui::TextColored(kInfoMuted, " > ");
-                            ImGui::SameLine(0, 0);
-                        }
+                    ImGui::SetNextWindowContentSize(ImVec2(breadcrumbContentW, 0.0f));
+                    ImGui::SetNextWindowScroll(ImVec2(breadcrumbScrollX, 0.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+                    if (BeginTransientScrollbarChild("##DatabaseBreadcrumbPath", ImVec2(breadcrumbViewportW, breadcrumbRowH),
+                                                     ImGuiChildFlags_NavFlattened, ImGuiWindowFlags_NoBackground |
+                                                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                        for (size_t segmentIndex = 0; segmentIndex < pathSegments.size(); ++segmentIndex) {
+                            const auto& segment = pathSegments[segmentIndex];
+                            if (segmentIndex > 0) {
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
+                                ImGui::AlignTextToFramePadding();
+                                ImGui::TextColored(kInfoMuted, ">");
+                                ImGui::SameLine(0, breadcrumbSeparatorPadX);
+                            }
 
-                        ImGui::PushID((int)i);
-                        ImGui::PushStyleColor(ImGuiCol_Text, kInfoLink);
-                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kInfoLinkHover);
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, kInfoLinkActive);
-
-                        const float remainingLineW = std::max(
-                            breadcrumbMinReadableChipW,
-                            breadcrumbContentRightX - ImGui::GetCursorScreenPos().x);
-                        if (segmentButtonW > remainingLineW &&
-                            ImGui::GetCursorScreenPos().x > breadcrumbPathStartX + 1.0f) {
-                            startReadableBreadcrumbLine();
-                            segmentButtonW = std::min(rawSegmentButtonW, std::min(breadcrumbMaxChipW, std::max(
-                                breadcrumbMinReadableChipW,
-                                breadcrumbContentRightX - breadcrumbPathStartX)));
-                        } else {
-                            segmentButtonW = std::min(segmentButtonW, remainingLineW);
+                            ImGui::PushID(static_cast<int>(segmentIndex));
+                            ImGui::PushStyleColor(ImGuiCol_Text, kInfoLink);
+                            drawBreadcrumbPathChip("##PathSegmentChip", segment.first, segment.second,
+                                                   segmentWidths[segmentIndex]);
+                            if (HoveredForHelp()) {
+                                HarkenSearch::SetTooltip(L(Main_JumpToTip), segment.second.c_str());
+                            }
+                            if (ImGui::BeginDragDropSource()) {
+                                MaybePausePlaybackOnInScopeDragStart();
+                                ImGui::SetDragDropPayload("FOLDER_PATH", segment.second.c_str(), static_cast<int>(segment.second.size() + 1));
+                                ImGui::Text(L(Main_CategorizeFolderFmt), segment.first.c_str());
+                                ImGui::EndDragDropSource();
+                            }
+                            ImGui::PopStyleColor();
+                            ImGui::PopID();
                         }
-                        drawBreadcrumbPathChip("##PathSegmentChip",
-                                               pathSegments[i].first,
-                                               pathSegments[i].second,
-                                               segmentButtonW);
-                        if (HoveredForHelp()) {
-                            HarkenSearch::SetTooltip(L(Main_JumpToTip), pathSegments[i].second.c_str());
-                        }
-                        if (ImGui::BeginDragDropSource()) {
-                            MaybePausePlaybackOnInScopeDragStart();
-                            ImGui::SetDragDropPayload("FOLDER_PATH", pathSegments[i].second.c_str(), (int)(pathSegments[i].second.size() + 1));
-                            ImGui::Text(L(Main_CategorizeFolderFmt), pathSegments[i].first.c_str());
-                            ImGui::EndDragDropSource();
-                        }
-                        if (HoveredForHelp()) {
-                            HarkenSearch::SetTooltip(L(Main_JumpToTip), pathSegments[i].second.c_str());
-                        }
-
-                        ImGui::PopStyleColor(4);
-                        ImGui::PopID();
                     }
+                    ImGui::EndChild();
+                    ImGui::PopStyleVar();
                 } else {
                     ImGui::TextColored(kInfoMuted, "%s", breadcrumbLabel.c_str());
                 }
@@ -42781,10 +43182,9 @@ void RenderUI(AppState& state) {
                                       ImGuiTableFlags_SizingStretchProp |
                                       ImGuiTableFlags_Sortable | ImGuiTableFlags_SortMulti;
 
-        // Calculate dynamic column count based on settings
-        int meterColumnCount = 3;  // LUFS + RMS + TruePeak 始终注册（DefaultHide，右键可开关）
-        int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
-        int totalColumns = 18 + meterColumnCount + coverColumnCount;  // Filename..FilePath + Rating + meters + optional cover
+        const int coverColumnCount = state.settings.showCoverColumn ? 1 : 0;
+        const int legacyColumnCount = kResultsLegacyColumnCount + coverColumnCount;
+        const int totalColumns = legacyColumnCount + (browserFileTable ? 0 : kResultsNewMetadataColumnCount);
 
         // Table ID V5 - 移除历史列 (已播放文件用文字颜色高亮)
         // inner_width 动态计算：取可用宽度和最小宽度的较大值
@@ -42838,6 +43238,11 @@ void RenderUI(AppState& state) {
         const char* const resultsTableName = harken::results::TableName(browserFileTable);
         const ImGuiID resultsTableId = ImGui::GetID(resultsTableName);
         const ImGuiTable* previousResultsTable = ImGui::TableFindByID(resultsTableId);
+        if (!browserFileTable && !needsDbSetup &&
+            (!previousResultsTable || previousResultsTable->ColumnsCount != totalColumns ||
+             previousResultsTable->IsSettingsRequestLoad)) {
+            MigrateResultsColumnSettings(resultsTableId, totalColumns, coverColumnCount);
+        }
         const bool filePathVisible = previousResultsTable &&
             previousResultsTable->ColumnsCount > kResultsFilePathColumnIndex &&
             previousResultsTable->Columns[kResultsFilePathColumnIndex].IsUserEnabled;
@@ -43015,11 +43420,13 @@ void RenderUI(AppState& state) {
                 musicColumnFlags |= ImGuiTableColumnFlags_DefaultHide;
             }
             ImGui::TableSetupColumn(L(Col_Album), musicColumnFlags, workspacePx(120.0f), (ImGuiID)SortColumn::Album);
-            // BPM/Key/Mood: always register (data rows always emit them).
-            // Hidden via TableSetColumnEnabled below when music_analysis is off.
-            ImGui::TableSetupColumn(L(Col_BPM), musicColumnFlags, numericDefaultWidth(64.0f, "128.00"), (ImGuiID)SortColumn::BPM);
-            ImGui::TableSetupColumn(L(Col_MusicalKey), musicColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
-            ImGui::TableSetupColumn(L(Col_Mood), musicColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
+            const bool musicColumnsAvailable =
+                state.settings.productMode == ProductMode::Music || ProductEdition::hasFeature("music_analysis");
+            const ImGuiTableColumnFlags musicAnalysisColumnFlags = musicColumnFlags |
+                (!browserFileTable && !musicColumnsAvailable ? ImGuiTableColumnFlags_Disabled : ImGuiTableColumnFlags_None);
+            ImGui::TableSetupColumn(L(Col_BPM), musicAnalysisColumnFlags, numericDefaultWidth(64.0f, "128.00"), (ImGuiID)SortColumn::BPM);
+            ImGui::TableSetupColumn(L(Col_MusicalKey), musicAnalysisColumnFlags, workspacePx(72.0f), (ImGuiID)SortColumn::MusicalKey);
+            ImGui::TableSetupColumn(L(Col_Mood), musicAnalysisColumnFlags | ImGuiTableColumnFlags_DefaultHide, workspacePx(96.0f), (ImGuiID)SortColumn::Mood);
             ImGui::TableSetupColumn(L(Col_DateAdded), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, numericDefaultWidth(108.0f, "2026-11-23"), (ImGuiID)SortColumn::DateAdded);
             // UX-112: Folder path column — shows parent_path of file_path, tooltip shows full path
             // The path column is the natural trailing field: when enabled it
@@ -43035,6 +43442,13 @@ void RenderUI(AppState& state) {
             ImGui::TableSetupColumn(u8"RMS", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(64.0f), (ImGuiID)SortColumn::RMS);
             ImGui::TableSetupColumn(u8"TruePeak", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(82.0f), (ImGuiID)SortColumn::TruePeak);
             ImGui::TableSetupColumn(L(Col_Rating), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_DefaultHide, workspacePx(72.0f), (ImGuiID)SortColumn::Rating);
+            if (!browserFileTable) {
+                const auto metadataColumnFlags = ImGuiTableColumnFlags_WidthFixed |
+                    ImGuiTableColumnFlags_DefaultHide | ImGuiTableColumnFlags_NoSort;
+                ImGui::TableSetupColumn(L(Col_Composer), metadataColumnFlags, workspacePx(120.0f));
+                ImGui::TableSetupColumn(L(Col_Year), metadataColumnFlags, numericDefaultWidth(64.0f, "2000"));
+                ImGui::GetCurrentTable()->DisableDefaultContextMenu = true;
+            }
 
             // Older FileTableV6 settings could leave a meter/rating column holding the
             // trailing stretch width. Repair only that unmistakable outlier; all saved
@@ -43066,9 +43480,7 @@ void RenderUI(AppState& state) {
                 }
             }
 
-            // SFX mode: completely hide music-specific columns from dropdown
-            if (state.settings.productMode != ProductMode::Music &&
-                !ProductEdition::hasFeature("music_analysis")) {
+            if (browserFileTable && !musicColumnsAvailable) {
                 ImGui::TableSetColumnEnabled(12, false);  // BPM
                 ImGui::TableSetColumnEnabled(13, false);  // MusicalKey
                 ImGui::TableSetColumnEnabled(14, false);  // Mood
@@ -43160,6 +43572,7 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor();
             ImGui::PopFont();
             }
+            if (!browserFileTable) DrawResultsColumnSelector(ImGui::GetCurrentTable(), legacyColumnCount);
             const float librarySwitchBodyTop = ImGui::GetCurrentTable()->RowPosY2;
 
             const bool isResultsWaveColumnVisible =
@@ -44979,7 +45392,7 @@ void RenderUI(AppState& state) {
                             strncpy_s(state.editFilenameBuffer, record.fileName.c_str(), _TRUNCATE);
                         }
                         if (ImGui::MenuItem(L(Ctx_BatchRename), GetShortcutString(ShortcutAction::BatchRename).c_str())) {
-                            state.showBatchRenameDialog = true;
+                            state.openBatchEdit();
                         }
                         if (ImGui::MenuItem(L(Ctx_RescanMetadata))) {
                             RescanSelectedFiles(state, selectedRecords);
@@ -45318,22 +45731,26 @@ void RenderUI(AppState& state) {
                         !HasBlockingSearchExplainabilityPopup() &&
                         ImGui::IsMouseHoveringRect(snippetHoverRectMin, snippetHoverRectMax, true);
                     if (canShowSearchTooltip) {
-                        if (HasSearchExplainability(record, state.lastAppliedSearchText) && BeginSearchExplainabilityTooltip()) {
-                        ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
-                        ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
-                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 54.0f);
-                        RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
-                        LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
-                        ImGui::Separator();
-                        ImGui::TextDisabled("%s", L(Meta_FullPath));
-                        ImGui::TextUnformatted(record.filePath.c_str());
-                        if (!record.description.empty()) {
-                            ImGui::TextDisabled("%s", L(Meta_FullDesc));
-                            ImGui::TextUnformatted(record.description.c_str());
+                        const auto metadataMatches = FindOptionalSearchTooltipMatches(state, record);
+                        if ((!metadataMatches.empty() || HasSearchExplainability(record, state.lastAppliedSearchText)) &&
+                            BeginSearchExplainabilityTooltip()) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
+                            ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
+                            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 54.0f);
+                            RenderSearchExplainability(record, state.lastAppliedSearchText,
+                                                       state.settings.customAccentColor, metadataMatches);
+                            LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
+                            ImGui::Separator();
+                            ImGui::TextDisabled("%s", L(Meta_FullPath));
+                            ImGui::TextUnformatted(record.filePath.c_str());
+                            if (!record.description.empty()) {
+                                ImGui::TextDisabled("%s", L(Meta_FullDesc));
+                                ImGui::TextUnformatted(record.description.c_str());
+                            }
+                            ImGui::PopTextWrapPos();
+                            ImGui::PopStyleColor(2);
+                            ImGui::EndTooltip();
                         }
-                        ImGui::PopTextWrapPos();
-                        ImGui::PopStyleColor(2);
-                        ImGui::EndTooltip(); }
                     }
 
                     // Track drag start on mouse down
@@ -45673,21 +46090,22 @@ void RenderUI(AppState& state) {
                     const bool canShowDescriptionTooltip =
                         !HasBlockingSearchExplainabilityPopup() &&
                         ImGui::IsMouseHoveringRect(descriptionHoverRectMin, descriptionHoverRectMax, true);
-                    if (canShowDescriptionTooltip) {
-                        if (BeginSearchExplainabilityTooltip()) {
+                    if (canShowDescriptionTooltip && BeginSearchExplainabilityTooltip()) {
                         ImGui::PushStyleColor(ImGuiCol_Text, kCurrentModules.results.text);
                         ImGui::PushStyleColor(ImGuiCol_TextDisabled, kCurrentModules.results.secondaryText);
                         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 56.0f);
                         ImGui::TextDisabled("%s", L(Info_Description));
                         ImGui::TextUnformatted(listDescription.empty() ? L(Info_NoDescription) : listDescription.c_str());
-                    if (HasSearchExplainability(record, state.lastAppliedSearchText)) {
+                        const auto metadataMatches = FindOptionalSearchTooltipMatches(state, record);
+                        if (!metadataMatches.empty() || HasSearchExplainability(record, state.lastAppliedSearchText)) {
                             ImGui::Separator();
-                            RenderSearchExplainability(record, state.lastAppliedSearchText, state.settings.customAccentColor);
+                            RenderSearchExplainability(record, state.lastAppliedSearchText,
+                                                       state.settings.customAccentColor, metadataMatches);
                             LogSearchExplainabilityTooltipDiag(record, state.lastAppliedSearchText);
                         }
                         ImGui::PopTextWrapPos();
                         ImGui::PopStyleColor(2);
-                        ImGui::EndTooltip(); }
+                        ImGui::EndTooltip();
                     }
 
                     // Keywords (L2 gray)
@@ -45982,6 +46400,21 @@ void RenderUI(AppState& state) {
                             ImGui::TextUnformatted(kStarStrings[r]);
                             ImGui::PopStyleColor();
                         }
+                    }
+
+                    if (ImGui::TableNextColumn()) {
+                        const auto& composer = record.getMeta("composer");
+                        ImGui::PushStyleColor(ImGuiCol_Text, composer.empty() ? kL3 : kL2);
+                        ImGui::TextUnformatted(composer.empty() ? "-" : composer.c_str());
+                        ImGui::PopStyleColor();
+                    }
+                    if (ImGui::TableNextColumn()) {
+                        const auto& year = record.getMeta("track_year");
+                        ImGui::PushFont(GetUIListMono());
+                        ImGui::PushStyleColor(ImGuiCol_Text, year.empty() ? kL3 : kL2);
+                        ImGui::TextUnformatted(year.empty() ? "-" : year.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::PopFont();
                     }
 
                     // Pop text colors if pushed
@@ -46296,12 +46729,10 @@ void RenderUI(AppState& state) {
     PollBackgroundReconcileScanToast(state);
     PumpIdleAssetBackfill(state, DetectHarkenSearchUserInteractionForIdleAssetBackfill());
     PumpWaveformRebuild(state);
-    // Persist newly computed cover keys (avoid rescan after restart)
-    aura::cover_cache::PumpPersistence({
-        state.database,
-        state.currentDbPathUtf8,
-        state.viewMode != ViewMode::Browser,
-    });
+    if (!state.dbSwitchInProgress && state.viewMode != ViewMode::Browser &&
+        aura::cover_cache::PumpPersistence()) {
+        state.database.clearSearchCountMemoryCache();
+    }
     // Deferred cover key priming (frame-budgeted, avoids blocking on filter click)
     // Limit background waveform submissions to 15 per frame.
     aura::search::PumpDeferredCoverPriming(state, 15);
@@ -46390,17 +46821,16 @@ void RenderUI(AppState& state) {
         // A nested right Dock leaf can move the child cursor inward. The
         // legacy splitter still belongs at the outer results/info boundary.
         const float rightColumnX = viewport->WorkPos.x + mainWorkW - rightPanelWidth;
-        const float previousWidth = workspacePx(state.panelFileInfo.dockedWidth);
-        float dragWidth = previousWidth;
-        VerticalSplitter(
+        float dragWidth = rightPanelWidth;
+        if (VerticalSplitter(
             "##RightSplitter",
             &dragWidth,
             rightPanelMinWidth,
             rightPanelMaxWidth,
             sideColumnHeight,
             ImVec2(rightColumnX, dockColumnTop),
-            true);  // invertDelta for right panel
-        if (dragWidth != previousWidth) state.panelFileInfo.dockedWidth = aura::ui::dpi::UnscalePx(dragWidth, workspaceScale);
+            true))
+            pendingRightDockWidthDelta = dragWidth - rightPanelWidth;
 
         ImGui::SetCursorScreenPos(ImVec2(rightColumnX, dockColumnTop));
         const std::string displayedTool = selectedDockTool(rightTabGroup, "info");
@@ -46952,7 +47382,7 @@ void RenderUI(AppState& state) {
             // 纯数字时间码：无边框、无背景、无装饰；保持简约并放大可读性
             char tcText[32];
             snprintf(tcText, sizeof(tcText), "%02d:%02d:%02d.%02d", hours, mins, secs, frames);
-            ImFont* mono = GetUIFontMono();
+            ImFont* mono = GetUIWaveformTimecodeFont();
             const float tcFontSize = workspacePx((float)kChromeFontPx * 1.57f);
             ImVec2 tcTextSize = mono ? mono->CalcTextSizeA(tcFontSize, FLT_MAX, 0.0f, tcText) : ImGui::CalcTextSize(tcText);
             ImVec2 tcTextPos(
@@ -51335,6 +51765,7 @@ void RenderUI(AppState& state) {
 
     const float columnTop = dockColumnTop;
     const float columnHeight = std::max(1.0f, sideColumnHeight);
+    const float dockDropCenterMinimumHeight = minContentHeight + std::max(0.0f, columnHeight - bandAvailableHeight);
     const float columnWidthLeft = leftDockSlotRequired
         ? leftDockColumnWidth : std::max(160.0f, mainWinSize.x * 0.24f);
     const float columnWidthRight = rightDockSlotRequired
@@ -51353,6 +51784,7 @@ void RenderUI(AppState& state) {
     const float bottomSlotHeight = bottomDockBandHeight > 0.0f ? bottomDockBandHeight : emptyBandHeight;
     const float bottomSlotY = dockColumnTop + sideColumnHeight - bottomSlotHeight;
     rootSlots.bottom = {centerDockX, bottomSlotY, centerDockWidth, bottomSlotHeight};
+    rootSlots.visibleSideGapPx = splitterWidth;
 
     aura::ui::dock::DockFrameGeometry cachedDockFrameGeometry{};
     uint64_t cachedDockGeometryRevision = 0;
@@ -51416,6 +51848,8 @@ void RenderUI(AppState& state) {
             return PanelSideToDockSide(state.panelWorkflow.dockSide);
         if (std::strcmp(moduleId, "mod-transfer") == 0)
             return PanelSideToDockSide(state.panelTransfer.dockSide);
+        if (std::strcmp(moduleId, "mod-batch-edit") == 0)
+            return PanelSideToDockSide(state.panelBatchEdit.dockSide);
         return DockSide::Left;
     };
 
@@ -51433,6 +51867,7 @@ void RenderUI(AppState& state) {
         if (std::strcmp(moduleId, "mod-tag-browser") == 0) return extent(state.panelTagBrowser);
         if (std::strcmp(moduleId, "mod-workflow") == 0) return extent(state.panelWorkflow);
         if (std::strcmp(moduleId, "mod-transfer") == 0) return extent(state.panelTransfer);
+        if (std::strcmp(moduleId, "mod-batch-edit") == 0) return extent(state.panelBatchEdit);
         return 0.0f;
     };
 
@@ -51467,7 +51902,8 @@ void RenderUI(AppState& state) {
             &centerDrop);
         g_dockDropPlan = aura::ui::dock::PlanReadableDockDrop(
             g_dockLayout, hit, draggingId, mainWork, workspaceHeaderHeight,
-            reservedStatusBarHeight, rootSlots, viewport->DpiScale, minReadableCenterWidth);
+            reservedStatusBarHeight, rootSlots, viewport->DpiScale,
+            minReadableCenterWidth, dockDropCenterMinimumHeight);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         if (auto& trace = aura::ui::dock::ActiveDockFrameTrace(); trace.enabled) {
             ++trace.hitCalls;
@@ -51544,15 +51980,10 @@ void RenderUI(AppState& state) {
         }
         const aura::ui::dock::DockHit& hit = g_dockDrag.Preview();
         if (!aura::ui::dock::ShouldDrawDockPreview(titleBarDragging, hit)) return;
-        if (hit.kind == aura::ui::dock::DockHitKind::None) return;
-        aura::ui::dock::DockModuleTarget modules[16]{};
-        const int moduleCount = collectDockedModuleTargets(nullptr, modules, 16);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         const auto previewStart = std::chrono::steady_clock::now();
 #endif
-        const aura::ui::dock::DockPreviewPlan plan = aura::ui::dock::PlanDockPreview(
-            hit, mainWork, workspaceHeaderHeight, reservedStatusBarHeight,
-            modules, moduleCount, dockSnapDistance, &rootSlots);
+        const auto plan = aura::ui::dock::PlanDockPreview(g_dockDropPlan);
 #if AURA_BUILD_DIAGNOSTICS && ARIS_PREVIEW_ISOLATION && !AURA_INTERNAL_BETA
         if (auto& trace = aura::ui::dock::ActiveDockFrameTrace(); trace.enabled) {
             ++trace.previewCalls;
@@ -51744,7 +52175,7 @@ void RenderUI(AppState& state) {
             g_dockDrag.CommitFloatingOnMouseUp();
             panel.floating = true;
         } else {
-            g_dockDrag.CommitOnMouseUp();
+            g_dockDrag.CommitOnMouseUp(g_dockDropPlan);
             if (commitHit.kind == aura::ui::dock::DockHitKind::ResultsHome)
                 RestoreSearchResultsHome();
         }
@@ -51755,12 +52186,12 @@ void RenderUI(AppState& state) {
 #endif
         if (g_dockLayout.Find(moduleId) && commitHit.kind != aura::ui::dock::DockHitKind::None) {
             const auto landedSide = LandedDockSideForModule(moduleId);
-            MirrorDockCommitToPanel(panel, landedSide, landedSide, g_dockDropPlan.rootRect);
+            MirrorDockCommitToPanel(state, panel, landedSide, g_dockDropPlan.rootRect);
             MirrorDockRootExtent(state, landedSide, g_dockDropPlan.rootRect);
-            if (landedSide == aura::ui::dock::DockSide::Left && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Right))
-                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Right, g_dockDropPlan.slots.right);
-            if (landedSide == aura::ui::dock::DockSide::Right && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Left))
-                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Left, g_dockDropPlan.slots.left);
+            if (landedSide == aura::ui::dock::DockSide::Top && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Bottom))
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Bottom, g_dockDropPlan.slots.bottom);
+            if (landedSide == aura::ui::dock::DockSide::Bottom && g_dockLayout.RegionRoot(aura::ui::dock::DockSide::Top))
+                MirrorDockRootExtent(state, aura::ui::dock::DockSide::Top, g_dockDropPlan.slots.top);
             g_dockCommittedThisFrame.emplace_back(moduleId);
         }
         panel.wasDragging = false;
@@ -51811,7 +52242,6 @@ void RenderUI(AppState& state) {
                                              PanelState& panel,
                                              bool* show,
                                              const char* title,
-                                             void (*renderContent)(AppState&),
                                              const char* popupId,
                                              float minWidth,
                                              float minHeight) {
@@ -51821,6 +52251,9 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(panel.floatX, panel.floatY), placementCond);
         ImGui::SetNextWindowSize(ImVec2(panel.floatW, panel.floatH), placementCond);
         const std::string windowTitle = std::string(title) + "##Floating-" + moduleId;
+        if (std::strcmp(moduleId, "mod-batch-edit") == 0 && state.batchEditFocusRequested) {
+            ImGui::SetNextWindowFocus();
+        }
         bool open = true;
         const int styleCount = pushDockToolBodyStyle(resolveDockToolPalette(moduleId));
         const bool windowVisible = beginFilterStyleFloatingWindow(
@@ -51839,20 +52272,20 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Left;
-                    ApplyDockedPanel(state, moduleId, panel, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, moduleId, panel, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 if (ImGui::MenuItem(L(Panel_DockRight))) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, moduleId, panel, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, moduleId, panel, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
-            renderContent(state);
             ImGui::PopStyleColor();
+            renderFloatingToolBody(moduleId, size, false, nullptr);
         }
         if (!open || !*show) {
             panel.visible = false;
@@ -51865,17 +52298,22 @@ void RenderUI(AppState& state) {
     };
 
     renderFunctionFloatingWindow("mod-ucs-browser", state.panelUCSBrowser,
-        &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle), RenderUCSBrowserContent,
+        &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle),
         "##FloatUCSBrowserMenu", 480.0f, 260.0f);
     renderFunctionFloatingWindow("mod-tag-browser", state.panelTagBrowser,
-        &state.showTagBrowser, L(ModuleUI_TagSystemTitle), RenderTagBrowserContent,
+        &state.showTagBrowser, L(ModuleUI_TagSystemTitle),
         "##FloatTagBrowserMenu", 320.0f, 320.0f);
     renderFunctionFloatingWindow("mod-workflow", state.panelWorkflow,
-        &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle), RenderWorkflowDialogContent,
+        &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle),
         "##FloatWorkflowMenu", 560.0f, 360.0f);
     renderFunctionFloatingWindow("mod-transfer", state.panelTransfer,
-        &state.showTransferDialog, L(ModuleUI_TransferTitle), RenderTransferDialogContent,
+        &state.showTransferDialog, L(ModuleUI_TransferTitle),
         "##FloatTransferMenu", 480.0f, 360.0f);
+    const auto batchEditMinimum = aura::ui::dock::DockModuleMinimum("mod-batch-edit");
+    renderFunctionFloatingWindow("mod-batch-edit", state.panelBatchEdit,
+        &state.panelBatchEdit.visible, L(Dlg_BatchOp),
+        "##FloatBatchEditMenu", batchEditMinimum.width, batchEditMinimum.height);
+    state.batchEditFocusRequested = false;
 
     if (g_searchResultsDockPanel.visible && g_searchResultsDockPanel.floating &&
         !state.dockTabGroups.Find("search-results")) {
@@ -51915,12 +52353,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelSidebar.floatX, state.panelSidebar.floatY), sidebarPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelSidebar.floatW, state.panelSidebar.floatH), sidebarPlacementCond);
         bool open = true;
-        const int sidebarStyleCount = PushSidebarShellStyle(ThemeColors::current());
-// /polish — match the docked sidebar's tightened rhythm + borderless frames
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize,   0.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,      ImVec2(6.0f, 3.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,       ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,     3.0f);
+        const auto appearance = pushDockedToolAppearance("filter");
         const bool sidebarWindowVisible = beginFilterStyleFloatingWindow(
             (std::string(L(Panel_FilterTitle)) + "##FloatingSidebar").c_str(), &open, "filter");
         if (sidebarWindowVisible) {
@@ -51939,19 +52372,18 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Left;
-                    ApplyDockedPanel(state, "filter", state.panelSidebar, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "filter", state.panelSidebar, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
 
-            RenderSidebarPanelContent(state, "FloatSidebar");
             ImGui::PopStyleColor();
+            renderFloatingToolBody("filter", size, false, "FloatSidebar");
         }
         if (!open) state.panelSidebar.visible = false;
         ImGui::End();
-        ImGui::PopStyleVar(4);
-        ImGui::PopStyleColor(sidebarStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     // Floating File Info with drag-to-dock
@@ -51961,7 +52393,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowPos(ImVec2(state.panelFileInfo.floatX, state.panelFileInfo.floatY), fileInfoPlacementCond);
         ImGui::SetNextWindowSize(ImVec2(state.panelFileInfo.floatW, state.panelFileInfo.floatH), fileInfoPlacementCond);
         bool open = true;
-        const int fileInfoStyleCount = pushDockToolBodyStyle(resolveDockToolPalette("info"));
+        const auto appearance = pushDockedToolAppearance("info");
         const bool fileInfoWindowVisible = beginFilterStyleFloatingWindow(
             u8"Info##FloatingFileInfo", &open, "info");
         if (fileInfoWindowVisible) {
@@ -51981,23 +52413,18 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, "info", state.panelFileInfo, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "info", state.panelFileInfo, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
 
-            DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
-            {
-                ReadingTextScope _readingInfo;
-                RenderFileInfoPanelContent(state, size.x);
-            }
-            DevTools_EndFramePhase();
             ImGui::PopStyleColor();
+            renderFloatingToolBody("info", size, false, nullptr);
         }
         if (!open) state.panelFileInfo.visible = false;
         ImGui::End();
-        ImGui::PopStyleColor(fileInfoStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     if (state.panelSimilarSounds.visible && state.panelSimilarSounds.floating &&
@@ -52029,8 +52456,8 @@ void RenderUI(AppState& state) {
                     aura::ui::dock::DockHit menuHit;
                     menuHit.kind = aura::ui::dock::DockHitKind::Main;
                     menuHit.side = aura::ui::dock::DockSide::Right;
-                    ApplyDockedPanel(state, "similar-sounds", state.panelSimilarSounds, size, menuHit, mainWork,
-                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots);
+                    ApplyDockedPanel(state, "similar-sounds", state.panelSimilarSounds, menuHit, mainWork,
+                        workspaceHeaderHeight, reservedStatusBarHeight, rootSlots, minReadableCenterWidth);
                 }
                 ImGui::EndPopup();
             }
@@ -52061,12 +52488,7 @@ void RenderUI(AppState& state) {
         ImGui::SetNextWindowSize(ImVec2(panel.floatW, panel.floatH), placement);
         const std::string title = std::string(tabTitle(selected)) + "###DockTabGroup" + std::to_string(group.id);
         bool open = true;
-        const bool filterStyle = selected == "filter";
-        const auto& theme = ThemeColors::current();
-        const int dockGroupStyleCount = filterStyle ? PushSidebarShellStyle(theme) :
-            usesDockToolPalette(selected) ? pushDockToolBodyStyle(resolveDockToolPalette(selected)) :
-            PushFileInfoShellStyle(theme);
-        if (filterStyle) pushFilterFrameStyle(0.0f);
+        const auto appearance = pushDockedToolAppearance(selected);
         if (beginFilterStyleFloatingWindow(title.c_str(), &open, selected.c_str())) {
             const auto pos = ImGui::GetWindowPos();
             const auto size = ImGui::GetWindowSize();
@@ -52093,20 +52515,15 @@ void RenderUI(AppState& state) {
                 MarkSettingsDirty(state);
             }
             renderDockTabStrip(group, selected, false);
-            const ImVec2 contentPos = ImGui::GetCursorScreenPos();
-            const ImVec2 contentSize = ImGui::GetContentRegionAvail();
-            renderToolContent(selected, selected == "info" ? size.x : contentSize.x, "GroupedFloatingSidebar");
-            if (selected == "similar-sounds" && useSharedSimilarAppearance())
-                drawSimilarBodyPerimeter(contentPos, contentSize);
             ImGui::PopStyleColor();
+            renderFloatingToolBody(selected, size, appearance.similarPerimeter, "GroupedFloatingSidebar");
         }
         if (!open) {
             for (const auto& member : group.members) tabPanel(member)->visible = false;
             MarkSettingsDirty(state);
         }
         ImGui::End();
-        if (filterStyle) ImGui::PopStyleVar(4);
-        ImGui::PopStyleColor(dockGroupStyleCount);
+        popDockedToolAppearance(appearance);
     }
 
     aura::ui::dock::DockFrameGeometry dockedGeometry = buildDockFrameGeometry();
@@ -52188,21 +52605,16 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const int dockedFilterStyle = PushSidebarShellStyle(ThemeColors::current());
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 3.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 4.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+            const auto appearance = pushDockedToolAppearance("filter");
             if (beginSharedDockWindowHost(
                     (std::string(L(Panel_FilterTitle)) + "##DockedFilter").c_str(),
                     &open,
                     dockFlags)) {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 const ImVec2 size = ImGui::GetWindowSize();
-                const ImVec4 bodyBg = uiWithAlpha(kCurrentModules.filterBrowser.background, 1.0f);
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(Panel_FilterTitle), bodyBg, kTitleText, true);
+                    L(Panel_FilterTitle), appearance.bodyBg, kTitleText, true);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFilterTitleBar",
                     ImVec2(shell.shellWidth, shell.titleHeight));
@@ -52221,24 +52633,14 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
-                ImGui::SetCursorPos(ImVec2(
-                    shell.insetL + shell.innerPad,
-                    shell.insetT + shell.titleHeight + 4.0f));
-                if (beginDockContentViewport(
-                    "filter", "DockedFilterContent", size,
-                    ImVec2(shell.shellWidth - shell.innerPad * 2.0f,
-                           std::max(1.0f, size.y - shell.insetT - shell.insetB - shell.titleHeight - 6.0f)))) {
-                    RenderSidebarPanelContent(state, "DockedFilter");
-                }
-                ImGui::EndChild();
+                renderDockedToolBody("filter", shell, size.y, false, "DockedFilter");
             }
             if (!open || !state.panelSidebar.visible) {
                 g_dockLayout.Detach("filter");
                 state.panelSidebar.visible = false;
             }
             ImGui::End();
-            ImGui::PopStyleVar(4);
-            ImGui::PopStyleColor(dockedFilterStyle);
+            popDockedToolAppearance(appearance);
         }
         if (leaf.id == "info" && !state.panelFileInfo.floating && !infoDockedInRight) {
             ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
@@ -52246,8 +52648,7 @@ void RenderUI(AppState& state) {
             ImGuiWindowFlags dockFlags = ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize;
             bool open = true;
-            const auto palette = resolveDockToolPalette("info");
-            const int dockedInfoStyle = pushDockToolBodyStyle(palette);
+            const auto appearance = pushDockedToolAppearance("info");
             if (beginSharedDockWindowHost(
                     (std::string(L(View_InfoPanel)) + "##DockedFileInfo").c_str(),
                     &open,
@@ -52256,7 +52657,7 @@ void RenderUI(AppState& state) {
                 const ImVec2 size = ImGui::GetWindowSize();
                 const DockModuleShellLayout shell = drawDockModuleShell(
                     ImGui::GetWindowDrawList(), pos, size.x, size.y,
-                    L(View_InfoPanel), palette.body, kTitleText, false, infoDockTitleHeight, "info");
+                    L(View_InfoPanel), appearance.bodyBg, kTitleText, false, infoDockTitleHeight, "info");
                 const float kInfoTitleActionsWidth = drawFileInfoTitleActions(state, shell, shell.insetT);
                 ImGui::SetCursorPos(ImVec2(shell.insetL, shell.insetT));
                 ImGui::InvisibleButton("##DockedFileInfoTitleBar",
@@ -52276,29 +52677,14 @@ void RenderUI(AppState& state) {
                     }
                     ImGui::EndPopup();
                 }
-                ImGui::SetCursorPos(ImVec2(
-                    shell.insetL + shell.innerPad,
-                    shell.insetT + shell.titleHeight + 8.0f));
-                const float infoContentWidth = std::max(1.0f, shell.shellWidth - shell.innerPad * 2.0f);
-                const bool infoVisible = beginDockContentViewport(
-                    "info", "FileInfoContent", size,
-                    ImVec2(infoContentWidth, std::max(1.0f, size.y - shell.titleHeight -
-                        shell.insetT - shell.insetB - 16.0f)),
-                    ImGuiWindowFlags_NoScrollbar);
-                DevTools_BeginFramePhase("RenderUI.FileInfoPanel");
-                if (infoVisible) {
-                    ReadingTextScope _readingInfo;
-                    RenderFileInfoPanelContent(state, std::max(infoContentWidth, ImGui::GetContentRegionAvail().x));
-                }
-                DevTools_EndFramePhase();
-                ImGui::EndChild();
+                renderDockedToolBody("info", shell, size.y, false, nullptr);
             }
             if (!open || !state.panelFileInfo.visible) {
                 g_dockLayout.Detach("info");
                 state.panelFileInfo.visible = false;
             }
             ImGui::End();
-            ImGui::PopStyleColor(dockedInfoStyle);
+            popDockedToolAppearance(appearance);
         }
         if (leaf.id == "similar-sounds" && !state.panelSimilarSounds.floating) {
             ImGui::SetNextWindowPos(ImVec2(leaf.rect.x, leaf.rect.y), ImGuiCond_Always);
@@ -52359,17 +52745,20 @@ void RenderUI(AppState& state) {
             ImGui::PopStyleColor(dockedSimilarStyle);
         }
         renderFunctionDockedModule(leaf, "mod-ucs-browser", state.panelUCSBrowser,
-            &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle), RenderUCSBrowserContent,
-            "##DockedUCSBrowser", "##DockedUCSBrowserMenu", "##DockedUCSBrowserContent");
+            &state.showUCSBrowser, L(ModuleUI_UCSBrowserTitle),
+            "##DockedUCSBrowser", "##DockedUCSBrowserMenu");
         renderFunctionDockedModule(leaf, "mod-tag-browser", state.panelTagBrowser,
-            &state.showTagBrowser, L(ModuleUI_TagSystemTitle), RenderTagBrowserContent,
-            "##DockedTagBrowser", "##DockedTagBrowserMenu", "##DockedTagBrowserContent");
+            &state.showTagBrowser, L(ModuleUI_TagSystemTitle),
+            "##DockedTagBrowser", "##DockedTagBrowserMenu");
         renderFunctionDockedModule(leaf, "mod-workflow", state.panelWorkflow,
-            &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle), RenderWorkflowDialogContent,
-            "##DockedWorkflow", "##DockedWorkflowMenu", "##DockedWorkflowContent");
+            &state.showWorkflowDialog, L(ModuleUI_WorkflowTitle),
+            "##DockedWorkflow", "##DockedWorkflowMenu");
         renderFunctionDockedModule(leaf, "mod-transfer", state.panelTransfer,
-            &state.showTransferDialog, L(ModuleUI_TransferTitle), RenderTransferDialogContent,
-            "##DockedTransfer", "##DockedTransferMenu", "##DockedTransferContent");
+            &state.showTransferDialog, L(ModuleUI_TransferTitle),
+            "##DockedTransfer", "##DockedTransferMenu");
+        renderFunctionDockedModule(leaf, "mod-batch-edit", state.panelBatchEdit,
+            &state.panelBatchEdit.visible, L(Dlg_BatchOp),
+            "##DockedBatchEdit", "##DockedBatchEditMenu");
     }
 
     {
@@ -52526,10 +52915,12 @@ void RenderUI(AppState& state) {
                     ImGui::GetColorU32(ImVec4(gripFillBase.x, gripFillBase.y, gripFillBase.z, gripFillAlpha)));
             }
             if (dl) {
-                const ImVec2 center(
-                    grip.rect.x + grip.rect.width * 0.5f,
-                    grip.rect.y + grip.rect.height * 0.5f);
                 const bool dotsAlongY = grip.axis == aura::ui::dock::Axis::Horizontal;
+                const float midX = grip.rect.x + grip.rect.width * 0.5f;
+                const float midY = grip.rect.y + grip.rect.height * 0.5f;
+                const ImVec2 center(
+                    dotsAlongY ? midX : grip.indicatorAlong.value_or(midX),
+                    dotsAlongY ? grip.indicatorAlong.value_or(midY) : midY);
                 const float span = dotsAlongY ? grip.rect.height : grip.rect.width;
                 const float gap = ImClamp(span * 0.018f, 5.0f, 9.0f);
                 const ImVec4 dotColor = ResolveThreeDotSplitterColor(
@@ -52552,7 +52943,6 @@ void RenderUI(AppState& state) {
         for (int column = 0; column < 2; ++column) {
             if (modalBlocksGrips) break;
             const bool left = column == 0;
-            const auto side = left ? aura::ui::dock::DockSide::Left : aura::ui::dock::DockSide::Right;
             auto grip = left ? leftOuterGrip : rightOuterGrip;
             if (!grip.visible) continue;
             const float columnBoundaryX = left ? rootSlots.left.x + rootSlots.left.width : rootSlots.right.x;
@@ -52578,28 +52968,47 @@ void RenderUI(AppState& state) {
                         ImGui::GetColorU32(color));
                 }
                 if (dragging) {
-                    auto resizedRect = left ? rootSlots.left : rootSlots.right;
-                    const auto* root = g_dockLayout.RegionRoot(side);
-                    const auto purpose = root && root->Kind() == aura::ui::dock::NodeKind::Split
-                        ? splitResizeMinimum : aura::ui::dock::DockMinimumPurpose::Placement;
-                    const float minimum = dockLiveMinimum(root, purpose).width;
-                    const float maximum = std::max(minimum, resizedRect.width + centerWidth - minReadableCenterWidth);
-                    if (aura::ui::dock::DragRightDockOuterGrip(resizedRect.width,
-                            ImGui::GetIO().MouseDelta.x * (left ? -1.0f : 1.0f), minimum, maximum)) {
-                        MirrorDockRootExtent(state, side, resizedRect);
-                        MarkSettingsDirty(state);
-                    }
+                    (left ? pendingLeftDockWidthDelta : pendingRightDockWidthDelta) =
+                        ImGui::GetIO().MouseDelta.x * (left ? 1.0f : -1.0f);
                 }
             }
             ImGui::End();
         }
     }
 
+    const float dockResizeCenterSpare = std::max(0.0f, mainWorkW -
+        (leftDockSlotRequired ? leftDockColumnWidth + splitterWidth : 0.0f) -
+        (rightDockSlotRequired ? rightDockColumnWidth + splitterWidth : 0.0f) -
+        minReadableCenterWidth);
+    const auto applyDockColumnResize = [&](aura::ui::dock::DockSide side, float width,
+                                           float delta, float legacyMinimum, bool legacyVisible) {
+        if (delta == 0.0f) return;
+        const float minimum = legacyVisible ? legacyMinimum : aura::ui::dock::DockSubtreeMinimum(
+            g_dockLayout.RegionRoot(side), viewport->DpiScale).width;
+        if (!aura::ui::dock::ResizeDockColumnFromCenter(g_dockLayout, side, width,
+                delta, minimum, width + dockResizeCenterSpare, viewport->DpiScale)) return;
+        const float logicalWidth = aura::ui::dpi::UnscalePx(width, workspaceScale);
+        if (side == aura::ui::dock::DockSide::Left) {
+            state.panelSidebar.dockedWidth = logicalWidth;
+        } else {
+            state.panelFileInfo.dockedWidth = logicalWidth;
+            state.panelSimilarSounds.dockedWidth = logicalWidth;
+        }
+        ++g_dockGeometryRevision;
+        MarkSettingsDirty(state);
+    };
+    applyDockColumnResize(aura::ui::dock::DockSide::Left, leftDockColumnWidth,
+                          pendingLeftDockWidthDelta, leftSidebarMinWidth, showLeftColumn);
+    applyDockColumnResize(aura::ui::dock::DockSide::Right, rightDockColumnWidth,
+                          pendingRightDockWidthDelta, rightPanelMinWidth, showRightColumn);
+
     if (g_dockTestBandHintsVisible) {
         const auto& frame = buildDockFrameGeometry();
         aura::ui::dock::DockHint hints[64]{};
+        const aura::ui::dock::DockCenterDropTarget centerDrop{
+            resultsHomeRect, aura::ui::dock::DockSide::Left, true};
         const int hintCount = aura::ui::dock::CollectLegalDockHints(
-            g_dockLayout, mainWork, dockSnapDistance, frame, hints, 64);
+            g_dockLayout, mainWork, dockSnapDistance, frame, hints, 64, &centerDrop);
         ImDrawList* overlay = ImGui::GetForegroundDrawList(ImGui::GetMainViewport());
         for (int i = 0; i < hintCount && overlay; ++i) {
             const auto& rect = hints[i].visibleRect;

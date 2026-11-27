@@ -2229,7 +2229,7 @@ static int testRolledBackDriveRootScanKeepsLibraryRootInFolderTree() {
     return failures;
 }
 
-static int testDriveRootLibraryRootBrowsesIndexedFolders() {
+static int testLibraryRootBrowsesIndexedFolders() {
     int failures = 0;
     const fs::path root = makeTempRoot("drive_root_library_root");
     const fs::path dbPath = root / "drive_root_library_root.db";
@@ -2242,6 +2242,7 @@ static int testDriveRootLibraryRootBrowsesIndexedFolders() {
         return 1;
     }
 
+#ifdef _WIN32
     // Rows exactly as a drive-root scan stores them while the drive root is the
     // registered library root (mergeLibraryRoots keeps the trailing separator).
     check(execSqlite(db.db(),
@@ -2253,25 +2254,36 @@ static int testDriveRootLibraryRootBrowsesIndexedFolders() {
           "('Z:\\pack-01\\sub\\b.wav','b.wav','z:\\pack-01\\sub');"),
           "drive-root nested fixture row inserts", failures);
     db.mergeLibraryRoots({"Z:\\"});
-    const auto roots = db.getLibraryRoots();
-    check(roots.size() == 1, "drive root registers one library root", failures);
-
-    check(db.rebuildFolderIndex(), "drive-root library rebuilds folder index", failures);
-    const FolderInfo tree = db.getFolderHierarchyFromIndex();
     const std::string expectedFolderPath = HarkenSearch::CanonicalFolderPath("z:\\pack-01");
+#else
+    const auto libraryRoot = root / "Library";
+    const auto folder = libraryRoot / "Pack-01";
+    fs::create_directories(folder / "Sub");
+    writeSilentMonoWav(folder / "a.wav");
+    writeSilentMonoWav(folder / "Sub" / "b.wav");
+    db.mergeLibraryRoots({libraryRoot.u8string() + "/"});
+    check(db.scanDirectoryEx(libraryRoot.u8string(), true, false, false, nullptr, nullptr, 1, false).added == 2,
+          "native library root scans files in both folder levels", failures);
+    const std::string expectedFolderPath = HarkenSearch::CanonicalFolderPath(folder.u8string());
+#endif
+    const auto roots = db.getLibraryRoots();
+    check(roots.size() == 1, "fixture registers one library root", failures);
+
+    check(db.rebuildFolderIndex(), "library root rebuilds folder index", failures);
+    const FolderInfo tree = db.getFolderHierarchyFromIndex();
     std::function<bool(const FolderInfo&)> containsFolder;
     containsFolder = [&](const FolderInfo& folder) {
         if (folder.path == expectedFolderPath) return true;
         return std::any_of(folder.subfolders.begin(), folder.subfolders.end(), containsFolder);
     };
     check(containsFolder(tree),
-          "drive-root library root keeps indexed folders browseable in the tree",
+          "library root keeps indexed folders browseable in the tree",
           failures);
     check(db.pruneEntriesOutsideLibraryRoots() == 0,
-          "drive-root library prune keeps rows below the drive root",
+          "library prune keeps rows below the registered root",
           failures);
     check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files", -1) == 2,
-          "drive-root library prune leaves both rows in place",
+          "library prune leaves both rows in place",
           failures);
 
     db.close();
@@ -2369,13 +2381,17 @@ static int testRemoveRegisteredFolderSubtreePreservesOtherRoots(bool useWorker =
     check(db.addToPlaylist(playlist, targetId) && db.addToPlaylist(playlist, nestedId),
           "playlist refers to the target and nested-root files", failures);
     const std::string targetKey = HarkenSearch::CanonicalFolderPath(target.u8string());
+#ifdef _WIN32
     const std::string equivalentPath = "\\\\?\\" + targetKey + "\\";
+#else
+    const std::string equivalentPath = targetKey + "/";
+#endif
     const auto revision = db.dataRevision();
     const auto removed = useWorker ? db.removeFolderSubtreeFromLibraryOnWorker(equivalentPath)
                                    : db.removeFolderSubtreeFromLibrary(equivalentPath);
     check(removed.status == FolderSubtreeRemovalStatus::Removed && removed.removedFiles == 2 &&
           removed.removedPaths.size() == 2 && removed.error.empty() && db.dataRevision() > revision,
-          "extended mixed-case equivalent removes the target without touching a nested independent root", failures);
+          "equivalent path removes the target without touching a nested independent root", failures);
     check(!hasRegisteredRemovalRoot(db, target) && hasRegisteredRemovalRoot(db, nearby) &&
           hasRegisteredRemovalRoot(db, nested) && db.getLibraryRoots().size() == 2,
           "exact registration is removed but other roots stay registered", failures);
@@ -2675,6 +2691,7 @@ static int testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault() {
     return failures;
 }
 
+#ifdef _WIN32
 static int testRemoveDriveRootSubtreeCleansHiddenIndexedRows() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_drive_root_subtree");
@@ -2809,6 +2826,8 @@ static int testRemoveDriveRootSubtreeCleansHiddenIndexedRows() {
     return failures;
 }
 
+#endif
+
 static int testPilotFolderHierarchyKeepsNestedRootsTogether() {
     int failures = 0;
     const fs::path root = makeTempRoot("pilot_nested_roots");
@@ -2820,10 +2839,18 @@ static int testPilotFolderHierarchyKeepsNestedRootsTogether() {
         fs::remove_all(root);
         return 1;
     }
-    db.mergeLibraryRoots({"H:\\Collection", "H:\\Collection\\8082", "D:\\Other"});
+#ifdef _WIN32
+    const auto parentFolder = fs::u8path("H:\\Collection");
+    const auto independentFolder = fs::u8path("D:\\Other");
+#else
+    const auto parentFolder = root / "Collection";
+    const auto independentFolder = root / "Other";
+#endif
+    const auto nestedFolder = parentFolder / "8082";
+    db.mergeLibraryRoots({parentFolder.u8string(), nestedFolder.u8string(), independentFolder.u8string()});
 
     AudioRecord nested;
-    nested.filePath = "H:\\Collection\\8082\\inside.wav";
+    nested.filePath = (nestedFolder / "inside.wav").u8string();
     nested.fileName = "inside.wav";
     nested.extension = ".wav";
     nested.format = "WAV";
@@ -2835,21 +2862,24 @@ static int testPilotFolderHierarchyKeepsNestedRootsTogether() {
     check(db.addFile(nested), "nested-root fixture inserts a child audio row", failures);
 
     AudioRecord independent = nested;
-    independent.filePath = "D:\\Other\\outside.wav";
+    independent.filePath = (independentFolder / "outside.wav").u8string();
     independent.fileName = "outside.wav";
     check(db.addFile(independent), "nested-root fixture inserts an independent audio row", failures);
     check(db.rebuildFolderIndex(), "nested-root fixture builds the folder index", failures);
 
-    auto checkTree = [&failures](const FolderInfo& tree, const char* source) {
+    const auto parentKey = HarkenSearch::CanonicalFolderPath(parentFolder.u8string());
+    const auto independentKey = HarkenSearch::CanonicalFolderPath(independentFolder.u8string());
+    const auto nestedKey = HarkenSearch::CanonicalFolderPath(nestedFolder.u8string());
+    auto checkTree = [&](const FolderInfo& tree, const char* source) {
         const auto parent = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
-            [](const FolderInfo& folder) { return folder.path == "h:\\collection"; });
+            [&](const FolderInfo& folder) { return folder.path == parentKey; });
         const auto other = std::find_if(tree.subfolders.begin(), tree.subfolders.end(),
-            [](const FolderInfo& folder) { return folder.path == "d:\\other"; });
+            [&](const FolderInfo& folder) { return folder.path == independentKey; });
         check(tree.subfolders.size() == 2 && parent != tree.subfolders.end() &&
                   other != tree.subfolders.end(), source, failures);
         if (parent == tree.subfolders.end()) return;
         check(parent->subfolders.size() == 1 &&
-                  parent->subfolders[0].path == "h:\\collection\\8082" &&
+                  parent->subfolders[0].path == nestedKey &&
                   parent->subfolders[0].fileCount == 1,
               "nested root is one selectable child with its original count", failures);
     };
@@ -2878,7 +2908,11 @@ static int testFolderHierarchyFromIndexRepairsStaleIndex() {
     }
 
     AudioRecord a;
+#ifdef _WIN32
     a.filePath = "H:\\Sound effect\\A\\a.wav";
+#else
+    a.filePath = (root / "Sound effect" / "A" / "a.wav").u8string();
+#endif
     a.fileName = "a.wav";
     a.extension = ".wav";
     a.format = "WAV";
@@ -2890,13 +2924,18 @@ static int testFolderHierarchyFromIndexRepairsStaleIndex() {
     check(db.addFile(a), "folder-index repair fixture inserts first row", failures);
 
     AudioRecord b = a;
+#ifdef _WIN32
     b.filePath = "H:\\Sound effect\\B\\b.wav";
+#else
+    b.filePath = (root / "Sound effect" / "B" / "b.wav").u8string();
+#endif
     b.fileName = "b.wav";
     check(db.addFile(b), "folder-index repair fixture inserts second row", failures);
 
     check(db.rebuildFolderIndex(), "folder-index repair fixture builds baseline index", failures);
     check(execSqlite(db.db(),
-                     "DELETE FROM folder_index WHERE folder_path = 'h:\\sound effect\\b'"),
+                     "DELETE FROM folder_index WHERE folder_path = "
+                     "(SELECT folder_path FROM audio_files WHERE file_name = 'b.wav')"),
           "folder-index repair fixture can corrupt one folder_index row", failures);
     check(querySingleInt(db.db(),
                          "SELECT COALESCE(SUM(file_count), 0) FROM folder_index",
@@ -3070,6 +3109,7 @@ static int testMultiFolderScanProgressAggregatesLocalCallbacks() {
     return failures;
 }
 
+#ifdef _WIN32
 static int testRemoveFolderSubtreeMatchesLegacyCaseFolderPaths() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_folder_legacy_case");
@@ -3232,6 +3272,8 @@ static int testRemoveFolderAncestorSubtreeMatchesLegacyCaseDescendants() {
     return failures;
 }
 
+#endif
+
 static int testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable() {
     int failures = 0;
     const fs::path root = makeTempRoot("remove_folder_missing_backfill_pending");
@@ -3244,8 +3286,14 @@ static int testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable() {
         return 1;
     }
 
+#ifdef _WIN32
+    const auto library = fs::u8path("H:\\Sound effect");
+#else
+    const auto library = root / "Sound effect";
+#endif
+    const auto targetBranch = library / fs::u8path("综合");
     AudioRecord target;
-    target.filePath = "H:\\Sound effect\\综合\\SoundMorph音效合辑\\hit.wav";
+    target.filePath = (targetBranch / fs::u8path("SoundMorph音效合辑") / "hit.wav").u8string();
     target.fileName = "hit.wav";
     target.extension = ".wav";
     target.format = "WAV";
@@ -3257,7 +3305,7 @@ static int testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable() {
     check(db.addFile(target), "missing-backfill fixture inserts target row", failures);
 
     AudioRecord sibling = target;
-    sibling.filePath = "H:\\Sound effect\\KeepCase\\keep.wav";
+    sibling.filePath = (library / "KeepCase" / "keep.wav").u8string();
     sibling.fileName = "keep.wav";
     sibling.fileSize = 20;
     sibling.totalFrames = 96000;
@@ -3267,15 +3315,13 @@ static int testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable() {
     check(execSqlite(db.db(), "DROP TABLE backfill_pending;"),
           "missing-backfill fixture removes optional legacy backfill_pending table", failures);
 
-    const int removed = db.removeFolderSubtreeFromDb("h:\\sound effect\\综合", false);
+    const int removed = db.removeFolderSubtreeFromDb(HarkenSearch::CanonicalFolderPath(targetBranch.u8string()), false);
     check(removed == 1, "missing-backfill subtree removal still reports descendant row", failures);
     check(!db.fileExists(target.filePath), "missing-backfill removal deletes subtree row", failures);
     check(db.fileExists(sibling.filePath), "missing-backfill removal preserves sibling branch", failures);
-    check(querySingleInt(db.db(),
-                         "SELECT COUNT(*) FROM audio_files "
-                         "WHERE folder_path LIKE 'H:\\Sound effect\\综合%'",
-                         -1) == 0,
-          "missing-backfill removal leaves no target subtree rows behind", failures);
+    check(querySingleInt(db.db(), "SELECT COUNT(*) FROM audio_files",
+                         -1) == 1,
+          "missing-backfill removal leaves only the sibling row", failures);
 
     db.close();
     removeDbArtifacts(dbPath);
@@ -3652,8 +3698,17 @@ static int testClearWaveformCacheByFolderUsesCanonicalFolderPath() {
         return 1;
     }
 
+#ifdef _WIN32
+    const std::string scope = "H:";
+    const std::string targetPath = "\\\\?\\H:\\Sound effect\\Folder\\target.wav";
+    const std::string siblingPath = "I:\\Sound effect\\Folder\\sibling.wav";
+#else
+    const std::string scope = (root / "Sound effect").u8string() + "/";
+    const std::string targetPath = (root / "Sound effect" / "Folder" / "target.wav").u8string();
+    const std::string siblingPath = (root / "Sound effect Archive" / "Folder" / "sibling.wav").u8string();
+#endif
     AudioRecord target;
-    target.filePath = "\\\\?\\H:\\Sound effect\\Folder\\target.wav";
+    target.filePath = targetPath;
     target.fileName = "target.wav";
     target.extension = ".wav";
     target.format = "WAV";
@@ -3662,10 +3717,10 @@ static int testClearWaveformCacheByFolderUsesCanonicalFolderPath() {
     target.channels = 1;
     target.totalFrames = 48000;
     target.durationSeconds = 1.0f;
-    check(db.addFile(target), "clear-folder fixture inserts long-prefix target row", failures);
+    check(db.addFile(target), "clear-folder fixture inserts target row", failures);
 
     AudioRecord sibling = target;
-    sibling.filePath = "I:\\Sound effect\\Folder\\sibling.wav";
+    sibling.filePath = siblingPath;
     sibling.fileName = "sibling.wav";
     check(db.addFile(sibling), "clear-folder fixture inserts sibling row", failures);
 
@@ -3687,30 +3742,30 @@ static int testClearWaveformCacheByFolderUsesCanonicalFolderPath() {
     const uint64_t waveformsBytesBeforeClear = fileSizeIfExists(waveformsDbPath);
     check(waveformsBytesBeforeClear > 0, "clear-folder fixture waveforms sidecar has physical size", failures);
 
-    const int cleared = db.clearWaveformCacheByFolder("H:");
-    check(cleared > 0, "clear waveform cache by drive root affects canonical H row", failures);
+    const int cleared = db.clearWaveformCacheByFolder(scope);
+    check(cleared > 0, "clear waveform cache by canonical root affects the target row", failures);
     check(db.fileExists(target.filePath),
-          "clear waveform cache by drive root keeps target database row", failures);
+          "clear waveform cache by root keeps target database row", failures);
     check(db.getWaveformByPath(target.filePath).empty(),
-          "clear waveform cache by drive root clears target mini", failures);
+          "clear waveform cache by root clears target mini", failures);
     check(db.getWaveformDetailByPath(target.filePath).empty(),
-          "clear waveform cache by drive root clears target detail", failures);
+          "clear waveform cache by root clears target detail", failures);
     check(db.getWaveformMinDetailByPath(target.filePath).empty(),
-          "clear waveform cache by drive root clears target min detail", failures);
+          "clear waveform cache by root clears target min detail", failures);
     WaveformCacheState clearedState;
     const bool hasClearedState = db.getWaveformCacheStateByPath(target.filePath, clearedState);
-    check(hasClearedState, "clear waveform cache by drive root keeps target cache state row", failures);
+    check(hasClearedState, "clear waveform cache by root keeps target cache state row", failures);
     check(hasClearedState && clearedState.status == "pending",
-          "clear waveform cache by drive root marks target cache pending", failures);
+          "clear waveform cache by root marks target cache pending", failures);
     check(hasClearedState && clearedState.cacheKey.empty(),
-          "clear waveform cache by drive root clears target cache key", failures);
+          "clear waveform cache by root clears target cache key", failures);
     check(!db.getWaveformByPath(sibling.filePath).empty(),
-          "clear waveform cache by drive root preserves sibling mini", failures);
+          "clear waveform cache by root preserves sibling mini", failures);
     check(db.fileExists(sibling.filePath),
-          "clear waveform cache by drive root keeps sibling database row", failures);
+          "clear waveform cache by root keeps sibling database row", failures);
     const uint64_t waveformsBytesAfterClear = fileSizeIfExists(waveformsDbPath);
     check(waveformsBytesAfterClear < waveformsBytesBeforeClear,
-          "clear waveform cache by drive root physically shrinks waveforms sidecar", failures);
+          "clear waveform cache by root physically shrinks waveforms sidecar", failures);
 
     db.close();
     removeDbArtifacts(dbPath);
@@ -3839,6 +3894,89 @@ static int testRemoveSingleFileInvalidatesCountAndFolderIndex() {
     check(db.fileExists(siblingFile.u8string()), "single-file sibling db row preserved", failures);
     check(fs::exists(targetFile), "single-file db removal keeps disk file", failures);
 
+    db.close();
+    removeDbArtifacts(dbPath);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return failures;
+}
+
+static int testWatcherRefreshKeepsIndexedCountsInSync() {
+    int failures = 0;
+    const fs::path root = makeTempRoot("watcher_refresh_counts");
+    const fs::path library = root / "Library";
+    const fs::path source = library / "Source";
+    const fs::path destination = library / "Destination";
+    const fs::path dbPath = root / "watcher_refresh_counts.db";
+    fs::create_directories(source);
+    fs::create_directories(destination);
+    const fs::path originalFile = source / "original.wav";
+    const fs::path addedFile = source / "added.wav";
+    const fs::path movedFile = destination / "moved.wav";
+    writeSilentMonoWav(originalFile);
+
+    Database db;
+    if (!db.open(dbPath.u8string())) {
+        std::cerr << "FAIL: open db: " << db.getLastError() << "\n";
+        fs::remove_all(root);
+        return 1;
+    }
+
+    const ScanStats stats = db.scanDirectoryEx(library.u8string(), true, false, false, nullptr, nullptr, 1, false);
+    check(stats.added == 1, "watcher fixture scans one real WAV", failures);
+    check(db.rebuildFolderIndex(), "watcher fixture builds the persistent folder index", failures);
+    SearchFilter sourceFilter;
+    sourceFilter.folderPath = HarkenSearch::CanonicalFolderPath(source.u8string());
+    SearchFilter destinationFilter;
+    destinationFilter.folderPath = HarkenSearch::CanonicalFolderPath(destination.u8string());
+    const auto verifyCounts = [&](int total, int sourceCount, int destinationCount, const char* phase) {
+        const auto rows = db.searchFiles({});
+        const auto reportedTotal = db.searchFilesCount({});
+        const auto reportedSource = db.searchFilesCount(sourceFilter);
+        const auto reportedDestination = db.searchFilesCount(destinationFilter);
+        if (!check(rows.size() == static_cast<size_t>(total) && reportedTotal == total &&
+                   reportedSource == sourceCount && reportedDestination == destinationCount, phase, failures)) {
+            std::cerr << "  expected total/source/destination " << total << "/" << sourceCount << "/"
+                      << destinationCount << "; rows " << rows.size() << ", reported " << reportedTotal << "/"
+                      << reportedSource << "/" << reportedDestination << "\n";
+        }
+    };
+    verifyCounts(1, 1, 0, "initial scan returns one row and matching counts");
+
+    writeSilentMonoWav(addedFile);
+    db.handleFileSystemEvent(addedFile.u8string(), true, false, false);
+    verifyCounts(2, 2, 0, "watcher add updates list and total to two");
+    db.handleFileSystemEvent(addedFile.u8string(), true, false, false);
+    verifyCounts(2, 2, 0, "duplicate add does not double-count the file");
+
+    fs::rename(addedFile, movedFile);
+    check(db.updateFilePath(addedFile.u8string(), movedFile.u8string(), {}),
+          "watcher move updates the stored path", failures);
+    db.handleFileSystemEvent(movedFile.u8string(), false, false, true);
+    check(!db.fileExists(addedFile.u8string()) && db.fileExists(movedFile.u8string()),
+          "watcher move leaves only the new path searchable", failures);
+    verifyCounts(2, 1, 1, "cross-folder move updates both folder counts without changing the total");
+    const auto movedIndex = db.getFolderIndex();
+    check(movedIndex.size() == 2 && movedIndex.front().fileCount == 1 && movedIndex.back().fileCount == 1,
+          "cross-folder move persists both indexed counts", failures);
+
+    fs::remove(movedFile);
+    db.handleFileSystemEvent(movedFile.u8string(), false, true, false);
+    db.handleFileSystemEvent(movedFile.u8string(), false, true, false);
+    verifyCounts(1, 1, 0, "watcher delete and duplicate notification leave one row and total");
+    const auto indexedFolders = db.getFolderIndex();
+    check(indexedFolders.size() == 1 && indexedFolders.front().fileCount == 1 &&
+          indexedFolders.front().folderPath == HarkenSearch::CanonicalFolderPath(source.u8string()),
+          "last-file deletion removes the empty folder's persisted count", failures);
+
+    db.close();
+    if (check(db.open(dbPath.u8string()), "reopen watcher fixture database", failures)) {
+        verifyCounts(1, 1, 0, "reopened library retains the corrected total and folder counts");
+        check(db.clearFolderIndex(), "fixture simulates an unbuilt folder index", failures);
+        writeSilentMonoWav(movedFile);
+        db.handleFileSystemEvent(movedFile.u8string(), true, false, false);
+        verifyCounts(2, 1, 1, "an unbuilt index does not hide rows from untouched folders");
+    }
     db.close();
     removeDbArtifacts(dbPath);
     std::error_code ec;
@@ -5284,6 +5422,8 @@ int main(int argc, char** argv) {
         return testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale() == 0 ? 0 : 1;
     if (argc == 2 && std::string(argv[1]) == "--read-only-missing-folder-index")
         return testReadOnlyFolderHierarchyFromIndexFallsBackWhenUnavailable() == 0 ? 0 : 1;
+    if (argc == 2 && std::string(argv[1]) == "--watcher-refresh-counts")
+        return testWatcherRefreshKeepsIndexedCountsInSync() == 0 ? 0 : 1;
 
     int failures = 0;
     std::cout << "-- testWpk2PeakEnvelopeCodecRoundTripsStereo\n";
@@ -5356,12 +5496,14 @@ int main(int argc, char** argv) {
     std::cout << "-- testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault\n";
     failures += testRemoveFolderSubtreeFromDbKeepsDiskFilesByDefault();
     failures += testRemoveFolderRootRegistrations();
+#ifdef _WIN32
     std::cout << "-- testRemoveDriveRootSubtreeCleansHiddenIndexedRows\n";
     failures += testRemoveDriveRootSubtreeCleansHiddenIndexedRows();
     std::cout << "-- testRemoveFolderSubtreeMatchesLegacyCaseFolderPaths\n";
     failures += testRemoveFolderSubtreeMatchesLegacyCaseFolderPaths();
     std::cout << "-- testRemoveFolderAncestorSubtreeMatchesLegacyCaseDescendants\n";
     failures += testRemoveFolderAncestorSubtreeMatchesLegacyCaseDescendants();
+#endif
     std::cout << "-- testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable\n";
     failures += testRemoveFolderSubtreeSkipsMissingLegacyBackfillTable();
     std::cout << "-- testRemoveFolderSubtreeLeavesPackageCompactable\n";
@@ -5372,8 +5514,9 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeReportsUnrecoverableIndexDamage();
     std::cout << "-- testRemoveFolderSubtreeDeleteFailureReportsReadableError";
     failures += testRemoveFolderSubtreeDeleteFailureReportsReadableError();
-    std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
+    std::cout << "-- testPilotFolderHierarchyKeepsNestedRootsTogether\n";
     failures += testPilotFolderHierarchyKeepsNestedRootsTogether();
+    std::cout << "-- testFolderHierarchyFromIndexRepairsStaleIndex\n";
     failures += testFolderHierarchyFromIndexRepairsStaleIndex();
     std::cout << "-- testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale\n";
     failures += testReadOnlyFolderHierarchyFromIndexFallsBackWhenStale();
@@ -5387,6 +5530,8 @@ int main(int argc, char** argv) {
     failures += testRemoveFolderSubtreeFromDbCanDeleteDiskFiles();
     std::cout << "-- testRemoveSingleFileInvalidatesCountAndFolderIndex\n";
     failures += testRemoveSingleFileInvalidatesCountAndFolderIndex();
+    std::cout << "-- testWatcherRefreshKeepsIndexedCountsInSync\n";
+    failures += testWatcherRefreshKeepsIndexedCountsInSync();
     std::cout << "-- testScanWriteInfrastructureFailureCountsDiscoveredFiles\n";
     failures += testScanWriteInfrastructureFailureCountsDiscoveredFiles();
     failures += testScanStatsKeepCategoriesWhenDetailsAreCapped();
@@ -5433,8 +5578,8 @@ int main(int argc, char** argv) {
     failures += testCancelledDriveRootScanKeepsCommittedRowsAndFolderTree();
     std::cout << "-- testRolledBackDriveRootScanKeepsLibraryRootInFolderTree\n";
     failures += testRolledBackDriveRootScanKeepsLibraryRootInFolderTree();
-    std::cout << "-- testDriveRootLibraryRootBrowsesIndexedFolders\n";
-    failures += testDriveRootLibraryRootBrowsesIndexedFolders();
+    std::cout << "-- testLibraryRootBrowsesIndexedFolders\n";
+    failures += testLibraryRootBrowsesIndexedFolders();
     std::cout << "-- testCoverWallIgnoresStaleOrphanRegistryRows\n";
     failures += testCoverWallIgnoresStaleOrphanRegistryRows();
 

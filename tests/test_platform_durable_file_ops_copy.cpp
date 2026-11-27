@@ -19,6 +19,21 @@ int main() {
         output << "durable-copy";
     }
 
+#ifdef __APPLE__
+    const auto flushed = Platform::FileSystem::FlushExistingFileToDisk(source.u8string());
+    const auto missingFlush = Platform::FileSystem::FlushExistingFileToDisk(missing.u8string());
+    const auto invalidFlush = Platform::FileSystem::FlushExistingFileToDisk({});
+    if (flushed.status != Platform::FileSystem::DurableFileOpStatus::Success ||
+        flushed.systemError != 0 ||
+        missingFlush.status != Platform::FileSystem::DurableFileOpStatus::OpenFailed ||
+        missingFlush.systemError == 0 ||
+        invalidFlush.status != Platform::FileSystem::DurableFileOpStatus::InvalidArgument) {
+        std::cerr << "standalone flush did not report success, missing path and invalid input correctly\n";
+        fs::remove_all(root);
+        return 1;
+    }
+#endif
+
     const auto copied = Platform::FileSystem::CopyFileExclusiveAndFlush(
         source.u8string(), target.u8string());
     if (copied.status != Platform::FileSystem::DurableFileOpStatus::Success) {

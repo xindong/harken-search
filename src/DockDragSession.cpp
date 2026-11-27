@@ -42,6 +42,15 @@ DockHit DockDragSession::CommitOnMouseUp() {
     return committed;
 }
 
+DockHit DockDragSession::CommitOnMouseUp(const DockDropPlan& plan) {
+    if (!dragging_ || !plan.accepted || !plan.candidate) return {};
+    layout_ = *plan.candidate;
+    dragging_ = false;
+    preview_ = {};
+    moduleId_.clear();
+    return plan.hit;
+}
+
 void DockDragSession::CommitFloatingOnMouseUp() {
     if (!dragging_) return;
     if (layout_.Find(moduleId_)) layout_.Detach(moduleId_);

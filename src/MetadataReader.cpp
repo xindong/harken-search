@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <ios>
 #include <memory>
+#include <string_view>
 
 namespace fs = std::filesystem;
 
@@ -218,7 +219,9 @@ uint32_t MetadataReader::readSyncSafeInt(const uint8_t* data) {
            ((data[2] & 0x7F) << 7) | (data[3] & 0x7F);
 }
 
-bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata) {
+bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& metadata,
+                                  bool* mp3CustomTagsRead) {
+    if (mp3CustomTagsRead) *mp3CustomTagsRead = false;
     try {
     // Determine format from extension
     std::string ext;
@@ -234,7 +237,7 @@ bool MetadataReader::readMetadata(const std::string& filePath, AudioMetadata& me
     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
     if (ext == ".mp3") {
-        if (readID3v2(filePath, metadata)) return true;
+        if (readID3v2(filePath, metadata, true, mp3CustomTagsRead)) return true;
         return readID3v1(filePath, metadata);
     } else if (ext == ".wav" || ext == ".wave") {
         return readBWF(filePath, metadata);
@@ -315,7 +318,39 @@ bool MetadataReader::readID3v1(const std::string& filePath, AudioMetadata& metad
     return metadata.hasData();
 }
 
-bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metadata) {
+using Platform::Metadata::LegacyTagContent::Utf16ByteOrder;
+
+static std::string DecodeId3Text(uint8_t encoding, std::string_view bytes, Utf16ByteOrder& order) {
+    if (encoding == 3) return std::string(bytes);
+    if (encoding == 0) return Platform::Metadata::LegacyTagContent::DecodeId3v2Encoding0(bytes);
+    if (encoding != 1 && encoding != 2) return {};
+
+    if (bytes.substr(0, 2) == "\xFF\xFE") {
+        order = Utf16ByteOrder::LittleEndian;
+        bytes.remove_prefix(2);
+    } else if (bytes.substr(0, 2) == "\xFE\xFF") {
+        order = Utf16ByteOrder::BigEndian;
+        bytes.remove_prefix(2);
+    }
+    return Platform::Metadata::LegacyTagContent::DecodeUtf16(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), order);
+}
+
+static size_t FindId3TextSeparator(std::string_view bytes, size_t width) {
+    if (width == 1) return bytes.find('\0');
+    for (size_t offset = 0; offset + 1 < bytes.size(); offset += 2) {
+        if (bytes[offset] == '\0' && bytes[offset + 1] == '\0') return offset;
+    }
+    return std::string_view::npos;
+}
+
+static void StripId3TextTerminators(std::string& text) {
+    while (!text.empty() && text.back() == '\0') text.pop_back();
+}
+
+bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metadata,
+                               bool useV1Fallback, bool* customTagsRead) {
+    if (customTagsRead) *customTagsRead = false;
     MetadataFileReader file = openFile(filePath);
     if (!file.is_open()) return false;
 
@@ -326,6 +361,7 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
 
     // Check for ID3 header
     if (header[0] != 'I' || header[1] != 'D' || header[2] != '3') {
+        if (customTagsRead) *customTagsRead = true;
         return false;
     }
 
@@ -334,7 +370,13 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
     // uint8_t flags = header[5];
     uint32_t tagSize = readSyncSafeInt(header + 6);
 
-    if (majorVersion < 2 || majorVersion > 4 || tagSize == 0) {
+    if (majorVersion < 2 || majorVersion > 4) {
+        return false;
+    }
+    bool customTagsComplete = (header[5] & 0xC0) == 0 &&
+        ((header[6] | header[7] | header[8] | header[9]) & 0x80) == 0;
+    if (tagSize == 0) {
+        if (customTagsRead) *customTagsRead = customTagsComplete;
         return false;
     }
 
@@ -345,87 +387,88 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
     std::vector<uint8_t> tagData(tagSize);
     file.read(reinterpret_cast<char*>(tagData.data()), tagSize);
     if (static_cast<uint32_t>(file.gcount()) != tagSize) return false;
+    if (majorVersion == 2 && useV1Fallback) readID3v1(filePath, metadata);
 
     // Parse frames
     size_t pos = 0;
-    while (pos + 10 < tagSize) {
-        // Frame header
-        char frameId[5] = {0};
-        if (majorVersion >= 3) {
-            // ID3v2.3/2.4: 4-char frame ID
-            memcpy(frameId, tagData.data() + pos, 4);
-            pos += 4;
-        } else {
-            // ID3v2.2: 3-char frame ID
-            memcpy(frameId, tagData.data() + pos, 3);
-            pos += 3;
-        }
-
-        // Check for padding
-        if (frameId[0] == 0) break;
+    const size_t idLength = majorVersion >= 3 ? 4 : 3;
+    const size_t headerLength = majorVersion >= 3 ? 10 : 6;
+    while (pos + headerLength < tagSize) {
+        const auto* frame = tagData.data() + pos;
+        if (frame[0] == 0) break;
+        const std::string_view id(reinterpret_cast<const char*>(frame), idLength);
+        const auto* sizeBytes = frame + idLength;
 
         uint32_t frameSize;
         if (majorVersion >= 4) {
-            frameSize = readSyncSafeInt(tagData.data() + pos);
+            frameSize = readSyncSafeInt(sizeBytes);
         } else if (majorVersion == 3) {
-            frameSize = readBE32(tagData.data() + pos);
+            frameSize = readBE32(sizeBytes);
         } else {
-            // ID3v2.2: 3-byte size
-            frameSize = (tagData[pos] << 16) | (tagData[pos + 1] << 8) | tagData[pos + 2];
-            pos += 3;
-            pos += frameSize;
-            continue;
+            frameSize = (sizeBytes[0] << 16) | (sizeBytes[1] << 8) | sizeBytes[2];
         }
-        pos += 4;
-
-        // Skip flags (2 bytes for v2.3/2.4)
-        if (majorVersion >= 3) {
-            pos += 2;
+        pos += headerLength;
+        if (frameSize == 0 || frameSize > tagSize - pos) {
+            customTagsComplete = false;
+            break;
         }
 
-        if (frameSize == 0 || pos + frameSize > tagSize) break;
-
-        // Read frame content
-        std::string content;
-        uint8_t encoding = tagData[pos];
-        size_t textStart = pos + 1;
-        size_t textLen = frameSize - 1;
-        std::string id(frameId);
-        if (id == "COMM") {
-            metadata.comment = trimString(Id3CommentText::Decode(
-                encoding, std::string_view(
-                    reinterpret_cast<const char*>(tagData.data() + textStart), textLen)));
-            pos += frameSize;
+        const uint8_t encoding = tagData[pos];
+        const std::string_view body(
+            reinterpret_cast<const char*>(tagData.data() + pos + 1), frameSize - 1);
+        pos += frameSize;
+        if (id == "COMM" || id == "COM") {
+            metadata.comment = trimString(Id3CommentText::Decode(encoding, body));
             continue;
         }
 
-        if (encoding == 3) {
-            // UTF-8 — already in our canonical form, copy as-is.
-            content = std::string(reinterpret_cast<char*>(tagData.data() + textStart), textLen);
-        } else if (encoding == 0) {
-            // ISO-8859-1. Real-world taggers routinely use CP_1252 extras, so
-            // transcode via CP_1252 → UTF-8 so non-ASCII bytes (é, ñ, ü, etc.)
-            // land as valid UTF-8 in the DB.
-            content = Platform::Metadata::LegacyTagContent::DecodeId3v2Encoding0(
-                std::string_view(reinterpret_cast<char*>(tagData.data() + textStart), textLen));
-        } else if (encoding == 1 || encoding == 2) {
-            // UTF-16 with BOM (encoding=1) or UTF-16BE without BOM (encoding=2).
-            auto order = encoding == 2
-                ? Platform::Metadata::LegacyTagContent::Utf16ByteOrder::BigEndian
-                : Platform::Metadata::LegacyTagContent::Utf16ByteOrder::LittleEndian;
-            if (textLen >= 2 && tagData[textStart] == 0xFF && tagData[textStart + 1] == 0xFE) {
-                order = Platform::Metadata::LegacyTagContent::Utf16ByteOrder::LittleEndian;
-                textStart += 2;
-                textLen -= 2;
-            } else if (textLen >= 2 && tagData[textStart] == 0xFE && tagData[textStart + 1] == 0xFF) {
-                order = Platform::Metadata::LegacyTagContent::Utf16ByteOrder::BigEndian;
-                textStart += 2;
-                textLen -= 2;
+        auto order = encoding == 2 ? Utf16ByteOrder::BigEndian : Utf16ByteOrder::LittleEndian;
+        if (id == "TXXX" || id == "TXX") {
+            if (encoding > 3) {
+                customTagsComplete = false;
+                continue;
             }
-            content = Platform::Metadata::LegacyTagContent::DecodeUtf16(
-                tagData.data() + textStart, textLen, order);
+            const size_t width = encoding == 1 || encoding == 2 ? 2 : 1;
+            const size_t separator = FindId3TextSeparator(body, width);
+            if (separator == std::string_view::npos) {
+                customTagsComplete = false;
+                continue;
+            }
+
+            auto description = DecodeId3Text(encoding, body.substr(0, separator), order);
+            auto value = DecodeId3Text(encoding, body.substr(separator + width), order);
+            StripId3TextTerminators(value);
+
+            auto alias = trimString(description);
+            for (char& letter : alias) {
+                if (letter >= 'a' && letter <= 'z') letter = static_cast<char>(letter - 'a' + 'A');
+            }
+            if (alias == "DESCRIPTION") {
+                metadata.description = trimString(value);
+            } else if (alias == "KEYWORDS") {
+                metadata.keywords = trimString(value);
+            } else if (alias == "REPLAYGAIN_TRACK_GAIN") {
+                try { metadata.replayGainTrack = std::stof(value); } catch (...) {}
+            } else if (alias == "REPLAYGAIN_ALBUM_GAIN") {
+                try { metadata.replayGainAlbum = std::stof(value); } catch (...) {}
+            } else if (alias == "INSTRUMENTS" || alias == "INSTUMENTS" ||
+                       alias == "INSTRUMENT" || alias == "INSTUMENT") {
+                if (metadata.instruments.empty()) metadata.instruments = trimString(value);
+            }
+            metadata.customTextTags.insert_or_assign(std::move(description), std::move(value));
+            continue;
         }
 
+        auto content = DecodeId3Text(encoding, body, order);
+        std::string* commonField = nullptr;
+        if (id == "TCOM" || id == "TCM") commonField = &metadata.composer;
+        else if (id == "TBPM" || id == "TBP") commonField = &metadata.bpm;
+        else if (id == "TKEY" || id == "TKE") commonField = &metadata.musicalKey;
+        if (commonField) {
+            StripId3TextTerminators(content);
+            *commonField = trimString(content);
+            continue;
+        }
         content = trimString(content);
 
         // Map frame ID to metadata field
@@ -445,35 +488,23 @@ bool MetadataReader::readID3v2(const std::string& filePath, AudioMetadata& metad
             try { metadata.disc = std::stoi(content); } catch (...) {}
         } else if (id == "TCON" || id == "TCO") {
             metadata.genre = content;
-        } else if (id == "TXXX" || id == "TXX") {
-            // User-defined text frame: <encoding><description>\0<value>
-            // 'content' already has the encoding byte stripped and text decoded.
-            // Split on the first null terminator to get description and value.
-            size_t nullPos = content.find('\0');
-            if (nullPos != std::string::npos) {
-                std::string desc = content.substr(0, nullPos);
-                std::string val  = content.substr(nullPos + 1);
-                // Trim trailing nulls/whitespace from both
-                val = trimString(val);
-                // Case-insensitive compare
-                std::string descUpper = desc;
-                std::transform(descUpper.begin(), descUpper.end(), descUpper.begin(), ::toupper);
-                if (descUpper == "REPLAYGAIN_TRACK_GAIN") {
-                    try { metadata.replayGainTrack = std::stof(val); } catch (...) {}
-                } else if (descUpper == "REPLAYGAIN_ALBUM_GAIN") {
-                    try { metadata.replayGainAlbum = std::stof(val); } catch (...) {}
-                } else if (descUpper == "INSTRUMENTS" || descUpper == "INSTUMENTS" ||
-                           descUpper == "INSTRUMENT"  || descUpper == "INSTUMENT") {
-                    // Vendor instrument tag used by professional audio library tools
-                    if (metadata.instruments.empty()) metadata.instruments = val;
-                }
-            }
         }
-
-        pos += frameSize;
     }
 
-    return metadata.hasData();
+    if (customTagsRead) {
+        *customTagsRead = customTagsComplete &&
+            std::all_of(tagData.begin() + pos, tagData.end(), [](uint8_t byte) { return byte == 0; });
+    }
+    if (metadata.hasData()) return true;
+    if (!useV1Fallback) return false;
+    const bool foundExtended = metadata.year > 0 || !metadata.composer.empty() ||
+        !metadata.bpm.empty() || !metadata.musicalKey.empty() || !metadata.customTextTags.empty();
+    if (foundExtended && majorVersion >= 3) {
+        const int id3v2Year = metadata.year;
+        readID3v1(filePath, metadata);
+        if (id3v2Year > 0) metadata.year = id3v2Year;
+    }
+    return foundExtended;
 }
 
 bool MetadataReader::readBWF(const std::string& filePath, AudioMetadata& metadata) {

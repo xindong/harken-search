@@ -1,17 +1,15 @@
 #include "ExternalAiClientLink.h"
 #include "ExternalAiClientConfigAccess.h"
 #include "ExternalAiClientToml.h"
+#include "platform/filesystem.h"
 
 #include "../thirdparty/nlohmann_json.hpp"
 
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <optional>
 #include <random>
-#include <sstream>
-#include <system_error>
 #include <utility>
 
 
@@ -20,6 +18,7 @@ namespace HarkenSearch {
 namespace {
 
 namespace fs = std::filesystem;
+namespace fileSystem = Platform::FileSystem;
 using ordered_json = nlohmann::ordered_json;
 
 constexpr const char* kServerKey = "harken";
@@ -37,21 +36,14 @@ std::string NormalizeSlashes(std::string value) {
 }
 
 bool ReadFileUtf8(const std::string& path, std::string& out, std::string& error) {
-    std::error_code code;
-    const auto file = fs::u8path(path);
-    if (!fs::exists(file, code) && !code) {
+    const auto kind = fileSystem::QueryFilePathKind(path, fileSystem::PathLinkMode::Follow);
+    if (kind == fileSystem::FilePathKind::Missing) {
         out.clear();
         return true;
     }
-    std::ifstream stream(file, std::ios::binary);
-    if (code || !stream) {
-        error = "cannot open " + path;
-        return false;
-    }
-    std::ostringstream buffer;
-    buffer << stream.rdbuf();
-    out = buffer.str();
-    return true;
+    if (kind == fileSystem::FilePathKind::RegularFile && fileSystem::ReadFileBinaryText(path, out)) return true;
+    error = "cannot open " + path;
+    return false;
 }
 
 
@@ -76,13 +68,11 @@ bool ValidLinkId(const std::string& id) {
 
 std::string ReadLinkId(const std::string& configPath) {
     if (configPath.empty()) return {};
-    const auto path = fs::u8path(configPath + kLinkSuffix);
-    std::error_code code;
-    if (!fs::is_regular_file(fs::symlink_status(path, code)) || code) return {};
-    std::ifstream marker(path, std::ios::binary);
-    std::string id(33, '\0');
-    marker.read(id.data(), static_cast<std::streamsize>(id.size()));
-    id.resize(static_cast<std::size_t>(marker.gcount()));
+    const auto path = configPath + kLinkSuffix;
+    if (fileSystem::QueryFilePathKind(path, fileSystem::PathLinkMode::NoFollow) !=
+            fileSystem::FilePathKind::RegularFile) return {};
+    const auto bytes = fileSystem::ReadFileBytes(path, 32);
+    const std::string id(bytes.begin(), bytes.end());
     return ValidLinkId(id) ? id : std::string{};
 }
 
@@ -95,12 +85,12 @@ bool ReadForEdit(const std::string& path, ClientConfigAccess::Snapshot& source, 
 bool BackupOnce(const std::string& path, const ClientConfigAccess::Snapshot& source,
                 std::string& backupPath, std::string& error) {
     if (source.state == ClientConfigAccess::State::Missing) return true;
-    std::error_code code;
     backupPath = path + kBackupSuffix;
     const auto backup = fs::u8path(backupPath);
-    const auto existing = fs::symlink_status(backup, code);
-    if (fs::exists(existing) && ClientConfigAccess::BackupMatches(source, backup)) return true;
-    if (existing.type() == fs::file_type::not_found) {
+    const auto existing = fileSystem::QueryFilePathKind(backupPath, fileSystem::PathLinkMode::NoFollow);
+    if (existing == fileSystem::FilePathKind::RegularFile &&
+        ClientConfigAccess::BackupMatches(source, backup)) return true;
+    if (existing == fileSystem::FilePathKind::Missing) {
         if (ClientConfigAccess::Write(backup, fs::u8path(backupPath + ".harken-pending-" + NewLinkId()),
                                       source.bytes, false, &source)) return true;
     }
@@ -110,11 +100,10 @@ bool BackupOnce(const std::string& path, const ClientConfigAccess::Snapshot& sou
 
 bool WriteFileUtf8(const std::string& path, const std::string& content, std::string& error,
                    const ClientConfigAccess::Snapshot* source = nullptr) {
-    std::error_code code;
     const auto target = fs::u8path(path);
-    if (target.has_parent_path()) fs::create_directories(target.parent_path(), code);
-    if (!code && ClientConfigAccess::Write(target, fs::u8path(path + ".harken-pending-" + NewLinkId()),
-                                           content, true, source)) return true;
+    if ((!target.has_parent_path() || fileSystem::EnsureDirectoryExists(target.parent_path().u8string())) &&
+        ClientConfigAccess::Write(target, fs::u8path(path + ".harken-pending-" + NewLinkId()),
+                                  content, true, source)) return true;
     error = "cannot write " + path;
     return false;
 }
@@ -375,18 +364,18 @@ bool UnlinkExternalAiClient(ExternalAiClient client, const std::string& configPa
     status = ExternalAiLinkStatus{};
     status.configPath = configPath;
     if (configPath.empty()) return false;
-    std::error_code code;
-    const auto marker = fs::u8path(configPath + kLinkSuffix);
-    const auto markerStatus = fs::symlink_status(marker, code);
-    if (fs::exists(markerStatus)) {
-        if (!fs::is_regular_file(markerStatus) || ReadLinkId(configPath).empty()) {
+    const auto marker = configPath + kLinkSuffix;
+    const auto markerStatus = fileSystem::QueryFilePathKind(marker, fileSystem::PathLinkMode::NoFollow);
+    std::string removeError;
+    if (markerStatus != fileSystem::FilePathKind::Missing && markerStatus != fileSystem::FilePathKind::Error) {
+        if (markerStatus != fileSystem::FilePathKind::RegularFile || ReadLinkId(configPath).empty()) {
             status.state = ExternalAiLinkState::Failed;
             status.detail = "cannot verify the client link marker";
             return false;
         }
-        status.revoked = fs::remove(marker, code);
+        status.revoked = fileSystem::RemoveFile(marker, &removeError);
     }
-    if (code && code != std::errc::no_such_file_or_directory) {
+    if (markerStatus == fileSystem::FilePathKind::Error || !removeError.empty()) {
         status.state = ExternalAiLinkState::Failed;
         status.detail = "cannot revoke the client link";
         return false;

@@ -23,7 +23,7 @@ static void check(bool cond, const char* desc) {
     }
 }
 
-static AudioRecord record(int64_t id, const char* filePath, const char* folderPath = "") {
+static AudioRecord record(int64_t id, const std::string& filePath, const std::string& folderPath = "") {
     AudioRecord r;
     r.id = id;
     r.filePath = filePath;
@@ -92,31 +92,44 @@ static std::string sliceAround(const std::string& haystack, const std::string& n
 }
 
 int main() {
+#ifdef _WIN32
+    const std::string fixtureRoot = "H:/";
+    const char* rootName = "h:";
+#else
+    const std::string fixtureRoot = "/Volumes/";
+    const char* rootName = "Volumes";
+#endif
+    const auto folderKey = [&](const std::string& relativePath) {
+        return HarkenSearch::CanonicalFolderPath(fixtureRoot + relativePath);
+    };
+    const std::string fireKey = folderKey("Sound effect/FX/Fire");
+    const std::string whooshKey = folderKey("Sound effect/FX/Whoosh");
     const std::vector<AudioRecord> records = {
-        record(1,
-               "H:/Sound effect/FX/Fire/Scrape_01.wav",
-               "h:/sound effect/fx/fire"),
-        record(2,
-               "H:/Sound effect/FX/Fire/Scrape_02.wav",
-               "h:/sound effect/fx/fire"),
-        record(3,
-               "H:/Sound effect/FX/Whoosh/Whoosh_01.wav",
-               "h:/sound effect/fx/whoosh"),
-        record(4,
-               "H:/Sound effect/Impacts/Hit_01.wav"),
+        record(1, fixtureRoot + "Sound effect/FX/Fire/Scrape_01.wav", fireKey),
+        record(2, fixtureRoot + "Sound effect/FX/Fire/Scrape_02.wav", fireKey),
+        record(3, fixtureRoot + "Sound effect/FX/Whoosh/Whoosh_01.wav", whooshKey),
+        record(4, fixtureRoot + "Sound effect/Impacts/Hit_01.wav"),
     };
 
     const FolderInfo tree = BuildPlaylistFolderTreeFromRecords(records);
     check(tree.fileCount == 4, "playlist folder tree root count reflects playlist size");
 
-    const FolderInfo* drive = childNamed(tree, "h:");
-    check(drive != nullptr, "playlist folder tree creates drive root");
-    const FolderInfo* sound = drive ? childNamed(*drive, "sound effect") : nullptr;
+    const FolderInfo* pathRoot = childNamed(tree, rootName);
+    check(pathRoot != nullptr, "playlist folder tree creates the first path node");
+    const auto keyName = [&](const char* name) {
+        const std::string key = folderKey(name);
+        return key.substr(key.find_last_of("/\\") + 1);
+    };
+    const std::string soundName = keyName("Sound effect");
+    const std::string fxName = keyName("FX");
+    const std::string fireName = keyName("Fire");
+    const std::string whooshName = keyName("Whoosh");
+    const FolderInfo* sound = pathRoot ? childNamed(*pathRoot, soundName) : nullptr;
     check(sound != nullptr && sound->displayName == "Sound effect",
           "playlist folder tree preserves raw display case from file paths");
-    const FolderInfo* fx = sound ? childNamed(*sound, "fx") : nullptr;
-    const FolderInfo* fire = fx ? childNamed(*fx, "fire") : nullptr;
-    const FolderInfo* whoosh = fx ? childNamed(*fx, "whoosh") : nullptr;
+    const FolderInfo* fx = sound ? childNamed(*sound, fxName) : nullptr;
+    const FolderInfo* fire = fx ? childNamed(*fx, fireName) : nullptr;
+    const FolderInfo* whoosh = fx ? childNamed(*fx, whooshName) : nullptr;
     check(fire != nullptr && fire->fileCount == 2,
           "playlist folder tree counts direct files in a playlist folder");
     check(whoosh != nullptr && whoosh->fileCount == 1,
@@ -126,19 +139,20 @@ int main() {
     const std::vector<AudioRecord> fullMembers = records;
     const FolderInfo pageTree = BuildPlaylistFolderTreeFromRecords(loadedPage);
     const FolderInfo fullTree = BuildPlaylistFolderTreeFromCompleteMembers(fullMembers, loadedPage);
-    const FolderInfo* pageFx = childNamed(*childNamed(*childNamed(pageTree, "h:"), "sound effect"), "fx");
-    const FolderInfo* fullFx = childNamed(*childNamed(*childNamed(fullTree, "h:"), "sound effect"), "fx");
-    check(pageFx && childNamed(*pageFx, "whoosh") == nullptr,
+    const std::vector<const char*> fxNodes = {rootName, soundName.c_str(), fxName.c_str()};
+    const FolderInfo* pageFx = descend(pageTree, fxNodes);
+    const FolderInfo* fullFx = descend(fullTree, fxNodes);
+    check(pageFx && childNamed(*pageFx, whooshName) == nullptr,
           "a loaded page alone omits folders that only exist on later pages");
-    check(fullFx && childNamed(*fullFx, "whoosh") != nullptr &&
-              childNamed(*fullFx, "whoosh")->fileCount == 1 &&
+    const FolderInfo* fullWhoosh = fullFx ? childNamed(*fullFx, whooshName) : nullptr;
+    check(fullWhoosh && fullWhoosh->fileCount == 1 &&
               fullTree.fileCount == 4,
           "playlist folder tree uses the complete member set, not the loaded page");
 
     const std::vector<PlaylistFolderCount> folderCounts = {
-        {"h:/sound effect/fx/fire", "H:/Sound effect/FX/Fire", 2},
-        {"h:/sound effect/fx/whoosh", "H:/Sound effect/FX/Whoosh", 1},
-        {"h:/sound effect/impacts", "H:/Sound effect/Impacts", 1},
+        {fireKey, fixtureRoot + "Sound effect/FX/Fire", 2},
+        {whooshKey, fixtureRoot + "Sound effect/FX/Whoosh", 1},
+        {folderKey("Sound effect/Impacts"), fixtureRoot + "Sound effect/Impacts", 1},
     };
     const FolderInfo countTree = BuildPlaylistFolderTreeFromFolderCounts(folderCounts, 4);
     check(countTree.fileCount == 4,
@@ -168,9 +182,16 @@ int main() {
           "prefix-shared sibling keeps direct count and child folders under one node");
 
 
-    const FolderInfo* countFire = descend(countTree, {"h:", "sound effect", "fx", "fire"});
+    const FolderInfo* countFx = descend(countTree, fxNodes);
+    const FolderInfo* countFire = countFx ? childNamed(*countFx, fireName) : nullptr;
     check(countFire != nullptr && countFire->fileCount == 2 && countFire->displayName == "Fire",
           "folder-count tree keeps per-folder counts and display casing");
+    check(fire && fire->path == fireKey,
+          "record-built node preserves the canonical path used for selection");
+    check(countFire && countFire->path == fireKey,
+          "folder-count node preserves the canonical path used for selection");
+    check(countFx && FilterPlaylistRecordsByFolder(records, true, countFx->path).size() == 3,
+          "selecting a folder-count parent node filters to its descendant files");
 
     {
         std::vector<AudioRecord> manyRecords;
@@ -209,13 +230,14 @@ int main() {
               "folder-count tree build is not slower than the record-based build");
     }
 
-    auto fxFiltered = FilterPlaylistRecordsByFolder(records, true, "H:/Sound effect/FX");
+    auto fxFiltered = FilterPlaylistRecordsByFolder(records, true, fixtureRoot + "Sound effect/FX");
     check(fxFiltered.size() == 3, "playlist sidebar folder filter includes descendants");
-    auto fireFiltered = FilterPlaylistRecordsByFolder(records, true, "H:/Sound effect/FX/Fire");
+    auto fireFiltered = FilterPlaylistRecordsByFolder(records, true, fixtureRoot + "Sound effect/FX/Fire");
     check(fireFiltered.size() == 2, "playlist sidebar folder filter matches selected leaf folder");
-    auto inactiveFiltered = FilterPlaylistRecordsByFolder(records, false, "H:/Sound effect/FX/Fire");
+    auto inactiveFiltered = FilterPlaylistRecordsByFolder(records, false, fixtureRoot + "Sound effect/FX/Fire");
     check(inactiveFiltered.size() == records.size(), "inactive playlist folder filter keeps all playlist files");
 
+#ifdef _WIN32
     const std::vector<AudioRecord> longPrefixFolderOnly = {
         record(5, "", "\\\\?\\H:\\Sound effect\\Pseudo"),
     };
@@ -227,6 +249,14 @@ int main() {
         ? childNamed(*longPrefixSound, "pseudo") : nullptr;
     check(longPrefixPseudo != nullptr && longPrefixPseudo->displayName == "Pseudo",
           "folder-only long-path records do not expose the \\\\?\\ prefix in tree labels");
+#else
+    const FolderInfo folderOnlyTree = BuildPlaylistFolderTreeFromRecords({
+        record(5, "", "/Volumes/QA 素材/Pseudo"),
+    });
+    const FolderInfo* folderOnly = descend(folderOnlyTree, {"Volumes", "QA 素材", "Pseudo"});
+    check(folderOnly && folderOnly->path == "/Volumes/QA 素材/Pseudo",
+          "folder-only nodes preserve absolute Unicode paths");
+#endif
 
     // Evidence class: conversion stub in tests/playlist_folder_tree_path_conversion_stub.cpp.
     // Not the product Utils.cpp converter.
@@ -336,9 +366,11 @@ int main() {
           "folder tree renderer exposes one explicit database-vs-playlist activation mode");
     check(mainSource.find("static void RenderPlaylistFolderTreeNode(") == std::string::npos,
           "playlist folder tree no longer diverges behind a dedicated renderer");
-    check(mainSource.find("RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::PlaylistFilter);") != std::string::npos,
+    const std::string sidebarRenderer = sliceAround(
+        mainSource, "RenderFolderTreeNode(state, folder, folderSearch,", 0, 480);
+    check(sidebarRenderer.find("playlistScopedFolderTree ? FolderTreeSelectionMode::PlaylistFilter") != std::string::npos,
           "playlist-scoped folder tree reuses the database folder tree renderer");
-    check(mainSource.find("RenderFolderTreeNode(state, folder, folderSearch, FolderTreeSelectionMode::DatabaseFilter);") != std::string::npos,
+    check(sidebarRenderer.find(": FolderTreeSelectionMode::DatabaseFilter,") != std::string::npos,
           "database folder tree keeps using the same canonical folder renderer");
 
     const std::string asyncWorkerHeader = readTextFile(sourceRoot / "src" / "AsyncWorker.h");

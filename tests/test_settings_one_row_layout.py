@@ -69,6 +69,30 @@ def test_guided_tooltip_flag_links_to_global_symbol() -> None:
 SHELL = (ROOT / "src/SettingsDialog.inl").read_text(encoding="utf-8")
 FIELDS = (ROOT / "src/SettingsFields.inl").read_text(encoding="utf-8")
 
+def test_font_families_use_three_shared_appearance_rows():
+    import re
+
+    catalog = (ROOT / "src" / "SettingsCatalog.h").read_text(encoding="utf-8")
+    font_rows = _between(catalog, '{u8"systemFont"', '{u8"rowHeight"')
+    expected_families = ["chineseFontFamily", "englishFontFamily", "numeralFontFamily"]
+    assert re.findall(r'{u8"([^"]+)",Page::Appearance,0,', font_rows) == [
+        "systemFont", "listFont", *expected_families,
+    ]
+    fields = _between(FIELDS, 'else if(id=="chineseFontFamily"', 'else if(id=="rowHeight"')
+    assert "draft.uiFontFamilies" in fields
+    for family, label in zip(expected_families, ("Set_BuiltinSourceHanSans", "Inter", "JetBrains Mono")):
+        assert f'id=="{family}"' in fields
+        assert label in fields
+    assert "L(Set_SystemDefault)" in fields
+    assert "combo(" in fields
+
+def test_font_families_use_the_existing_appearance_preview_and_save_path():
+    editor = (ROOT / "src" / "SettingsDialogState.h").read_text(encoding="utf-8")
+    main = (ROOT / "src" / "main.cpp").read_text(encoding="utf-8-sig")
+    assert "Field(&AppSettings::uiFontFamilies)" in editor
+    assert "PREF(uiFontFamilies)" in editor
+    assert "persistedAppearance.uiFontFamilies" in main
+
 def test_regular_preference_rows_cannot_write_live_settings():
     assert "SaveAppSettings(" not in FIELDS
     assert "MarkSettingsDirty(" not in FIELDS
