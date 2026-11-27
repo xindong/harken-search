@@ -5076,7 +5076,8 @@ static void PollQaCommandFile(AppState& state) {
                         before.x, before.y, after.x, after.y);
                     result = receipt;
                 }
-            } else if (action == "geometry" || action == "resize" || action == "resize_drag") {
+            } else if (action == "geometry" || action == "resize" || action == "resize_drag" ||
+                       action == "pointer" || action == "pointer_clear") {
                 // Geometry and resize receipts for the Similar Sounds analysis
                 // report. Without this the resize path can only be checked by
                 // hand, and this dialog has no other automation entry.
@@ -5096,6 +5097,23 @@ static void PollQaCommandFile(AppState& state) {
                         const float width = static_cast<float>(getDouble(raw, "w", dialogWindow->Size.x));
                         const float height = static_cast<float>(getDouble(raw, "h", dialogWindow->Size.y));
                         ImGui::SetWindowSize(dialogWindow, ImVec2(width, height));
+                    } else if (action == "pointer") {
+                        // Park the synthetic pointer over a dialog row so the
+                        // failure tooltip can be captured without the desktop.
+                        const float x = static_cast<float>(getDouble(raw, "x",
+                            dialogWindow->Pos.x + dialogWindow->Size.x * 0.25));
+                        const float y = static_cast<float>(getDouble(raw, "y",
+                            dialogWindow->Pos.y + dialogWindow->Size.y * 0.12));
+                        s_magicEqQaPointer.active = true;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                        s_magicEqQaPointer.x = x;
+                        s_magicEqQaPointer.y = y;
+                        s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                    } else if (action == "pointer_clear") {
+                        s_magicEqQaPointer.active = false;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
                     } else if (action == "resize_drag") {
                         // Grab the bottom-right resize grip and drag it by the
                         // requested delta over several frames. ImGui resolves
@@ -5118,19 +5136,29 @@ static void PollQaCommandFile(AppState& state) {
                         failureRows = state.batchFeatureResult.issues.size();
                     }
                     const ImVec2 size = dialogWindow->Size;
-                    char receipt[768];
+                    bool tooltipVisible = false;
+                    for (int windowIndex = 0; windowIndex < ctx.Windows.Size; ++windowIndex) {
+                        const ImGuiWindow* candidate = ctx.Windows[windowIndex];
+                        if (candidate && candidate->Active &&
+                            (candidate->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+                            tooltipVisible = true;
+                            break;
+                        }
+                    }
+                    char receipt[1024];
                     std::snprintf(receipt, sizeof(receipt),
                         "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"%s\","
                         "\"dialog\":\"similar-analysis-report\","
                         "\"rect\":[%.1f,%.1f,%.1f,%.1f],"
                         "\"resizable\":%s,\"no_resize\":%s,\"always_auto_resize\":%s,"
-                        "\"viewport_owned\":%s,\"drag_active\":%s,"
+                        "\"viewport_owned\":%s,\"drag_active\":%s,\"tooltip_visible\":%s,"
+                        "\"hovered_is_dialog\":%s,\"mouse\":[%.1f,%.1f],"
                         "\"work\":[%.1f,%.1f,%.1f,%.1f],"
                         "\"stored\":[%.1f,%.1f],"
                         "\"failure_rows\":%d,"
                         "\"failure_row_height\":%.1f,"
                         "\"failure_list_height\":%.1f,"
-                        "\"work_area_clamped\":%s}",
+                        "\"work_area_clamped\":%s,\"hovered_window\":\"%s\"}",
                         action.c_str(),
                         dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y,
                         ((dialogWindow->Flags & ImGuiWindowFlags_NoResize) != 0 ||
@@ -5140,17 +5168,20 @@ static void PollQaCommandFile(AppState& state) {
                         (dialogWindow->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0 ? "true" : "false",
                         dialogWindow->ViewportOwned ? "true" : "false",
                         s_qaDialogResizeDrag.active ? "true" : "false",
+                        tooltipVisible ? "true" : "false",
+                        ctx.HoveredWindow == dialogWindow ? "true" : "false",
+                        ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y,
                         workArea.x, workArea.y, workArea.w, workArea.h,
                         state.settings.similarAnalysisReportWidth,
                         state.settings.similarAnalysisReportHeight,
                         static_cast<int>(failureRows),
-                        HarkenSearch::similar_analysis_report::FailureRowHeight(
-                            ImGui::GetTextLineHeight(), ImGui::GetStyle().ItemSpacing.y),
+                        HarkenSearch::similar_analysis_report::g_qaFailureRowHeight,
                         HarkenSearch::similar_analysis_report::FailureListHeight(size.y),
                         HarkenSearch::similar_analysis_report::ClampToWorkArea(
                             HarkenSearch::similar_analysis_report::Rect{
                                 dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y},
-                            workArea).y == dialogWindow->Pos.y ? "true" : "false");
+                            workArea).y == dialogWindow->Pos.y ? "true" : "false",
+                        jsonEscape(ctx.HoveredWindow ? ctx.HoveredWindow->Name : "").c_str());
                     result = receipt;
                 }
             } else if (action == "open") {

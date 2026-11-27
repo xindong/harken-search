@@ -535,6 +535,9 @@ static void DrawSimilarAnalysisReport(AppState& state) {
             // instead of doubling in height. The full path stays one hover away.
             const float rowHeight = report_layout::FailureRowHeight(
                 ImGui::GetTextLineHeight(), ImGui::GetStyle().ItemSpacing.y);
+#if ARIS_PREVIEW_ISOLATION
+            report_layout::g_qaFailureRowHeight = rowHeight;
+#endif
             ImGuiListClipper clipper;
             clipper.Begin(static_cast<int>(report.issues.size()), rowHeight);
             while (clipper.Step()) for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index) {

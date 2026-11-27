@@ -88,7 +88,8 @@ assert "FailureRowHeight" in layout
 # reports the geometry and resize state, so the size claim is measurable.
 assert '"similar-analysis-report"' in qa_host
 assert "for (int index = 0; index < 44; ++index)" in qa_host
-assert 'action == "geometry" || action == "resize" || action == "resize_drag"' in qa_host
+assert 'action == "geometry" || action == "resize" || action == "resize_drag" ||' in qa_host
+assert 'action == "pointer_clear"' in qa_host
 assert '\\"resizable\\":%s' in qa_host
 assert '\\"viewport_owned\\":%s' in qa_host
 assert "failure_list_height" in qa_host

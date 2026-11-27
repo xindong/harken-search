@@ -216,9 +216,31 @@ def run(args) -> int:
               abs(clamped["rect"][2] - resized[0]) <= 2 and
               abs(clamped["rect"][3] - resized[1]) <= 2, clamped)
 
+        # The full path stays reachable on hover: park the synthetic pointer over
+        # a failure row and capture the tooltip. The exact row band is not known
+        # up front, so try a few heights inside the list.
+        hover_receipt = {}
+        hover_landed = False
+        # Offsets step by non-multiples of the row pitch so the sweep cannot
+        # sample the same gap between rows every time.
+        for offset in (0, 7, 13, 3, 17, 10, 21):
+            y = (clamped["rect"][1] + 46.0 +
+                 clamped["failure_list_height"] * 0.5 + offset)
+            driver.command({"cmd": "alert_dialog_preview", "action": "pointer",
+                            "x": clamped["rect"][0] + 380.0, "y": y})
+            time.sleep(0.45)
+            hover_receipt = geometry()
+            if hover_receipt.get("tooltip_visible"):
+                hover_landed = True
+                break
+        capture(driver, out / "07-report-failure-row-tooltip.png")
+        driver.command({"cmd": "alert_dialog_preview", "action": "pointer_clear"})
+        time.sleep(0.2)
+        check("failure-path-tooltip-visible", hover_landed, hover_receipt)
+
         # The size must be written into the settings file, not only in memory.
         driver.command({"cmd": "alert_dialog_preview", "action": "close"})
-        time.sleep(2.2)
+        time.sleep(2.4)
         settings = read_settings(settings_path)
         stored_width = float(settings.get("similarAnalysisReportWidth", "0") or 0)
         stored_height = float(settings.get("similarAnalysisReportHeight", "0") or 0)

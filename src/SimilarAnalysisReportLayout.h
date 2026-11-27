@@ -81,6 +81,12 @@ inline float FailureRowHeight(float textLineHeight, float itemSpacingY) {
     return line + gap;
 }
 
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: the row pitch the dialog actually used. The geometry receipt runs
+// outside the dialog's pushed ItemSpacing, so it cannot recompute this.
+inline float g_qaFailureRowHeight = 0.0f;
+#endif
+
 inline float FailureListHeight(float dialogHeight) {
     const float height = StoredOrDefault(dialogHeight, kDefaultHeight) - kCaptionStripHeight -
         kCaptionToBodyGap - kWindowPaddingY * 2.0f - kFooterStripHeight;
