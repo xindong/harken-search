@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import unittest
@@ -21,8 +22,8 @@ FORBIDDEN_KEYS = {
 }
 REQUIRED_KEYS = {
     "schema_version", "version", "channel", "build_id", "source_commit",
-    "run_id", "prepared_at", "released_at", "github", "files", "manifests",
-    "notes", "signer", "installer", "update", "published_from",
+    "run_id", "prepared_at", "released_at", "product", "github", "files",
+    "manifests", "notes", "signer", "installer", "update", "published_from",
 }
 
 
@@ -62,6 +63,25 @@ def walk_strings(value: object) -> list[str]:
     return found
 
 
+def validate_receipt(payload: dict, *, version: str) -> None:
+    """仓库回执的固定关系；不满足就抛 AssertionError。"""
+    assert payload.get("schema_version") == 1, payload.get("schema_version")
+    assert isinstance(version, str) and SEMVER.fullmatch(version), version
+    assert payload.get("version") == version, (payload.get("version"), version)
+    assert payload.get("channel") == "stable", payload.get("channel")
+    assert REQUIRED_KEYS.issubset(payload), REQUIRED_KEYS - set(payload)
+    assert isinstance(payload.get("product"), str) and payload["product"].strip()
+    assert HEX40.fullmatch(str(payload["source_commit"])), payload["source_commit"]
+    assert HEX40.fullmatch(str(payload["build_id"])), payload["build_id"]
+    assert payload["build_id"] == payload["source_commit"], "构建与来源必须是同一提交"
+    assert isinstance(payload["run_id"], int) and payload["run_id"] > 0
+
+    github = payload["github"]
+    assert isinstance(github, dict), github
+    assert isinstance(github.get("repository"), str) and github["repository"].strip()
+    assert github.get("tag") == f"v{version}", github.get("tag")
+
+
 class ReleaseReceiptContractTest(unittest.TestCase):
     def test_receipt_directory_has_a_receipt_per_released_version(self) -> None:
         files = receipt_files()
@@ -72,18 +92,7 @@ class ReleaseReceiptContractTest(unittest.TestCase):
     def test_each_receipt_matches_the_filename_and_schema(self) -> None:
         for path in receipt_files():
             with self.subTest(receipt=path.name):
-                payload = load(path)
-                self.assertEqual(payload.get("schema_version"), 1)
-                version = payload.get("version")
-                self.assertIsInstance(version, str)
-                self.assertTrue(SEMVER.fullmatch(version), version)
-                self.assertEqual(path.stem, version)
-                self.assertEqual(payload.get("channel"), "stable")
-                self.assertTrue(REQUIRED_KEYS.issubset(payload), REQUIRED_KEYS - set(payload))
-                self.assertTrue(HEX40.fullmatch(str(payload["source_commit"])))
-                self.assertTrue(HEX40.fullmatch(str(payload["build_id"])))
-                self.assertIsInstance(payload["run_id"], int)
-                self.assertGreater(payload["run_id"], 0)
+                validate_receipt(load(path), version=path.stem)
 
     def test_files_are_plain_names_with_hashes_and_cover_installer_and_update(self) -> None:
         for path in receipt_files():
@@ -131,10 +140,28 @@ class ReleaseReceiptContractTest(unittest.TestCase):
                 for text in walk_strings(payload):
                     self.assertIsNone(ABSOLUTE_PATH.search(text), text)
 
-    def test_receipt_directory_stays_out_of_the_public_projection(self) -> None:
+    def test_tampered_receipts_are_rejected(self) -> None:
+        sample = load(receipt_files()[0])
+        version = sample["version"]
+        cases = {
+            "missing product": lambda item: item.pop("product"),
+            "null github": lambda item: item.update(github=None),
+            "tag mismatch": lambda item: item["github"].update(tag="v0.0.1"),
+            "different commits": lambda item: item.update(build_id="a" * 40),
+            "missing published_from": lambda item: item.pop("published_from"),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(case=name):
+                tampered = copy.deepcopy(sample)
+                mutate(tampered)
+                with self.assertRaises(AssertionError):
+                    validate_receipt(tampered, version=version)
+
+    def test_receipt_directory_and_its_test_stay_out_of_the_public_projection(self) -> None:
         from tools import public_repo_manifest
 
         self.assertIn("docs/process/", public_repo_manifest.EXCLUDED_PREFIXES)
+        self.assertIn("tests/test_release_receipt_contract.py", public_repo_manifest.EXCLUDED_GLOBS)
 
 
 if __name__ == "__main__":
