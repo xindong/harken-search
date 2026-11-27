@@ -19,7 +19,9 @@ namespace {
 
 template <size_t N>
 void CopyStringToBuffer(char (&dst)[N], const std::string& src) {
-    strncpy_s(dst, N, src.c_str(), _TRUNCATE);
+    const size_t length = std::min(N - 1, std::strlen(src.c_str()));
+    std::memcpy(dst, src.data(), length);
+    dst[length] = '\0';
 }
 
 bool HasActivePillFilterState(const std::map<std::string, int>& pillState) {
@@ -389,7 +391,7 @@ bool AppState::loadTabPreset(int presetIdx) {
         t.name                    = e.name;
         t.viewMode                = MapLegacyViewMode(e.viewMode);
         t.browserScope            = e.browserScope;
-        strncpy_s(t.searchBuffer, sizeof(t.searchBuffer), e.searchBuffer.c_str(), _TRUNCATE);
+        CopyStringToBuffer(t.searchBuffer, e.searchBuffer);
         t.selectedFolderPath      = e.selectedFolderPath;
         t.folderFilterActive      = e.folderFilterActive;
         t.coverFilterActive       = e.coverFilterActive;
@@ -1257,12 +1259,7 @@ void AppState::restoreViewState(const ViewStateSnapshot& snap) {
     coverFilterActive = snap.coverFilterActive;
     coverFilterPath = snap.coverFilterPath;
     coverFilterIndex = snap.coverFilterIndex;
-#ifdef _WIN32
-    strncpy_s(searchBuffer, sizeof(searchBuffer), snap.searchText.c_str(), _TRUNCATE);
-#else
-    std::strncpy(searchBuffer, snap.searchText.c_str(), sizeof(searchBuffer) - 1);
-    searchBuffer[sizeof(searchBuffer) - 1] = '\0';
-#endif
+    CopyStringToBuffer(searchBuffer, snap.searchText);
     selectedPlaylistId = snap.selectedPlaylistId;
     playlistAggregatedView = snap.playlistAggregatedView;
     findSameFilenameActive = snap.findSameFilenameActive;

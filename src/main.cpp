@@ -31,6 +31,9 @@
 #include "imgui_impl_win32.h"
 #elif defined(__APPLE__)
 #include "imgui_impl_osx.h"
+// The shared UI keeps MSVC CRT spellings and Win32 type names; the macOS shim
+// supplies them without a Windows SDK. Windows uses the real headers.
+#include "platform/harken_macos_win32_shim.h"
 #endif
 #include "imgui_impl_opengl3.h"
 
@@ -221,6 +224,7 @@
 #include "PlaylistQuickBar.h"
 #include "SidebarActivityBar.h"
 #include "FileInfoPanel.h"
+#include "HarkenMeta.h"
 #include "BuiltinThemeScheme.h"
 #include "TransientScrollbarHost.h"
 #include "DragPauseOnStartPolicy.h"
@@ -3479,7 +3483,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            std::string& outError,
                                            float regionFadeInNorm,
                                            float regionFadeOutNorm,
-                                           bool keepHarkenSearchProcessingSuffix = true);
+                                           bool keepHarkenSearchProcessingSuffix = true,
+                                           const std::string& harkenMetaJson = std::string());
 
 // 主波形区域在屏幕上的位置（用于起拖时把卡片从波形缩成小卡）
 static RECT WaveformScreenRect(float x, float y, float width, float height) {
@@ -3512,7 +3517,8 @@ static DragCardOrigin MakeRegionDragOrigin(AudioEngine& engine, bool withSourceR
 // Uses unified PrepareCurrentAudioForTransfer — same rules as Send-to-DAW
 void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFadeOutNorm,
                      bool keepHarkenSearchProcessingSuffix = true,
-                     const DragCardOrigin* origin = nullptr) {
+                     const DragCardOrigin* origin = nullptr,
+                     const std::string& harkenMetaJson = std::string()) {
     if (!engine.isLoaded()) return;
     if (g_isDragging) return;
 
@@ -3520,7 +3526,8 @@ void StartRegionDrag(AudioEngine& engine, float regionFadeInNorm, float regionFa
 
     std::vector<std::string> files;
     std::string error;
-    if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm, keepHarkenSearchProcessingSuffix)) {
+    if (PrepareCurrentAudioForTransfer(engine, files, error, regionFadeInNorm, regionFadeOutNorm,
+                                       keepHarkenSearchProcessingSuffix, harkenMetaJson)) {
         ImGui::ClearActiveID();
         DragCardOrigin regionOrigin = origin ? *origin : MakeRegionDragOrigin(engine, false, RECT{ 0, 0, 0, 0 });
         if (regionOrigin.displayName.empty()) {
@@ -3567,11 +3574,19 @@ static std::wstring QuoteWindowsArg(const std::wstring& s) {
 // Shared by: StartRegionDrag() and SendToDAW()
 // Rule: "what you hear is what you send/drag"
 
+static std::string TransferHarkenMetaForPath(AppState& state, const std::string& path) {
+    if (path.empty() || !state.database.isOpen()) return std::string();
+    const AudioRecord record = state.database.getFileByPath(path);
+    if (record.id <= 0) return std::string();
+    return record.getMeta("harken_meta");
+}
+
 static bool EmbedTransferMetadata(const std::string& tempWavPath,
                                   const std::string& sourcePath,
                                   uint64_t regionStartFrame,
                                   const EmbedExtraParams& stem,
-                                  uint64_t* outSpotInTime = nullptr) {
+                                  uint64_t* outSpotInTime = nullptr,
+                                  const std::string& harkenMetaJson = std::string()) {
     AudioMetadata metadata;
     MetadataReader::readMetadata(sourcePath, metadata);
     const uint64_t sourceTimeReference = metadata.bwTimeStamp;
@@ -3603,6 +3618,9 @@ static bool EmbedTransferMetadata(const std::string& tempWavPath,
     put("Scene", metadata.scene);
     put("Take", metadata.take);
     put("Tape", metadata.tape);
+    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(harkenMetaJson);
+    put("HarkenCategory", harkenValues.category);
+    put("HarkenFunction", harkenValues.function);
 
     EmbedConfig config = EmbedEngine::getDefaultConfig();
     BEXTData bext;
@@ -3684,7 +3702,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
                                            std::string& outError,
                                            float regionFadeInNorm,
                                            float regionFadeOutNorm,
-                                           bool keepHarkenSearchProcessingSuffix) {
+                                           bool keepHarkenSearchProcessingSuffix,
+                                           const std::string& harkenMetaJson) {
     if (!engine.isLoaded()) { outError = "No audio loaded"; return false; }
 
     const AudioEngine::TransferProcessingSnapshot processingSnapshot =
@@ -3734,7 +3753,8 @@ static bool PrepareCurrentAudioForTransfer(AudioEngine& engine,
         }
         uint64_t spotInTime = info.regionStartFrame;
         EmbedExtraParams embedStem;
-        EmbedTransferMetadata(tempFile, engine.getFileInfo().filePath, info.regionStartFrame, embedStem, &spotInTime);
+        EmbedTransferMetadata(tempFile, engine.getFileInfo().filePath, info.regionStartFrame, embedStem,
+                              &spotInTime, harkenMetaJson);
         SpotRequest spot;
         spot.daw = "drag";
         spot.spotAsRegion = true;
@@ -3795,6 +3815,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
                                                     float regionFadeOutNorm,
                                                     bool keepHarkenSearchProcessingSuffix,
                                                     const AudioEngine::TransferProcessingSnapshot& processingSnapshot,
+                                                    const std::string& harkenMetaJson,
                                                     std::string& outFile,
                                                     std::string& outError) {
     outFile.clear();
@@ -3844,7 +3865,7 @@ static bool ExportFileWithCurrentTransferProcessing(AudioEngine& currentEngine,
     }
     uint64_t spotInTime = regionStartFrame;
     EmbedExtraParams embedStem;
-    EmbedTransferMetadata(tempFile, sourcePath, regionStartFrame, embedStem, &spotInTime);
+    EmbedTransferMetadata(tempFile, sourcePath, regionStartFrame, embedStem, &spotInTime, harkenMetaJson);
     SpotRequest spot;
     spot.daw = "drag";
     spot.spotAsRegion = includeRegion;
@@ -3870,7 +3891,8 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
                                          float regionFadeOutNorm,
                                          bool keepHarkenSearchProcessingSuffix,
                                          std::vector<std::string>& outFiles,
-                                         std::string& outError) {
+                                         std::string& outError,
+                                         Database* database = nullptr) {
     if (sourcePaths.empty()) {
         outError = "No files selected";
         return false;
@@ -3903,6 +3925,11 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
         }
 
         std::string processedFile;
+        std::string harkenMeta;
+        if (database) {
+            const AudioRecord record = database->getFileByPath(sourcePaths[i]);
+            if (record.id > 0) harkenMeta = record.getMeta("harken_meta");
+        }
         if (!ExportFileWithCurrentTransferProcessing(
                 engine,
                 normalizedPath,
@@ -3911,6 +3938,7 @@ static bool BuildTransferPayloadForPaths(AudioEngine& engine,
                 regionFadeOutNorm,
                 keepHarkenSearchProcessingSuffix,
                 processingSnapshot,
+                harkenMeta,
                 processedFile,
                 outError)) {
             return false;
@@ -3933,7 +3961,7 @@ void StartAudioFileDrag(AppState& state, const std::string& filePath) {
             state.audioEngine, {filePath}, true,
             state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
             state.settings.keepHarkenSearchOutputProcessingSuffix,
-            files, error) && !files.empty()) {
+            files, error, &state.database) && !files.empty()) {
         ImGui::ClearActiveID();
         DragCardOrigin dragOrigin;
         dragOrigin.displayName = DisplayNameForDragPath(filePath);
@@ -4014,7 +4042,8 @@ static bool BuildTransferPayload(AppState& state,
                 outError,
                 state.uiState.regionFadeInNorm,
                 state.uiState.regionFadeOutNorm,
-                state.settings.keepHarkenSearchOutputProcessingSuffix);
+                state.settings.keepHarkenSearchOutputProcessingSuffix,
+                TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
         }
         outError = "No files selected";
         return false;
@@ -4027,7 +4056,8 @@ static bool BuildTransferPayload(AppState& state,
         state.uiState.regionFadeOutNorm,
         state.settings.keepHarkenSearchOutputProcessingSuffix,
         outFiles,
-        outError);
+        outError,
+        &state.database);
 }
 
 // Legacy wrapper (kept for existing keyboard shortcut callers)
@@ -4046,7 +4076,8 @@ static bool BuildTransferPayloadForSourcePaths(AppState& state,
         state.uiState.regionFadeOutNorm,
         state.settings.keepHarkenSearchOutputProcessingSuffix,
         outFiles,
-        outError);
+        outError,
+        &state.database);
 }
 
 static std::vector<std::string> BuildExternalSendFiles(AppState& state) {
@@ -5895,6 +5926,11 @@ void LoadAppSettings(AppState& state) {
     state.settings.similarityAnalysisConcurrency = std::clamp(
         ParseInt(kv["similarityAnalysisConcurrency"], state.settings.similarityAnalysisConcurrency),
         1, HarkenSearch::kMaxSimilarityConcurrency);
+    // 相似分析「分析结果」弹窗尺寸：非法或缺失时回到默认 1180x780
+    state.settings.similarAnalysisReportWidth = ParseFloat(kv["similarAnalysisReportWidth"],
+        state.settings.similarAnalysisReportWidth);
+    state.settings.similarAnalysisReportHeight = ParseFloat(kv["similarAnalysisReportHeight"],
+        state.settings.similarAnalysisReportHeight);
 
     // Send-to-DAW targets
     state.settings.reaperSetupNoticeDismissed = ParseInt(kv["reaperSetupNoticeDismissed"], 0) != 0;
@@ -6727,6 +6763,10 @@ bool TrySaveAppSettings(const AppState& state, std::optional<bool> monoModeOverr
     items.push_back({"similarityAnalysisConcurrency",
                      std::to_string(std::clamp(state.settings.similarityAnalysisConcurrency, 1,
                                                HarkenSearch::kMaxSimilarityConcurrency))});
+    items.push_back({"similarAnalysisReportWidth",
+                     std::to_string(state.settings.similarAnalysisReportWidth)});
+    items.push_back({"similarAnalysisReportHeight",
+                     std::to_string(state.settings.similarAnalysisReportHeight)});
 
     // Send-to-DAW targets
     items.push_back({"reaperSetupNoticeDismissed", state.settings.reaperSetupNoticeDismissed ? "1" : "0"});
@@ -9877,7 +9917,8 @@ static bool BeginSearchExplainabilityTooltip() {
     const int frame = ImGui::GetFrameCount();
     if (s_lastSearchExplainabilityTooltipFrame == frame)
         return false;
-    ImGui::BeginTooltip();
+    if (!HarkenSearch::BeginTooltipUngated())
+        return false;
     s_lastSearchExplainabilityTooltipFrame = frame;
     return true;
 }
@@ -11627,7 +11668,8 @@ void PumpDatabaseSwitchIfPending(AppState& state) {
 // 全部可能阻塞的 teardown（scanner/searchWorker/waveformWorker/database.close）和
 // database.open 一起放到后台线程，避免大库切换时主线程被 join 卡数十秒。
 static InfoEditValues CurrentInfoEditValues(const AppState& state) {
-    return {state.metadataDescBuffer,state.metadataKeywordsBuffer,state.metadataCategoryBuffer};
+    return {state.metadataDescBuffer,state.metadataKeywordsBuffer,state.metadataCategoryBuffer,
+            state.metadataHarkenCategoryBuffer,state.metadataHarkenFunctionBuffer};
 }
 
 bool RequestInfoMetadataLeave(AppState& state, std::function<void()> afterLeave) {
@@ -11717,6 +11759,15 @@ static bool SwitchDatabase(AppState& state,
     state.dbSwitchError.clear();
     state.dbSwitchRecoveryPath.clear();
     state.dbSwitchNotice.clear();
+    // The folder-rename preview belongs to the library it was built from. A
+    // modeless window can stay open across a library switch, so close it at
+    // this boundary; otherwise Execute would rename old folders while updating
+    // the newly opened library.
+    if (state.folderAutoRenameWindow.open || !state.folderRenamePreview.empty()) {
+        state.folderRenamePreview.clear();
+        state.folderRenameLog.clear();
+        aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+    }
     DIAG_SYSTEM_FMT("Database", "SwitchDatabaseStart: from=%s to=%s",
         state.currentDbPathUtf8.c_str(), effectiveDbPathUtf8.c_str());
     state.batchFeatureCancelRequested.store(true);
@@ -13485,9 +13536,8 @@ public:
         const std::string& filePath,
         aura::record_rescan::SelectedRecordRescanMetadata& out) override {
         AudioMetadata metadata;
-        bool mp3CustomTagsRead = false;
-        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata, &mp3CustomTagsRead);
-        if (!foundMetadata && !mp3CustomTagsRead) return false;
+        const bool foundMetadata = MetadataReader::readMetadata(filePath, metadata);
+        if (!foundMetadata && !metadata.customTextTagsRead) return false;
         out.title = metadata.title;
         out.artist = metadata.artist;
         out.album = metadata.album;
@@ -13497,7 +13547,7 @@ public:
         out.keywords = metadata.keywords;
         out.comment = metadata.comment;
         PopulateExtendedMeta(out.extendedMetadata, metadata);
-        if (mp3CustomTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
+        if (metadata.customTextTagsRead) out.id3TextTags = std::move(metadata.customTextTags);
         return true;
     }
 
@@ -14263,7 +14313,7 @@ static bool DrawBatchEditQueue(std::vector<Rule>& rules, int& selection, DrawLab
         ImGui::PushID(index);
         const auto description = drawLabel(rules[index], changed);
         if (ImGui::Selectable(description.c_str(), index == selection)) selection = index;
-        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) ImGui::SetTooltip("%s", description.c_str());
+        if (ImGui::IsItemHovered()) HarkenSearch::SetTooltip("%s", description.c_str());
         ImGui::PopID();
     }
     ImGui::EndChild();
@@ -14332,7 +14382,7 @@ static BatchEditDisplayRow PresentBatchEditRow(const aura::metadata::RuleEditRow
 
 static void DrawBatchEditPreviewCell(const char* text, const char* fileName = nullptr) {
     ImGui::TextUnformatted(text);
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort) && ImGui::BeginTooltip()) {
+    if (ImGui::IsItemHovered() && HarkenSearch::BeginTooltip()) {
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 30.0f);
         if (fileName) {
             ImGui::TextUnformatted(fileName);
@@ -19376,6 +19426,12 @@ static void BeginInfoMetadataEdit(AppState& state, const AudioRecord& record) {
     strncpy_s(state.metadataDescBuffer,sizeof(state.metadataDescBuffer),state.metadataBatchMode?"":record.description.c_str(),_TRUNCATE);
     strncpy_s(state.metadataKeywordsBuffer,sizeof(state.metadataKeywordsBuffer),state.metadataBatchMode?"":record.keywords.c_str(),_TRUNCATE);
     strncpy_s(state.metadataCategoryBuffer,sizeof(state.metadataCategoryBuffer),state.metadataBatchMode?"":record.category.c_str(),_TRUNCATE);
+    const HarkenMeta::Values harkenValues =
+        HarkenMeta::Parse(state.metadataBatchMode ? std::string() : record.getMeta("harken_meta"));
+    strncpy_s(state.metadataHarkenCategoryBuffer,sizeof(state.metadataHarkenCategoryBuffer),
+              harkenValues.category.c_str(),_TRUNCATE);
+    strncpy_s(state.metadataHarkenFunctionBuffer,sizeof(state.metadataHarkenFunctionBuffer),
+              harkenValues.function.c_str(),_TRUNCATE);
     state.infoEditSession.Begin(CurrentInfoEditValues(state));
     state.infoEditError.clear();
     state.infoEditAfterLeave={};
@@ -19388,14 +19444,18 @@ static bool SaveInfoMetadataDraft(AppState& state) {
     const auto values=CurrentInfoEditValues(state);
     const auto& old=state.infoEditSession.original;
     const bool desc=values.description!=old.description, keys=values.keywords!=old.keywords, cat=values.category!=old.category;
-    MetadataEditPatch patch;
-    if(desc) patch.setDescription(values.description);
-    if(keys) patch.setKeywords(values.keywords);
-    if(cat) patch.setCategory(values.category);
+    const bool harkenChanged = values.harkenCategory!=old.harkenCategory ||
+        values.harkenFunction!=old.harkenFunction;
+    MetadataEditPatch basePatch;
+    if(desc) basePatch.setDescription(values.description);
+    if(keys) basePatch.setKeywords(values.keywords);
+    if(cat) basePatch.setCategory(values.category);
     auto undo=std::make_unique<MetadataPatchOp>();
     undo->editKind = state.metadataBatchMode ? MetadataUndoKind::BatchEdit : MetadataUndoKind::Edit;
-    if (patch.fields.size() == 1) undo->targetColumn = patch.fields.begin()->first;
+    if (basePatch.fields.size() == 1) undo->targetColumn = basePatch.fields.begin()->first;
+    else if (basePatch.fields.empty() && harkenChanged) undo->targetColumn = "harken_meta";
     std::vector<int64_t> ids;
+    std::vector<std::pair<int64_t, MetadataEditPatch>> perFile;
     for(const auto& original:state.infoEditRecords) {
         // Resolve by the captured identity, never by the new selection.
         const auto current=state.database.getFileById(original.id);
@@ -19409,9 +19469,29 @@ static bool SaveInfoMetadataDraft(AppState& state) {
         if(desc) { entry.oldValues["description"]=current.description; entry.newValues["description"]=values.description; }
         if(keys) { entry.oldValues["keywords"]=current.keywords; entry.newValues["keywords"]=values.keywords; }
         if(cat) { entry.oldValues["category"]=current.category; entry.newValues["category"]=values.category; }
+        MetadataEditPatch filePatch = basePatch;
+        if(harkenChanged) {
+            // Batch edits start from empty buffers, so only the field the user
+            // touched may be written; the untouched one must keep its value.
+            HarkenMeta::Update update;
+            update.setCategory = values.harkenCategory != old.harkenCategory;
+            update.category = values.harkenCategory;
+            update.setFunction = values.harkenFunction != old.harkenFunction;
+            update.function = values.harkenFunction;
+            update.setSource = true;
+            update.source = "manual";
+            const std::string oldHarken = current.getMeta("harken_meta");
+            const std::string newHarken = HarkenMeta::Merge(oldHarken, update);
+            filePatch.set("harken_meta", newHarken);
+            entry.oldValues["harken_meta"]=oldHarken;
+            entry.newValues["harken_meta"]=newHarken;
+        }
         undo->entries.push_back(std::move(entry)); ids.push_back(original.id);
+        perFile.emplace_back(original.id, std::move(filePatch));
     }
-    const auto result=state.database.applyMetadataPatchBatch(ids,patch);
+    const BatchMetadataApplyResult result = harkenChanged
+        ? state.database.applyMetadataPatchMany(perFile)
+        : state.database.applyMetadataPatchBatch(ids,basePatch);
     if(result.failed || result.success!=(int)ids.size()) return false;
     state.undoStack.push(std::move(undo));
     state.database.invalidateFacetQueryCache();
@@ -20024,11 +20104,30 @@ void RenderFileInfoPanelTabContents(
                     ImGui::SetNextItemWidth(-1);
                     ImGui::InputText("##EditCategory", state.metadataCategoryBuffer, sizeof(state.metadataCategoryBuffer));
                     ThemeInspector::RegisterLastItem("info.edit.category",L(Info_Category),"src/main.cpp");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(chrome.kInfoLabelText, "%s", L(Info_HarkenCategory));
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputText("##EditHarkenCategory", state.metadataHarkenCategoryBuffer, sizeof(state.metadataHarkenCategoryBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.harkenCategory",L(Info_HarkenCategory),"src/main.cpp");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextColored(chrome.kInfoLabelText, "%s", L(Info_HarkenFunction));
+                    ImGui::TableNextColumn();
+                    ImGui::SetNextItemWidth(-1);
+                    ImGui::InputText("##EditHarkenFunction", state.metadataHarkenFunctionBuffer, sizeof(state.metadataHarkenFunctionBuffer));
+                    ThemeInspector::RegisterLastItem("info.edit.harkenFunction",L(Info_HarkenFunction),"src/main.cpp");
                 } else {
                     // Display mode
                     row(L(Info_Description), desc.empty() ? "-" : desc);
                     row(L(Info_Keywords), keywords.empty() ? "-" : keywords);
                     row(L(Info_Category), category.empty() ? "-" : category);
+                    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(hasDb ? record.getMeta("harken_meta") : std::string());
+                    if (!harkenValues.category.empty()) row(L(Info_HarkenCategory), harkenValues.category);
+                    if (!harkenValues.function.empty()) row(L(Info_HarkenFunction), harkenValues.function);
                 }
 
                 // Classic-library BWF fields
@@ -21768,7 +21867,7 @@ void RenderFileInfoPanelTabContents(
 
                                 // Hover preview and cover metadata.
                                 if (HoveredForHelp()) {
-                                    if (HarkenSearch::BeginTooltip()) {
+                                    if (HarkenSearch::BeginTooltipImmediate()) {
                                     if (hasTex && tex.textureId != 0) {
                                         float previewSize = 200.0f;
                                         float srcW = std::max(1.0f, (float)tex.width);
@@ -27129,7 +27228,7 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
     if (BeginTransientScrollbarPopup("MagicEQSteepnessPopup")) {
         ImGui::TextUnformatted(L(MagicEQ_NominalEdgeSlope));
         if (settings.mode == MagicEQMode::Notch && ImGui::IsItemHovered())
-            ImGui::SetTooltip("%s", L(MagicEQ_NotchNominalExplanation));
+            HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_NotchNominalExplanation));
         const bool soft = settings.steepness == CenterSenseDsp::MagicEQSteepness::Soft;
         const bool steep = settings.steepness == CenterSenseDsp::MagicEQSteepness::Steep;
         const bool verySteep = settings.steepness == CenterSenseDsp::MagicEQSteepness::VerySteep;
@@ -27158,8 +27257,8 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
             }
 #endif
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                if (sampleRate <= 0) ImGui::SetTooltip("%s", L(MagicEQ_UnloadedGradeHint));
-                else if (!availability.available) ImGui::SetTooltip("%s", availabilityReason(availability.reason));
+                if (sampleRate <= 0) HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_UnloadedGradeHint));
+                else if (!availability.available) HarkenSearch::SetTooltipUngated("%s", availabilityReason(availability.reason));
                 else {
                     const SlopeDisplay detail = slopeDisplay(grade, true);
                     float edgeLow = 0.0f, edgeHigh = 0.0f;
@@ -27170,11 +27269,11 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                                   settings.centerFreq, edgeLow, edgeHigh,
                                   settings.centerFreq / std::max(1.0f, edgeHigh - edgeLow));
                     if (settings.mode == MagicEQMode::Notch)
-                        ImGui::SetTooltip("%s: %s\n%s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
+                        HarkenSearch::SetTooltipUngated("%s: %s\n%s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
                                           display.menu, bandDetail, detail.detail,
                                           L(MagicEQ_NotchNominalExplanation));
                     else
-                        ImGui::SetTooltip("%s: %s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
+                        HarkenSearch::SetTooltipUngated("%s: %s\n%s\n%s", L(MagicEQ_NominalEdgeSlope),
                                           display.menu, bandDetail, detail.detail);
                 }
             }
@@ -27623,19 +27722,19 @@ static bool DrawMagicEQBar(const char* strId, MagicEQSettings& settings, int sam
                   ImVec2(pos.x + width - 1.5f, pos.y + 23.0f), status, 1.5f);
 
     if (hovered && settings.invalidInput) {
-        ImGui::SetTooltip("%s", L(MagicEQ_InvalidParameters));
+        HarkenSearch::SetTooltipUngated("%s", L(MagicEQ_InvalidParameters));
     } else if (hovered && rejectionReason != CenterSenseDsp::MagicEQTailReason::None) {
-        ImGui::SetTooltip("%s", availabilityReason(rejectionReason));
+        HarkenSearch::SetTooltipUngated("%s", availabilityReason(rejectionReason));
     } else if (hovered && !settings.enabled &&
                !availabilityFor(settings.steepness).available) {
-        ImGui::SetTooltip("%s", availabilityReason(availabilityFor(settings.steepness).reason));
+        HarkenSearch::SetTooltipUngated("%s", availabilityReason(availabilityFor(settings.steepness).reason));
     } else if (steepnessHit) {
         const SlopeDisplay detail = slopeDisplay(settings.steepness, true);
-        ImGui::SetTooltip("%s", detail.detail);
+        HarkenSearch::SetTooltipUngated("%s", detail.detail);
     } else if (modeHit) {
-        ImGui::SetTooltip("%s", GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode)));
+        HarkenSearch::SetTooltipUngated("%s", GetMagicEQModeLabel(settings.enabled, static_cast<int>(settings.mode)));
     } else if (hovered) {
-        ImGui::SetTooltip("%s", GetMagicEQFrequencyLabel(lowHz, highHz));
+        HarkenSearch::SetTooltipUngated("%s", GetMagicEQFrequencyLabel(lowHz, highHz));
     }
 #if AURA_BUILD_DIAGNOSTICS && !AURA_INTERNAL_BETA
     g_magicEqQaLastRejectReason = static_cast<int>(rejectionReason);
@@ -30424,7 +30523,9 @@ void RenderHybridWaveformDock(AppState& state, float x, float y, float width, fl
                 if (state.audioEngine.isLoaded()) {
                     const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
                     DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                    state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin,
+                                    TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -31913,7 +32014,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
                     else if (row.kind == LibraryTaskKind::Wwise) state.wwiseTaskDismissed = true;
                     else state.folderRemovalNotice.Dismiss();
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Task_Dismiss));
+                if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", L(Task_Dismiss));
                 const ImVec2 closeMin = ImGui::GetItemRectMin();
                 const ImVec2 closeMax = ImGui::GetItemRectMax();
                 const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
@@ -31925,7 +32026,7 @@ static void DrawLibraryTaskToasts(AppState& state, const std::vector<LibraryTask
 
             ImGui::SetCursorScreenPos(origin);
             ImGui::InvisibleButton("##row", ImVec2(failed ? rowWidth - 18.0f : rowWidth, 20.0f));
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s  ·  %s", row.title, row.detail.c_str());
+            if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s  ·  %s", row.title, row.detail.c_str());
             if (ImGui::IsItemClicked() && !failed) {
                 if (row.kind == LibraryTaskKind::Scan) state.showScanDialog = true;
                 else if (row.kind == LibraryTaskKind::Similarity) state.showScanSimilarityDialog = true;
@@ -32540,84 +32641,96 @@ void RenderUI(AppState& state) {
     }
     ImGui::PopStyleColor(2);
 
-    // Folder auto-rename dialog
+    // Folder auto-rename window
     if (state.showFolderAutoRenameDialog) {
-        ImGui::OpenPopup(L(Dlg_FolderAutoRename));
+        aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);
         state.showFolderAutoRenameDialog = false;
     }
-    if (aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename), L(Dlg_FolderAutoRename))) {
-        { ReadingTextScope _readingPopup;  // dialog body is a reading surface
-        EscClosePopup();
-        ImGui::Text("%s", L(FolderRename_Rule));
-        ImGui::Spacing();
+    {
+        aura::ui::StandaloneWindowOptions renameWindowOptions;
+        renameWindowOptions.defaultSize = ImVec2(860.0f, 620.0f);
+        renameWindowOptions.minimumSize = ImVec2(680.0f, 420.0f);
+        renameWindowOptions.centerOnFirstUse = true;
+        renameWindowOptions.closeOnEscape = true;
+        if (aura::ui::BeginStandaloneWindow(L(Dlg_FolderAutoRename), "##FolderAutoRenameWindow",
+                                           &state.folderAutoRenameWindow, renameWindowOptions)) {
+            { ReadingTextScope _readingPopup;  // window body is a reading surface
+            BeginTransientScrollbarChild("##FolderRenameBody",
+                              ImVec2(0.0f, aura::ui::StandaloneWindowBodyHeight()), false);
+            ImGui::Text("%s", L(FolderRename_Rule));
+            ImGui::Spacing();
 
-        ImGui::Text("%s", L(FolderRename_RootDir));
-        ImGui::SetNextItemWidth(520);
-        ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(Browse))) {
-            std::string folder = OpenFolderDialog(g_hwnd);
-            if (!folder.empty()) {
-                snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
-            }
-        }
-
-        ImGui::Checkbox(L(FolderRename_RecursiveFolder), &state.folderRenameRecursiveFolders);
-        ImGui::Checkbox(L(FolderRename_RecursiveScan), &state.folderRenameScanRecursive);
-
-        ImGui::Text("%s", L(FolderRename_Strategy));
-        ImGui::RadioButton(L(FolderRename_MostCommon), &state.folderRenameRule, 0);
-        ImGui::SameLine();
-        ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
-
-        ImGui::Spacing();
-        if (aura::ui::ActionButton(L(Batch_GenPreview), ImVec2(120, 0))) {
-            BuildFolderRenamePreview(state);
-        }
-        ImGui::SameLine();
-        bool hasPreview = !state.folderRenamePreview.empty();
-        ImGui::BeginDisabled(!hasPreview);
-        if (aura::ui::ActionButton(L(Batch_ExecRename), ImVec2(120, 0), aura::ui::ButtonVariant::PrimarySearch)) {
-            ExecuteFolderRename(state);
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (aura::ui::ActionButton(L(Close), ImVec2(120, 0), aura::ui::ButtonVariant::Quiet)) {
-            ImGui::CloseCurrentPopup();
-        }
-
-        if (!state.folderRenameLog.empty()) {
-            ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
-        }
-
-        ImGui::Spacing();
-        ImGui::Text("%s", L(FolderRename_PreviewList));
-        BeginTransientScrollbarChild("##RenamePreview", ImVec2(760, 320), true);
-        if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
-            ImGui::TableSetupColumn(L(FolderTable_Status), ImGuiTableColumnFlags_WidthFixed, 140);
-            ImGui::TableSetupColumn(L(FolderTable_OldName), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(L(FolderTable_NewName), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn(L(FolderTable_OldPath), ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-
-            for (const auto& op : state.folderRenamePreview) {
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", op.status.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.oldName.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.newName.empty() ? "-" : op.newName.c_str());
-                ImGui::TableNextColumn();
-                ImGui::TextWrapped("%s", op.oldPathUtf8.c_str());
+            ImGui::Text("%s", L(FolderRename_RootDir));
+            ImGui::SetNextItemWidth(-120.0f);
+            ImGui::InputText("##RenameRoot", state.folderRenameRoot, sizeof(state.folderRenameRoot));
+            ImGui::SameLine();
+            if (aura::ui::ActionButton(L(Browse))) {
+                std::string folder = OpenFolderDialog(g_hwnd);
+                if (!folder.empty()) {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s", folder.c_str());
+                }
             }
 
-            ImGui::EndTable();
-        }
-        ImGui::EndChild();
+            ImGui::Checkbox(L(FolderRename_RecursiveFolder), &state.folderRenameRecursiveFolders);
+            ImGui::Checkbox(L(FolderRename_RecursiveScan), &state.folderRenameScanRecursive);
 
+            ImGui::Text("%s", L(FolderRename_Strategy));
+            ImGui::RadioButton(L(FolderRename_MostCommon), &state.folderRenameRule, 0);
+            ImGui::SameLine();
+            ImGui::RadioButton(L(FolderRename_FirstMatch), &state.folderRenameRule, 1);
+
+            if (!state.folderRenameLog.empty()) {
+                ImGui::TextWrapped("%s", state.folderRenameLog.c_str());
+            }
+
+            ImGui::Spacing();
+            ImGui::Text("%s", L(FolderRename_PreviewList));
+            const float previewHeight = (std::max)(80.0f, ImGui::GetContentRegionAvail().y);
+            BeginTransientScrollbarChild("##RenamePreview", ImVec2(0.0f, previewHeight), true);
+            if (BeginTransientScrollbarTable("##RenamePreviewTable", 4, ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY)) {
+                ImGui::TableSetupColumn(L(FolderTable_Status), ImGuiTableColumnFlags_WidthFixed, 140);
+                ImGui::TableSetupColumn(L(FolderTable_OldName), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(L(FolderTable_NewName), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn(L(FolderTable_OldPath), ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (const auto& op : state.folderRenamePreview) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%s", op.status.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.oldName.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.newName.empty() ? "-" : op.newName.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::TextWrapped("%s", op.oldPathUtf8.c_str());
+                }
+
+                ImGui::EndTable();
+            }
+            ImGui::EndChild();
+            ImGui::EndChild();
+            }
+
+            aura::ui::BeginStandaloneWindowFooter();
+            if (aura::ui::StandaloneWindowFooterButton(L(Close), ImVec2(120.0f, 0.0f),
+                    aura::ui::ButtonVariant::Quiet, aura::ui::StandaloneWindowFooterAlign::Left)) {
+                aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+            }
+            const bool hasPreview = !state.folderRenamePreview.empty();
+            ImGui::BeginDisabled(!hasPreview);
+            if (aura::ui::StandaloneWindowFooterButton(L(Batch_ExecRename), ImVec2(140.0f, 0.0f),
+                    aura::ui::ButtonVariant::PrimarySearch, aura::ui::StandaloneWindowFooterAlign::Right)) {
+                ExecuteFolderRename(state);
+            }
+            ImGui::EndDisabled();
+            if (aura::ui::StandaloneWindowFooterButton(L(Batch_GenPreview), ImVec2(140.0f, 0.0f),
+                    aura::ui::ButtonVariant::Secondary, aura::ui::StandaloneWindowFooterAlign::Right)) {
+                BuildFolderRenamePreview(state);
+            }
+            aura::ui::EndStandaloneWindowFooter();
+            aura::ui::EndStandaloneWindow();
         }
-        aura::ui::EndAlertDialog();
     }
 
     // Edit Filename Dialog
@@ -32940,7 +33053,16 @@ void RenderUI(AppState& state) {
                                 state.setTransferStatusFmt(LStr::TR_CopyErrFmt, AppState::TransferStatusKind::Error,
                                                          rec.fileName, copyError);
                             } else {
-                                completed++;
+                                const std::string harkenMeta = rec.getMeta("harken_meta");
+                                std::string harkenError;
+                                if (!harkenMeta.empty() &&
+                                    !MetadataWriter::writeHarkenMetadata(destFile, harkenMeta, harkenError)) {
+                                    errors++;
+                                    state.setTransferStatusFmt(LStr::TR_CopyErrFmt, AppState::TransferStatusKind::Error,
+                                                             rec.fileName, harkenError);
+                                } else {
+                                    completed++;
+                                }
                             }
                         } catch (const std::exception& ex) {
                             errors++;
@@ -37933,7 +38055,7 @@ void RenderUI(AppState& state) {
                         if (itemDisabled) ImGui::EndDisabled();
 
                         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                            ImGui::SetTooltip("%s", installer.displayName.c_str());
+                            HarkenSearch::SetTooltipUngated("%s", installer.displayName.c_str());
                         }
 
                         if (clicked && !alreadyInstalling) {
@@ -40249,7 +40371,7 @@ void RenderUI(AppState& state) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         if (now - g_dockTitleHoverSince >= .55) {
             const char* hint = !floating ? L(Dock_UxHoldHint) : zone == 1 ? L(Dock_UxLabelHint) : L(Dock_UxMoveHint);
-            ImGui::SetTooltip("%s", hint);
+            HarkenSearch::SetTooltipUngated("%s", hint);
         }
     };
 
@@ -42013,7 +42135,7 @@ void RenderUI(AppState& state) {
                             ImGui::GetColorU32(mutedCol), metaStr.c_str());
                     }
                     if (rowHovered && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-                        if (HarkenSearch::BeginTooltip()) {
+                        if (HarkenSearch::BeginTooltipImmediate()) {
                         PopupSectionLabel(L(Preview));
                         const int preview = std::min((int)p.tabs.size(), 5);
                         for (int ti = 0; ti < preview; ++ti) {
@@ -43882,7 +44004,9 @@ void RenderUI(AppState& state) {
                                                       state.browserSelectedIndicesSet.count(entryIndex) > 0);
                                 if (!isMultiSelect && isCurrentFile && (audioAdjusted || hasRegion)) {
                                     // 单文件 + 有调整/选区：生成临时渲染文件，保证"所听即所得"
-                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                                    state.settings.keepHarkenSearchOutputProcessingSuffix, nullptr,
+                                                    TransferHarkenMetaForPath(state, entry.fullPath));
                                 } else {
 // 多选或无调整：通过 BatchExportForTransfer 处理.
                                     std::vector<std::string> rawPaths;
@@ -43905,7 +44029,8 @@ void RenderUI(AppState& state) {
                                                 state.uiState.regionFadeOutNorm,
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
-                                                dragErr) && !files.empty())
+                                                dragErr,
+                                                &state.database) && !files.empty())
                                         {
                                             DragCardOrigin dragOrigin;
                                             dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
@@ -45691,7 +45816,9 @@ void RenderUI(AppState& state) {
                                                       state.selectedIndicesSet.count(i) > 0);
                                 if (!isMultiSelect && isCurrentFile && (audioAdjusted || hasRegion)) {
                                     // 单文件 + 有调整/选区：生成临时渲染文件，保证"所听即所得"
-                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                                    state.settings.keepHarkenSearchOutputProcessingSuffix, nullptr,
+                                                    TransferHarkenMetaForPath(state, record.filePath));
                                 } else {
 
                                     // （有 DSP 调整时导出 temp WAV；无调整时直接传原始路径）
@@ -45715,7 +45842,8 @@ void RenderUI(AppState& state) {
                                                 state.uiState.regionFadeOutNorm,
                                                 state.settings.keepHarkenSearchOutputProcessingSuffix,
                                                 files,
-                                                dragErr) && !files.empty())
+                                                dragErr,
+                                                &state.database) && !files.empty())
                                         {
                                             DragCardOrigin dragOrigin;
                                             dragOrigin.displayName = DisplayNameForDragPath(rawPaths.front());
@@ -48142,7 +48270,7 @@ void RenderUI(AppState& state) {
                 }
                 ThemeInspector::RegisterLastItem(
                     "transport.pan", "Pan", "src/main.cpp:51212");
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", L(Player_TooltipPan));
+                if (ImGui::IsItemHovered()) HarkenSearch::SetTooltipUngated("%s", L(Player_TooltipPan));
                 curX += panW + workspacePx(10.0f);
             }
             ImGui::EndDisabled();
@@ -51235,7 +51363,9 @@ void RenderUI(AppState& state) {
                 if (state.audioEngine.isLoaded()) {
                     const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
                     DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                    state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin,
+                                    TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
@@ -51877,7 +52007,7 @@ void RenderUI(AppState& state) {
     auto drawDockPreview = [&](bool titleBarDragging) {
         if (!g_dockDrag.Active()) return;
         if (titleBarDragging && g_dockDropPlan.tooSmall) {
-            ImGui::SetTooltip("%s", L(Dock_UxTooSmall));
+            HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
             return;
         }
         const aura::ui::dock::DockHit& hit = g_dockDrag.Preview();
@@ -51994,7 +52124,7 @@ void RenderUI(AppState& state) {
                 if (hovered) {
                     tabTargetId = target;
                     g_dockDropPlan.tooSmall = true;
-                    if (titleBarDrag) ImGui::SetTooltip("%s", L(Dock_UxTooSmall));
+                    if (titleBarDrag) HarkenSearch::SetTooltipRegionUngated(&g_dockDropPlan, "%s", L(Dock_UxTooSmall));
                 }
                 return;
             }

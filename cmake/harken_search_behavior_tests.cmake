@@ -136,6 +136,23 @@ endif()
 add_test(NAME TestAudioPlaybackCursor COMMAND TestAudioPlaybackCursor)
 aura_set_test_labels(TestAudioPlaybackCursor core)
 
+add_executable(TestAudioStopResetPolicy EXCLUDE_FROM_ALL
+    tests/test_audio_stop_reset_policy.cpp
+)
+target_include_directories(TestAudioStopResetPolicy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestAudioStopResetPolicy PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestAudioStopResetPolicy PRIVATE /W3 /utf-8)
+    set_target_properties(TestAudioStopResetPolicy PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestAudioStopResetPolicy COMMAND TestAudioStopResetPolicy)
+aura_set_test_labels(TestAudioStopResetPolicy core)
+
 add_executable(TestAudioPlaybackInit EXCLUDE_FROM_ALL
     tests/test_audio_playback_init.cpp
     tests/audio_playback_miniaudio_test_seam.cpp
@@ -455,6 +472,15 @@ if(MSVC)
     )
 endif()
 
+function(harken_link_database_behavior_test target)
+    if(WIN32)
+        target_link_libraries(${target} PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+    elseif(APPLE)
+        target_sources(${target} PRIVATE src/platform/harken_user_data_layout_macos.cpp)
+        target_link_libraries(${target} PRIVATE "-framework CoreFoundation" "-framework CoreServices")
+    endif()
+endfunction()
+
 add_executable(TestStage6PlaybackLoadSeekProbe EXCLUDE_FROM_ALL
     tests/test_stage6_playback_load_seek_probe.cpp
     tests/test_database_link_stubs.cpp
@@ -490,7 +516,7 @@ target_include_directories(TestStage6PlaybackLoadSeekProbe PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestStage6PlaybackLoadSeekProbe PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestStage6PlaybackLoadSeekProbe)
 target_compile_definitions(TestStage6PlaybackLoadSeekProbe PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
 )
@@ -539,7 +565,7 @@ target_include_directories(TestStage6ScanTerminalThroughputProbe PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestStage6ScanTerminalThroughputProbe PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestStage6ScanTerminalThroughputProbe)
 target_compile_definitions(TestStage6ScanTerminalThroughputProbe PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestStage6ScanTerminalThroughputProbe PRIVATE /W3 /MP /utf-8)
@@ -587,7 +613,7 @@ target_include_directories(TestSearchSemanticMatrix PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSearchSemanticMatrix PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestSearchSemanticMatrix)
 target_compile_definitions(TestSearchSemanticMatrix PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestSearchSemanticMatrix PRIVATE /W3 /MP /utf-8)
@@ -748,7 +774,7 @@ target_include_directories(TestDbSearchFacets PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestDbSearchFacets PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestDbSearchFacets)
 target_compile_definitions(TestDbSearchFacets PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestDbSearchFacets PRIVATE /W3 /MP /utf-8)
@@ -794,7 +820,7 @@ target_include_directories(TestTrigramE2E PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestTrigramE2E PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestTrigramE2E)
 target_compile_definitions(TestTrigramE2E PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestTrigramE2E PRIVATE /W3 /MP /utf-8)
@@ -852,7 +878,7 @@ target_include_directories(TestFuzzySearchPrd PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestFuzzySearchPrd PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestFuzzySearchPrd)
 target_compile_definitions(TestFuzzySearchPrd PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestFuzzySearchPrd PRIVATE /W3 /MP /utf-8)
@@ -921,7 +947,7 @@ target_include_directories(TestBackfillRecoveryWorker PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestBackfillRecoveryWorker PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestBackfillRecoveryWorker)
 target_compile_definitions(TestBackfillRecoveryWorker PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURA_TEST_SCAN_STALL_SECONDS=0
@@ -976,7 +1002,7 @@ target_include_directories(TestScanWaveformCacheContract PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestScanWaveformCacheContract PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestScanWaveformCacheContract)
 target_compile_definitions(TestScanWaveformCacheContract PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURA_TEST_SCAN_STALL_SECONDS=0
@@ -1021,14 +1047,13 @@ add_executable(TestWaveformFailureQueue EXCLUDE_FROM_ALL
     src/NativeFloatReader.cpp
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/filesystem_std.cpp
-    src/platform/thread_id_win32.cpp
-    src/platform/search_text_gb2312_win32.cpp
-    src/platform/text_encoding_win32.cpp
-    src/platform/media_foundation_audio_win32.cpp
+    ${AURO_THREAD_ID_SOURCE}
+    ${AURO_SEARCH_TEXT_GB2312_SOURCE}
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     src/platform/audio_file_miniaudio.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/filesystem_win32.cpp
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${SQLITE_SOURCES}
 )
 target_include_directories(TestWaveformFailureQueue PRIVATE
@@ -1038,7 +1063,11 @@ target_include_directories(TestWaveformFailureQueue PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestWaveformFailureQueue PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid)
+harken_link_database_behavior_test(TestWaveformFailureQueue)
+if(WIN32)
+    target_sources(TestWaveformFailureQueue PRIVATE src/platform/filesystem_win32.cpp)
+    target_link_libraries(TestWaveformFailureQueue PRIVATE mfplat mfreadwrite mfuuid)
+endif()
 target_compile_definitions(TestWaveformFailureQueue PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURO_TEST_REAL_ASYNC_WORKER=1
@@ -1084,7 +1113,7 @@ target_include_directories(TestScanPauseResume PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestScanPauseResume PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestScanPauseResume)
 target_compile_definitions(TestScanPauseResume PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURA_TEST_SCAN_STALL_SECONDS=0
@@ -1151,7 +1180,7 @@ target_include_directories(TestImportPrecomputeWaveform PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestImportPrecomputeWaveform PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestImportPrecomputeWaveform)
 target_compile_definitions(TestImportPrecomputeWaveform PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestImportPrecomputeWaveform PRIVATE /W3 /MP /utf-8)
@@ -1261,16 +1290,7 @@ target_include_directories(TestCoverClickPerf PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestCoverClickPerf PRIVATE
-    opengl32
-    gdi32
-    ole32
-    windowscodecs
-    uuid
-    shell32
-    comdlg32
-    winmm
-)
+harken_link_database_behavior_test(TestCoverClickPerf)
 target_compile_definitions(TestCoverClickPerf PRIVATE
     UNICODE
     _UNICODE
@@ -1304,6 +1324,10 @@ if(WIN32)
     target_sources(TestCoverDiagnostics PRIVATE src/platform/text_encoding_win32.cpp)
 else()
     target_sources(TestCoverDiagnostics PRIVATE src/platform/text_encoding_std.cpp)
+endif()
+if(APPLE)
+    target_sources(TestCoverDiagnostics PRIVATE src/platform/file_watcher.cpp)
+    target_link_libraries(TestCoverDiagnostics PRIVATE "-framework CoreServices")
 endif()
 target_include_directories(TestCoverDiagnostics PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -1384,7 +1408,7 @@ target_include_directories(TestStartupReconciliation PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestStartupReconciliation PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestStartupReconciliation)
 target_compile_definitions(TestStartupReconciliation PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5 AURA_TEST_STUB_BACKFILL_SCAN_WRITE_GUARD)
 if(MSVC)
     target_compile_options(TestStartupReconciliation PRIVATE /W3 /MP /utf-8)
@@ -2136,7 +2160,7 @@ target_include_directories(TestProcessedFileExport PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestProcessedFileExport PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestProcessedFileExport)
 target_compile_definitions(TestProcessedFileExport PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestProcessedFileExport PRIVATE /W3 /MP /utf-8)
@@ -2189,7 +2213,7 @@ target_include_directories(TestSingleChannelExport PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSingleChannelExport PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestSingleChannelExport)
 target_compile_definitions(TestSingleChannelExport PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestSingleChannelExport PRIVATE /W3 /MP /utf-8)
@@ -2246,7 +2270,6 @@ add_executable(TestCoverKeyCachePersistenceRuntime EXCLUDE_FROM_ALL
     src/BackfillWorkerPool.cpp
     src/PathUtils.cpp
     src/platform/file_watcher.cpp
-    src/platform/harken_user_data_layout.cpp
     src/Utils.cpp
     src/MetadataReader.cpp
     src/SearchQuery.cpp
@@ -2264,10 +2287,10 @@ add_executable(TestCoverKeyCachePersistenceRuntime EXCLUDE_FROM_ALL
     src/platform/search_text_gb2312_std.cpp
     src/platform/metadata_legacy_tag_content_std.cpp
     src/platform/audio_file_miniaudio.cpp
-    src/platform/text_encoding_win32.cpp
-    src/platform/thread_id_win32.cpp
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
     src/platform/media_foundation_audio_unsupported.cpp
-    src/platform/emergency_file_writer_win32.cpp
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
     src/TimeStretch.cpp
     ${SQLITE_SOURCES}
 )
@@ -2278,9 +2301,10 @@ target_include_directories(TestCoverKeyCachePersistenceRuntime PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestCoverKeyCachePersistenceRuntime PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
-)
+if(NOT APPLE)
+    target_sources(TestCoverKeyCachePersistenceRuntime PRIVATE src/platform/harken_user_data_layout.cpp)
+endif()
+harken_link_database_behavior_test(TestCoverKeyCachePersistenceRuntime)
 target_compile_definitions(TestCoverKeyCachePersistenceRuntime PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     TEST_DATABASE_STUBS_REAL_FILESYSTEM
@@ -2380,9 +2404,10 @@ target_include_directories(TestSearchWorkspace PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSearchWorkspace PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
-    mfplat mfreadwrite mfuuid)
+harken_link_database_behavior_test(TestSearchWorkspace)
+if(WIN32)
+    target_link_libraries(TestSearchWorkspace PRIVATE mfplat mfreadwrite mfuuid)
+endif()
 target_compile_definitions(TestSearchWorkspace PRIVATE
     UNICODE
     _UNICODE
@@ -2704,14 +2729,14 @@ add_executable(TestLoudnessFromSamples EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/filesystem_std.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/thread_id_win32.cpp
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
     src/TimeStretch.cpp
     src/WaveformExtractor.cpp
     src/CenterSenseDataSource.cpp
     src/CenterSenseDsp.cpp
     src/platform/audio_playback_miniaudio.cpp
-    src/platform/media_foundation_audio_win32.cpp
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
     src/NativeFloatReader.cpp
 )
 target_include_directories(TestLoudnessFromSamples PRIVATE
@@ -2735,6 +2760,8 @@ if(WIN32)
     )
     target_link_libraries(TestLoudnessFromSamples PRIVATE ole32 winmm)
     target_link_libraries(TestLoudnessFromSamples PRIVATE mfplat mfreadwrite mfuuid)
+else()
+    target_sources(TestLoudnessFromSamples PRIVATE ${AURO_AUDIO_TEXT_SOURCE})
 endif()
 if(MSVC)
     target_compile_options(TestLoudnessFromSamples PRIVATE /W3 /utf-8 /Gy)
@@ -4302,6 +4329,10 @@ add_executable(TestShortcutPresets EXCLUDE_FROM_ALL
     src/AppState.cpp
     src/FileTypeVisibilityPolicy.cpp
 )
+if(APPLE)
+    target_sources(TestShortcutPresets PRIVATE src/platform/file_watcher.cpp)
+    target_link_libraries(TestShortcutPresets PRIVATE "-framework CoreFoundation" "-framework CoreServices")
+endif()
 target_include_directories(TestShortcutPresets PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
@@ -4400,7 +4431,9 @@ if(MSVC)
         LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
     )
 endif()
-target_link_libraries(TestOpenWith PRIVATE shlwapi)
+if(WIN32)
+    target_link_libraries(TestOpenWith PRIVATE shlwapi)
+endif()
 add_test(NAME TestOpenWith COMMAND TestOpenWith)
 aura_set_test_labels(TestOpenWith core)
 
@@ -4843,7 +4876,6 @@ elseif(APPLE)
     target_sources(TestPlatformFileHash PRIVATE
         src/platform/file_hash_macos.cpp
     )
-    target_link_libraries(TestPlatformFileHash PRIVATE "-framework CommonCrypto")
 endif()
 if(MSVC)
     target_compile_options(TestPlatformFileHash PRIVATE /W3 /utf-8)
@@ -4854,6 +4886,25 @@ if(MSVC)
 endif()
 add_test(NAME TestPlatformFileHash COMMAND TestPlatformFileHash)
 aura_set_test_labels(TestPlatformFileHash core)
+
+# Contract for the strncpy_s shim used by the shared UI code. The shim header is
+# a no-op on Windows, so the same assertions exercise the real CRT there.
+add_executable(TestPlatformWin32CompatStrncpyS EXCLUDE_FROM_ALL
+    tests/test_platform_win32_compat_strncpy_s.cpp
+)
+target_include_directories(TestPlatformWin32CompatStrncpyS PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestPlatformWin32CompatStrncpyS PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestPlatformWin32CompatStrncpyS PRIVATE /W3 /utf-8)
+    set_target_properties(TestPlatformWin32CompatStrncpyS PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestPlatformWin32CompatStrncpyS COMMAND TestPlatformWin32CompatStrncpyS)
+aura_set_test_labels(TestPlatformWin32CompatStrncpyS core)
 
 add_executable(TestPlatformDurableFileOpsCopy EXCLUDE_FROM_ALL
     tests/test_platform_durable_file_ops_copy.cpp
@@ -4881,6 +4932,25 @@ if(MSVC)
 endif()
 add_test(NAME TestPlatformDurableFileOpsCopy COMMAND TestPlatformDurableFileOpsCopy)
 aura_set_test_labels(TestPlatformDurableFileOpsCopy core)
+
+# Failure branches that need a filesystem which fails on demand: a real write
+# error must not be masked by the fsync fallback, and a directory sync failure
+# must not be swallowed. The seam only exists in this target's compile.
+if(APPLE)
+    add_executable(TestPlatformDurableFileOpsMacosFaults EXCLUDE_FROM_ALL
+        tests/test_platform_durable_file_ops_macos_faults.cpp
+        src/platform/durable_file_ops_macos.cpp
+    )
+    target_include_directories(TestPlatformDurableFileOpsMacosFaults PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_features(TestPlatformDurableFileOpsMacosFaults PRIVATE cxx_std_17)
+    target_compile_definitions(TestPlatformDurableFileOpsMacosFaults PRIVATE
+        AURO_DURABLE_FILE_OPS_TESTING
+    )
+    add_test(NAME TestPlatformDurableFileOpsMacosFaults COMMAND TestPlatformDurableFileOpsMacosFaults)
+    aura_set_test_labels(TestPlatformDurableFileOpsMacosFaults core)
+endif()
 
 add_executable(TestPlatformDurableFileOpsReplaceDelete EXCLUDE_FROM_ALL
     tests/test_platform_durable_file_ops_replace_delete.cpp
@@ -4926,6 +4996,23 @@ if(MSVC)
 endif()
 add_test(NAME TestMetadataFields COMMAND TestMetadataFields)
 aura_set_test_labels(TestMetadataFields core)
+
+add_executable(TestHarkenMeta EXCLUDE_FROM_ALL
+    tests/test_harken_meta.cpp
+)
+target_include_directories(TestHarkenMeta PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestHarkenMeta PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestHarkenMeta PRIVATE /W3 /utf-8)
+    set_target_properties(TestHarkenMeta PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestHarkenMeta COMMAND TestHarkenMeta)
+aura_set_test_labels(TestHarkenMeta core)
 
 # F-013: EmbedScript unit tests
 
@@ -4998,7 +5085,7 @@ target_include_directories(TestMultiTabSync PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestMultiTabSync PRIVATE opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm)
+harken_link_database_behavior_test(TestMultiTabSync)
 target_compile_definitions(TestMultiTabSync PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5)
 if(MSVC)
     target_compile_options(TestMultiTabSync PRIVATE /W3 /MP /utf-8)
@@ -5045,9 +5132,7 @@ target_include_directories(TestSubPlaylists PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSubPlaylists PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm
-)
+harken_link_database_behavior_test(TestSubPlaylists)
 target_compile_definitions(TestSubPlaylists PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
 )
@@ -5209,9 +5294,6 @@ endif()
         src/WaveformExtractor.cpp
         src/NativeFloatReader.cpp
         src/platform/audio_data_source_miniaudio.cpp
-        src/platform/harken_user_data_layout.cpp
-        src/platform/harken_legacy_data_migrator.cpp
-        src/platform/filesystem_win32.cpp
         src/platform/filesystem_std.cpp
         src/platform/audio_file_miniaudio.cpp
         ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
@@ -5228,9 +5310,15 @@ endif()
         ${SQLITE_DIR}
         ${IMGUI_DIR}
     )
-    target_link_libraries(TestPlaylistFolderTreeRealLibrary PRIVATE
-        opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm mfplat mfreadwrite mfuuid
-    )
+    harken_link_database_behavior_test(TestPlaylistFolderTreeRealLibrary)
+    if(WIN32)
+        target_sources(TestPlaylistFolderTreeRealLibrary PRIVATE
+            src/platform/harken_user_data_layout.cpp
+            src/platform/harken_legacy_data_migrator.cpp
+            src/platform/filesystem_win32.cpp
+        )
+        target_link_libraries(TestPlaylistFolderTreeRealLibrary PRIVATE mfplat mfreadwrite mfuuid)
+    endif()
     target_compile_definitions(TestPlaylistFolderTreeRealLibrary PRIVATE
         UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
         AURO_TEST_EXTERNAL_PATH_ATTRIBUTES
@@ -5296,16 +5384,7 @@ target_include_directories(TestSetPlaylistParent PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSetPlaylistParent PRIVATE
-    opengl32
-    gdi32
-    ole32
-    windowscodecs
-    uuid
-    shell32
-    comdlg32
-    winmm
-)
+harken_link_database_behavior_test(TestSetPlaylistParent)
 target_compile_definitions(TestSetPlaylistParent PRIVATE
     UNICODE
     _UNICODE
@@ -5400,6 +5479,7 @@ endif()
 add_test(NAME TestSendToTargetSurfaceModel COMMAND TestSendToTargetSurfaceModel)
 aura_set_test_labels(TestSendToTargetSurfaceModel core)
 
+if(WIN32)
 add_executable(TestCubaseDirectInsertContract EXCLUDE_FROM_ALL
     tests/test_cubase_direct_insert_contract.cpp
     tests/test_cubase_executable_path_stub.cpp
@@ -5459,6 +5539,7 @@ if(MSVC)
 endif()
 add_test(NAME TestCubaseDirectInsertContract COMMAND TestCubaseDirectInsertContract)
 aura_set_test_labels(TestCubaseDirectInsertContract core)
+endif()
 
 add_executable(TestAppSettingsDefaults EXCLUDE_FROM_ALL
     tests/test_app_settings_defaults.cpp
@@ -5476,6 +5557,25 @@ if(MSVC)
 endif()
 add_test(NAME TestAppSettingsDefaults COMMAND TestAppSettingsDefaults)
 aura_set_test_labels(TestAppSettingsDefaults core)
+
+# Geometry for the Similar Sounds "analysis report" modal: default size,
+# work-area clamp and one row per failure.
+add_executable(TestSimilarAnalysisReportLayout EXCLUDE_FROM_ALL
+    tests/test_similar_analysis_report_layout.cpp
+)
+target_include_directories(TestSimilarAnalysisReportLayout PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_features(TestSimilarAnalysisReportLayout PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestSimilarAnalysisReportLayout PRIVATE /W3 /utf-8)
+    set_target_properties(TestSimilarAnalysisReportLayout PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestSimilarAnalysisReportLayout COMMAND TestSimilarAnalysisReportLayout)
+aura_set_test_labels(TestSimilarAnalysisReportLayout ui)
 
 add_executable(TestConsentManager EXCLUDE_FROM_ALL
     tests/test_consent_manager.cpp
@@ -5603,7 +5703,10 @@ if(WIN32)
         ARIS_PREVIEW_ISOLATION_ROOT_UTF8="${CMAKE_CURRENT_BINARY_DIR}/Testing/settings-encryption"
     )
 else()
-    target_sources(TestSettingsEncryption PRIVATE tests/test_settings_encryption_layout_stub.cpp)
+    target_sources(TestSettingsEncryption PRIVATE
+        tests/test_settings_encryption_layout_stub.cpp
+        tests/test_utils_credentials_stub.cpp
+    )
 endif()
 target_include_directories(TestSettingsEncryption PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -5679,6 +5782,17 @@ add_executable(TestCoverWallPageDedupe EXCLUDE_FROM_ALL
     src/CoverWallPageResultBuilder.cpp
     src/PathUtils.cpp
 )
+if(APPLE)
+    target_sources(TestCoverWallPageDedupe PRIVATE
+        src/platform/file_watcher.cpp
+        src/DiagnosticsLogger.cpp
+        src/platform/filesystem_std.cpp
+        ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+        ${AURO_THREAD_ID_SOURCE}
+        ${AURO_AUDIO_TEXT_SOURCE}
+    )
+    target_link_libraries(TestCoverWallPageDedupe PRIVATE "-framework CoreServices")
+endif()
 target_include_directories(TestCoverWallPageDedupe PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
@@ -5732,16 +5846,23 @@ target_include_directories(TestDatabaseFeatures PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestDatabaseFeatures PRIVATE
-    opengl32
-    gdi32
-    ole32
-    windowscodecs
-    uuid
-    shell32
-    comdlg32
-    winmm
-)
+if(APPLE)
+    target_sources(TestDatabaseFeatures PRIVATE src/platform/harken_user_data_layout_macos.cpp)
+    target_link_libraries(TestDatabaseFeatures PRIVATE
+        "-framework CoreAudio" "-framework CoreFoundation" "-framework CoreServices"
+    )
+else()
+    target_link_libraries(TestDatabaseFeatures PRIVATE
+        opengl32
+        gdi32
+        ole32
+        windowscodecs
+        uuid
+        shell32
+        comdlg32
+        winmm
+    )
+endif()
 target_compile_definitions(TestDatabaseFeatures PRIVATE
     AURO_TEST_REAL_ASYNC_WORKER
     UNICODE
@@ -5811,9 +5932,9 @@ add_executable(TestPlaylistPerformanceContract EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/filesystem_std.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/search_text_gb2312_win32.cpp
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+    ${AURO_SEARCH_TEXT_GB2312_SOURCE}
     ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
     ${AURO_THREAD_ID_SOURCE}
     ${AURO_AUDIO_TEXT_SOURCE}
@@ -5828,19 +5949,10 @@ target_include_directories(TestPlaylistPerformanceContract PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestPlaylistPerformanceContract PRIVATE
-    opengl32
-    gdi32
-    ole32
-    windowscodecs
-    mfplat
-    mfreadwrite
-    mfuuid
-    uuid
-    shell32
-    comdlg32
-    winmm
-)
+harken_link_database_behavior_test(TestPlaylistPerformanceContract)
+if(WIN32)
+    target_link_libraries(TestPlaylistPerformanceContract PRIVATE mfplat mfreadwrite mfuuid)
+endif()
 target_compile_definitions(TestPlaylistPerformanceContract PRIVATE
     UNICODE
     _UNICODE
@@ -5889,9 +6001,9 @@ add_executable(TestPerfOptimizations EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/filesystem_std.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/search_text_gb2312_win32.cpp
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+    ${AURO_SEARCH_TEXT_GB2312_SOURCE}
     ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
     ${AURO_THREAD_ID_SOURCE}
     ${AURO_AUDIO_TEXT_SOURCE}
@@ -5906,19 +6018,10 @@ target_include_directories(TestPerfOptimizations PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestPerfOptimizations PRIVATE
-    opengl32
-    gdi32
-    ole32
-    windowscodecs
-    mfplat
-    mfreadwrite
-    mfuuid
-    uuid
-    shell32
-    comdlg32
-    winmm
-)
+harken_link_database_behavior_test(TestPerfOptimizations)
+if(WIN32)
+    target_link_libraries(TestPerfOptimizations PRIVATE mfplat mfreadwrite mfuuid)
+endif()
 target_compile_definitions(TestPerfOptimizations PRIVATE
     UNICODE
     _UNICODE
@@ -6126,44 +6229,46 @@ if(WIN32)
     aura_set_test_labels(TestDawBridgeInstaller daw)
 endif()
 
-add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
-    tests/test_reaper_bridge_contract.cpp
-    tests/test_daw_integration_settings.cpp
-    src/ReaperBridgeClient.cpp
-    src/ReaperBridgeDoctor.cpp
-    src/platform/filesystem_std.cpp
-    src/platform/named_pipe_win32.cpp
-    src/platform/system_win32.cpp
-    src/platform/text_encoding_win32.cpp
-    src/platform/text_encoding_ascii.cpp
-    src/platform/executable_path_win32.cpp
-    src/platform/pe_inspection_win32.cpp
-    src/platform/file_hash_win32.cpp
-    src/platform/durable_file_ops_win32.cpp
-    src/platform/harken_user_data_layout.cpp
-    src/platform/harken_legacy_data_migrator.cpp
-)
-target_include_directories(TestReaperBridgeContract PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-)
-target_compile_definitions(TestReaperBridgeContract PRIVATE
-    UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
-    ARIS_REAPER_TEST_DLL_PATH="$<TARGET_FILE:reaper_harken>"
-)
-target_link_libraries(TestReaperBridgeContract PRIVATE
-    version shell32 advapi32 bcrypt ole32 comdlg32
-)
-add_dependencies(TestReaperBridgeContract reaper_harken)
-if(MSVC)
-    target_compile_options(TestReaperBridgeContract PRIVATE /W3 /utf-8)
-    set_target_properties(TestReaperBridgeContract PROPERTIES
-        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
-        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+if(WIN32)
+    add_executable(TestReaperBridgeContract EXCLUDE_FROM_ALL
+        tests/test_reaper_bridge_contract.cpp
+        tests/test_daw_integration_settings.cpp
+        src/ReaperBridgeClient.cpp
+        src/ReaperBridgeDoctor.cpp
+        src/platform/filesystem_std.cpp
+        src/platform/named_pipe_win32.cpp
+        src/platform/system_win32.cpp
+        src/platform/text_encoding_win32.cpp
+        src/platform/text_encoding_ascii.cpp
+        src/platform/executable_path_win32.cpp
+        src/platform/pe_inspection_win32.cpp
+        src/platform/file_hash_win32.cpp
+        src/platform/durable_file_ops_win32.cpp
+        src/platform/harken_user_data_layout.cpp
+        src/platform/harken_legacy_data_migrator.cpp
     )
+    target_include_directories(TestReaperBridgeContract PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_compile_definitions(TestReaperBridgeContract PRIVATE
+        UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX
+        ARIS_REAPER_TEST_DLL_PATH="$<TARGET_FILE:reaper_harken>"
+    )
+    target_link_libraries(TestReaperBridgeContract PRIVATE
+        version shell32 advapi32 bcrypt ole32 comdlg32
+    )
+    add_dependencies(TestReaperBridgeContract reaper_harken)
+    if(MSVC)
+        target_compile_options(TestReaperBridgeContract PRIVATE /W3 /utf-8)
+        set_target_properties(TestReaperBridgeContract PROPERTIES
+            LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+            LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+        )
+    endif()
+    add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
+    aura_set_test_labels(TestReaperBridgeContract daw)
 endif()
-add_test(NAME TestReaperBridgeContract COMMAND TestReaperBridgeContract)
-aura_set_test_labels(TestReaperBridgeContract daw)
 
 add_test(NAME TestDawIntegrationSettingsContract
     COMMAND ${Python3_EXECUTABLE} -m pytest -q
@@ -6312,9 +6417,9 @@ add_executable(TestMiniEnvelopeBuild EXCLUDE_FROM_ALL
     ${AURO_AUDIO_TEXT_SOURCE}
     ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
     ${AURO_THREAD_ID_SOURCE}
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
 )
 if(WIN32)
-    target_sources(TestMiniEnvelopeBuild PRIVATE src/platform/media_foundation_audio_win32.cpp)
     target_link_libraries(TestMiniEnvelopeBuild PRIVATE
         mfplat mfreadwrite mfuuid
     )
@@ -6500,7 +6605,9 @@ target_include_directories(TestThemeColors PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
     ${IMGUI_DIR}
 )
-target_link_libraries(TestThemeColors PRIVATE advapi32)
+if(WIN32)
+    target_link_libraries(TestThemeColors PRIVATE advapi32)
+endif()
 if(MSVC)
     target_compile_options(TestThemeColors PRIVATE /W3 /utf-8)
     set_target_properties(TestThemeColors PROPERTIES
@@ -6799,6 +6906,9 @@ foreach(_auro_utils_test IN ITEMS
     TestDatabaseFeatures
     TestUtilsTextEncoding
 )
+    if(NOT TARGET ${_auro_utils_test})
+        continue()
+    endif()
     # This target now links the real system adapter, which owns GetExeDir.
     if(WIN32 AND _auro_utils_test STREQUAL "TestSettingsEncryption")
         continue()
@@ -7214,6 +7324,9 @@ foreach(_auro_diagnostics_test IN ITEMS
     TestProcessedFileExport TestSingleChannelExport TestSearchWorkspace TestMultiTabSync
     TestSubPlaylists TestSetPlaylistParent TestCubaseDirectInsertContract TestDatabaseFeatures
 )
+    if(NOT TARGET ${_auro_diagnostics_test})
+        continue()
+    endif()
     target_sources(${_auro_diagnostics_test} PRIVATE
         src/platform/filesystem_std.cpp
         ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
@@ -7334,7 +7447,7 @@ add_executable(TestTransferEmbed EXCLUDE_FROM_ALL
     src/MetadataReader.cpp
     src/MetadataWriter.cpp
     src/platform/filesystem_std.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
     ${AURO_AUDIO_TEXT_SOURCE}
 )
 if(WIN32)
@@ -7436,6 +7549,13 @@ if(WIN32)
         src/platform/system_win32.cpp
         src/platform/harken_user_data_layout.cpp
         src/platform/harken_legacy_data_migrator.cpp
+    )
+elseif(APPLE)
+    target_sources(TestFeatureExtractor PRIVATE
+        src/platform/text_encoding_std.cpp
+        src/platform/filesystem_std.cpp
+        tests/test_settings_encryption_layout_stub.cpp
+        tests/test_utils_credentials_stub.cpp
     )
 else()
     target_sources(TestFeatureExtractor PRIVATE
@@ -7630,10 +7750,12 @@ add_executable(TestSimilarityQueryService EXCLUDE_FROM_ALL
     src/platform/audio_data_source_miniaudio.cpp
     src/platform/audio_file_miniaudio.cpp
     src/platform/audio_playback_miniaudio.cpp
-    src/platform/media_foundation_audio_win32.cpp
-    src/platform/metadata_legacy_tag_content_win32.cpp
-    src/platform/emergency_file_writer_win32.cpp
-    src/platform/thread_id_win32.cpp
+    ${AURO_MEDIA_FOUNDATION_AUDIO_SOURCE}
+    ${AURO_METADATA_LEGACY_TAG_CONTENT_SOURCE}
+    ${AURO_EMERGENCY_FILE_WRITER_SOURCE}
+    ${AURO_THREAD_ID_SOURCE}
+    ${AURO_AUDIO_TEXT_SOURCE}
+    ${AURO_SEARCH_TEXT_GB2312_SOURCE}
     ${SQLITE_SOURCES}
 )
 target_include_directories(TestSimilarityQueryService PRIVATE
@@ -7642,9 +7764,8 @@ target_include_directories(TestSimilarityQueryService PRIVATE
     ${SQLITE_DIR}
     ${IMGUI_DIR}
 )
-target_link_libraries(TestSimilarityQueryService PRIVATE
-    opengl32 gdi32 ole32 windowscodecs uuid shell32 comdlg32 winmm Threads::Threads
-)
+harken_link_database_behavior_test(TestSimilarityQueryService)
+target_link_libraries(TestSimilarityQueryService PRIVATE Threads::Threads)
 target_compile_definitions(TestSimilarityQueryService PRIVATE
     UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX SQLITE_ENABLE_FTS5
     AURO_TEST_REAL_SIMILARITY_WORKFLOW=1
@@ -7653,16 +7774,9 @@ target_compile_definitions(TestSimilarityQueryService PRIVATE
 if(WIN32)
     target_sources(TestSimilarityQueryService PRIVATE
         src/platform/filesystem_win32.cpp
-        src/platform/text_encoding_win32.cpp
-        src/platform/search_text_gb2312_win32.cpp
     )
     target_link_libraries(TestSimilarityQueryService PRIVATE
         mfplat mfreadwrite mfuuid
-    )
-else()
-    target_sources(TestSimilarityQueryService PRIVATE
-        src/platform/text_encoding_std.cpp
-        src/platform/search_text_gb2312_std.cpp
     )
 endif()
 if(MSVC)
@@ -7743,6 +7857,22 @@ if(Python3_Interpreter_FOUND)
         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     aura_set_test_labels(TestSimilarSoundsWindowContract ui)
+
+    add_custom_target(TestSimilarAnalysisReportResizeContract
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similar_analysis_report_resize_contract.py"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        VERBATIM
+    )
+    add_test(
+        NAME TestSimilarAnalysisReportResizeContract
+        COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_similar_analysis_report_resize_contract.py"
+    )
+    set_tests_properties(TestSimilarAnalysisReportResizeContract PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    )
+    aura_set_test_labels(TestSimilarAnalysisReportResizeContract ui)
 
     add_custom_target(TestRelinkWorkflowBoundary
         COMMAND ${Python3_EXECUTABLE}
@@ -8136,6 +8266,7 @@ elseif(APPLE)
         src/platform/system_macos.mm
         src/platform/text_encoding_std.cpp
     )
+    target_link_libraries(TestCueviFeedbackClient PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreFoundation")
 else()
     target_sources(TestCueviFeedbackClient PRIVATE src/platform/text_encoding_std.cpp)
 endif()
@@ -8208,6 +8339,7 @@ elseif(APPLE)
         src/platform/system_macos.mm
         src/platform/text_encoding_std.cpp
     )
+    target_link_libraries(TestCueviFeedbackCompletionWorkflow PRIVATE "-framework Cocoa" "-framework IOKit" "-framework CoreFoundation")
 else()
     target_sources(TestCueviFeedbackCompletionWorkflow PRIVATE
         src/platform/text_encoding_std.cpp
@@ -8379,6 +8511,7 @@ add_test(NAME TestUpdateStaleError COMMAND TestUpdateStaleError)
 aura_set_test_labels(TestUpdateStaleError core stage4)
 
 # Also guards user-facing wording, so it runs in the ordinary sweep.
+if(WIN32)
 add_executable(TestBootstrapExitExplanation
     tests/test_bootstrap_exit_explanation.cpp
     src/bootstrap/HarkenSearchBootstrapExitExplanation.cpp
@@ -8405,6 +8538,7 @@ if(MSVC)
 endif()
 add_test(NAME TestBootstrapExitExplanation COMMAND TestBootstrapExitExplanation)
 aura_set_test_labels(TestBootstrapExitExplanation core stage4)
+endif()
 
 # Guards self-update on non-system drives; must run in the ordinary sweep.
 add_executable(TestUpdaterBaseVolume
@@ -8802,6 +8936,9 @@ foreach(_utils_isolated_target IN ITEMS
     TestBrowserSystemFolderSearchRuntime TestCoverDiagnostics TestCoverPathNorm
     TestCubaseDirectInsertContract TestOpenWith TestSearchQueryTrigram
     TestSearchRecall TestThesaurusBidirectional TestUtilsTextEncoding)
+    if(NOT TARGET ${_utils_isolated_target})
+        continue()
+    endif()
     target_sources(${_utils_isolated_target} PRIVATE
         tests/test_settings_encryption_layout_stub.cpp
         tests/test_utils_credentials_stub.cpp)

@@ -129,5 +129,31 @@ int main() {
                tree.children[1].path == "H:\\LibA\\FX"),
           "same-name library roots keep their full paths");
 
+#ifndef _WIN32
+    const std::string nativeFolder = "/Volumes/Audio/FX/Fire";
+    const auto nativeAbsolute = BuildFolderTreeLayers(nativeFolder, {}, PathMode::Absolute);
+    Check(nativeAbsolute.size() == 4 &&
+              nativeAbsolute.front().path == "/Volumes" &&
+              nativeAbsolute.back().path == nativeFolder,
+          "native absolute folders keep the leading slash and selectable path");
+
+    const auto nativePilot = BuildFolderTreeLayers(
+        nativeFolder, {"/Volumes/Audio/FX/", "/Volumes/Audio"}, PathMode::Pilot);
+    Check(LayerNames(nativePilot) == "Audio / FX / Fire" &&
+              nativePilot.front().path == "/Volumes/Audio" &&
+              nativePilot.back().path == nativeFolder,
+          "native Pilot mode begins at the outermost registered root");
+
+    const auto nativeOutside = BuildFolderTreeLayers(
+        nativeFolder, {"/Volumes/audio", "/Volumes/Audio/F"}, PathMode::Pilot);
+    Check(LayerNames(nativeOutside) == "Volumes / Audio / FX / Fire",
+          "native Pilot matching respects case and complete path segments");
+
+    const auto filesystemRoot = BuildFolderTreeLayers(nativeFolder, {"/"}, PathMode::Pilot);
+    Check(filesystemRoot.size() == 5 && filesystemRoot.front().path == "/" &&
+              filesystemRoot.back().path == nativeFolder,
+          "registered filesystem root is the parent of its native folders");
+#endif
+
     return g_failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

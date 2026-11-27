@@ -7,9 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <random>
-#include <system_error>
 #include <utility>
 
 namespace HarkenSearch {
@@ -218,29 +216,25 @@ bool LoadExternalAiSettings(const std::string& path, const std::string& libraryI
         error = "authorization document path must be an absolute file path";
         return false;
     }
-    std::error_code statusError;
-    const auto entry = fs::symlink_status(source, statusError);
-    if (entry.type() == fs::file_type::not_found &&
-        (!statusError || statusError == std::errc::no_such_file_or_directory)) {
+    namespace fileSystem = Platform::FileSystem;
+    using fileSystem::FilePathKind;
+    using fileSystem::PathLinkMode;
+    const auto entry = fileSystem::QueryFilePathKind(path, PathLinkMode::NoFollow);
+    if (entry == FilePathKind::Missing) {
         out = std::move(defaults);
         return true;
     }
     if (existed) {
-        *existed = fs::exists(entry);
+        *existed = entry != FilePathKind::Error;
     }
-    if (statusError || !fs::is_regular_file(source, statusError)) {
+    if (entry == FilePathKind::Error ||
+        fileSystem::QueryFilePathKind(path, PathLinkMode::Follow) != FilePathKind::RegularFile) {
         out = std::move(defaults);
         error = "authorization document is not a readable file";
         return false;
     }
-    std::ifstream input(source, std::ios::binary);
     std::string document;
-    char buffer[4096];
-    while (input) {
-        input.read(buffer, sizeof(buffer));
-        document.append(buffer, static_cast<std::size_t>(input.gcount()));
-    }
-    if (input.bad() || !input.eof()) {
+    if (!fileSystem::ReadFileBinaryText(path, document)) {
         out = std::move(defaults);
         error = "authorization document could not be read";
         return false;
@@ -300,25 +294,20 @@ bool SaveExternalAiSettings(const std::string& path, const ExternalAiSettings& s
         error = "authorization directory could not be created";
         return false;
     }
-    const fs::path pending = fs::u8path(target.u8string() + ".pending");
-    std::size_t written = 0;
-    {
-        std::ofstream stream(pending, std::ios::binary | std::ios::trunc);
-        if (!stream) {
-            error = "authorization document could not be written";
-            return false;
-        }
-        stream.write(document.data(), static_cast<std::streamsize>(document.size()));
-        stream.close();
-        written = stream.good() ? document.size() : 0;
+    const auto pending = target.u8string() + ".pending";
+    Platform::FileSystem::StreamWriter stream;
+    if (!stream.Open(pending, false, true)) {
+        error = "authorization document could not be written";
+        return false;
     }
-    if (written != document.size()) {
-        Platform::FileSystem::RemoveFile(pending.u8string());
+    const bool written = stream.Write(document);
+    if (!stream.CloseChecked() || !written) {
+        Platform::FileSystem::RemoveFile(pending);
         error = "authorization document could not be fully written";
         return false;
     }
-    if (!Platform::FileSystem::AtomicFileReplace(target.u8string(), pending.u8string())) {
-        Platform::FileSystem::RemoveFile(pending.u8string());
+    if (!Platform::FileSystem::AtomicFileReplace(target.u8string(), pending)) {
+        Platform::FileSystem::RemoveFile(pending);
         error = "authorization document could not be replaced atomically";
         return false;
     }

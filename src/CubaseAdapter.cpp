@@ -53,6 +53,7 @@ bool CaseInsensitiveContains(const std::string& haystack, const std::string& nee
 }
 
 std::string ReadEnvVar(const char* name) {
+#ifdef _WIN32
     char* env = nullptr;
     size_t len = 0;
     if (_dupenv_s(&env, &len, name) != 0 || env == nullptr) {
@@ -61,6 +62,10 @@ std::string ReadEnvVar(const char* name) {
     std::string value(env);
     std::free(env);
     return value;
+#else
+    const char* value = std::getenv(name);
+    return value ? value : "";
+#endif
 }
 
 bool FileExistsUtf8(const std::string& path) {

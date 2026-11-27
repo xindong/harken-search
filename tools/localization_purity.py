@@ -71,6 +71,7 @@ PROPER_NOUNS = (
     "Aris",
     "Aura",
     "Cuevi",
+    "Harken",
     "ImGui",
     "SQLite",
     "Whisper",

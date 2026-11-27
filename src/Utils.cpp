@@ -2,6 +2,9 @@
 // Utils.cpp - UTF-8转换、路径操作、字符串处理
 
 #include "Utils.h"
+#ifdef __APPLE__
+#include "SearchTextIndex.h"
+#endif
 #include "platform/database_paths.inl"
 #include "platform/file_times.inl"
 #include "platform/filesystem.h"
@@ -701,6 +704,19 @@ static bool IsCJKChar(wchar_t c) {
 
 // 核心 1：打断连续中文，拯救 SQLite 的单字分词
 std::string InjectCJKSpaces(const std::string& utf8_str) {
+#ifdef __APPLE__
+    std::string result;
+    result.reserve(utf8_str.size());
+    size_t offset = 0;
+    HarkenSearch::Search::Detail::Utf8Char character;
+    while (HarkenSearch::Search::Detail::DecodeNextUtf8(utf8_str, offset, character)) {
+        const bool isCjk = HarkenSearch::Search::Detail::IsCjk(character.codepoint);
+        if (isCjk && !result.empty() && result.back() != ' ') result.push_back(' ');
+        result.append(utf8_str, character.begin, character.end - character.begin);
+        if (isCjk) result.push_back(' ');
+    }
+    return result;
+#else
     std::wstring wstr = Utf8ToWide(utf8_str);
     std::wstring result;
     result.reserve(wstr.size() * 2);
@@ -717,6 +733,7 @@ std::string InjectCJKSpaces(const std::string& utf8_str) {
         }
     }
     return WideToUtf8(result);
+#endif
 }
 
 // 核心 2：利用 GB2312 一级字库天然按拼音排序的特性，实现 0 开销首字母提取

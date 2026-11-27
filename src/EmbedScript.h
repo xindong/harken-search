@@ -75,6 +75,13 @@ struct IXMLData {
     
     // User fields
     std::unordered_map<std::string, std::string> userFields;
+
+    // Harken-owned section inside USER. Empty values are omitted.
+    std::string harkenCategory;
+    std::string harkenFunction;
+    bool HasHarkenSection() const {
+        return !harkenCategory.empty() || !harkenFunction.empty();
+    }
 };
 
 // Steinberg MediaBay Mapping

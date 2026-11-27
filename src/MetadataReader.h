@@ -32,6 +32,10 @@ struct AudioMetadata {
     std::string bpm;
     std::string musicalKey;
     std::unordered_map<std::string, std::string> customTextTags;
+    // True when the container that carries custom text tags (ID3v2 for MP3,
+    // Vorbis comment for FLAC/OGG) was parsed to the end, so an empty map means
+    // "these tags were removed" rather than "this format has no such tags".
+    bool customTextTagsRead = false;
 
     // BWF/Broadcast specific (from bext chunk)
     std::string bwDescription;    // BWF Description (256 chars from bext)
@@ -115,8 +119,10 @@ inline void PopulateExtendedMeta(std::unordered_map<std::string, std::string>& m
 class MetadataReader {
 public:
     // Read metadata from audio file (auto-detects format)
+    // customTagsRead reports whether the custom text tag container was parsed
+    // completely; it is mirrored on AudioMetadata::customTextTagsRead.
     static bool readMetadata(const std::string& filePath, AudioMetadata& metadata,
-                             bool* mp3CustomTagsRead = nullptr);
+                             bool* customTagsRead = nullptr);
 
     // Read album art only (for display)
     static bool readAlbumArt(const std::string& filePath, AlbumArt& art);
@@ -126,11 +132,19 @@ public:
     static bool readID3v2(const std::string& filePath, AudioMetadata& metadata,
                           bool useV1Fallback = false, bool* customTagsRead = nullptr);
     static bool readBWF(const std::string& filePath, AudioMetadata& metadata);
-    static bool readVorbisComment(const std::string& filePath, AudioMetadata& metadata);
+    static bool readVorbisComment(const std::string& filePath, AudioMetadata& metadata,
+                                  bool* customTagsRead = nullptr);
     static bool readM4A(const std::string& filePath, AudioMetadata& metadata);
 
     // Parse iXML chunk data (embedded in WAV files)
     static bool parseIXML(const std::string& xmlData, AudioMetadata& metadata);
+
+    // Read the raw iXML chunk payload from a WAV file. Returns false when the
+    // file is not RIFF/WAVE, has no iXML chunk, or the chunk cannot be read.
+    // chunkMissing tells the "valid WAV without iXML" case apart from a read
+    // failure, so a caller can refuse to rewrite a file it could not read.
+    static bool readIXMLChunk(const std::string& filePath, std::string& xmlData,
+                              std::string& errorMessage, bool* chunkMissing = nullptr);
 
 private:
     // Helper functions

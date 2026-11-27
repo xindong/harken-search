@@ -15,6 +15,7 @@
 #include "ThemeLibraryFiles.h"
 #include "ThemeEditor.h"
 #include "ThemeInspector.h"
+#include "SimilarAnalysisReportLayout.h"
 #include "BatchMetadataRuleEditUi.h"
 #include "ui/TransportVisualAudit.h"
 #include "ui/UiScale.h"
@@ -59,6 +60,7 @@
 #include "BackfillWorkerPool.h"
 #include "WorkerThreadPolicy.h"
 #include "HarkenSearchWidgets.h"  // Focus tracking.
+#include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"    // Lucide font merge.
 #include "DockNativeCaptionBridge.h"
 #include "ui/dock/DockCaptionWndProc.h"
@@ -3861,6 +3863,19 @@ struct MagicEqQaPointer {
     ImGuiMouseButton button = ImGuiMouseButton_Left;
 };
 static MagicEqQaPointer s_magicEqQaPointer;
+// Drives a real edge drag on the open modal by feeding ImGui's own mouse queue.
+// SetWindowSize() would prove nothing about the grip the user actually grabs.
+struct QaDialogResizeDrag {
+    bool active = false;
+    int phase = 0; // 0 hover, 1 press, 2 move, 3 release
+    int moveStep = 0;
+    int moveSteps = 8;
+    float fromX = 0.0f;
+    float fromY = 0.0f;
+    float toX = 0.0f;
+    float toY = 0.0f;
+};
+static QaDialogResizeDrag s_qaDialogResizeDrag;
 #if ARIS_PREVIEW_ISOLATION
 extern std::string GetDockQaState();
 extern std::string SetupDockGestureFixtureForQa(AppState&, std::string_view, std::string_view);
@@ -3897,6 +3912,32 @@ static bool MagicEqQaIsolationReady() {
 
 static void ApplyMagicEqQaPointerBeforeFrame() {
 #if ARIS_PREVIEW_ISOLATION
+    if (s_qaDialogResizeDrag.active) {
+        ImGuiIO& dragIo = ImGui::GetIO();
+        QaDialogResizeDrag& drag = s_qaDialogResizeDrag;
+        if (drag.phase == 0) {
+            dragIo.AddMousePosEvent(drag.fromX, drag.fromY);
+            drag.phase = 1;
+        } else if (drag.phase == 1) {
+            dragIo.AddMousePosEvent(drag.fromX, drag.fromY);
+            dragIo.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+            drag.phase = 2;
+            drag.moveStep = 0;
+        } else if (drag.phase == 2) {
+            ++drag.moveStep;
+            float t = drag.moveSteps > 0
+                ? static_cast<float>(drag.moveStep) / static_cast<float>(drag.moveSteps)
+                : 1.0f;
+            if (t > 1.0f) t = 1.0f;
+            dragIo.AddMousePosEvent(drag.fromX + (drag.toX - drag.fromX) * t,
+                                    drag.fromY + (drag.toY - drag.fromY) * t);
+            if (t >= 1.0f) drag.phase = 3;
+        } else {
+            dragIo.AddMousePosEvent(drag.toX, drag.toY);
+            dragIo.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+            drag.active = false;
+        }
+    }
     if (s_dockQaEscapePhase) {
         ImGui::GetIO().AddKeyEvent(ImGuiKey_Escape, s_dockQaEscapePhase == 1);
         s_dockQaEscapePhase = s_dockQaEscapePhase == 1 ? 2 : 0;
@@ -5007,7 +5048,9 @@ static void PollQaCommandFile(AppState& state) {
                 state.showCreateFolderDialog = false;
                 state.showDawTargetSettings = false;
                 state.showFolderAutoRenameDialog = false;
+                aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
                 state.showPlaylistRenameDialog = false;
+                state.showSimilarAnalysisReport = false;
             }
             if (action == "close") {
                 result = R"({"ok":true,"cmd":"alert_dialog_preview","action":"close"})";
@@ -5033,6 +5076,114 @@ static void PollQaCommandFile(AppState& state) {
                         "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"drag\","
                         "\"before\":[%.1f,%.1f],\"after\":[%.1f,%.1f]}",
                         before.x, before.y, after.x, after.y);
+                    result = receipt;
+                }
+            } else if (action == "geometry" || action == "resize" || action == "resize_drag" ||
+                       action == "pointer" || action == "pointer_clear") {
+                // Geometry and resize receipts for the Similar Sounds analysis
+                // report. Without this the resize path can only be checked by
+                // hand, and this dialog has no other automation entry.
+                ImGuiWindow* dialogWindow = nullptr;
+                for (int level = ctx.OpenPopupStack.Size - 1; level >= 0 && !dialogWindow; --level) {
+                    if (ctx.OpenPopupStack[level].Window)
+                        dialogWindow = ctx.OpenPopupStack[level].Window;
+                }
+                if (!dialogWindow) {
+                    result = R"({"ok":false,"cmd":"alert_dialog_preview","error":"no_dialog_open"})";
+                } else {
+                    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+                    const HarkenSearch::similar_analysis_report::Rect workArea{
+                        viewport->WorkPos.x, viewport->WorkPos.y,
+                        viewport->WorkSize.x, viewport->WorkSize.y};
+                    if (action == "resize") {
+                        const float width = static_cast<float>(getDouble(raw, "w", dialogWindow->Size.x));
+                        const float height = static_cast<float>(getDouble(raw, "h", dialogWindow->Size.y));
+                        ImGui::SetWindowSize(dialogWindow, ImVec2(width, height));
+                    } else if (action == "pointer") {
+                        // Park the synthetic pointer over a dialog row so the
+                        // failure tooltip can be captured without the desktop.
+                        const float x = static_cast<float>(getDouble(raw, "x",
+                            dialogWindow->Pos.x + dialogWindow->Size.x * 0.25));
+                        const float y = static_cast<float>(getDouble(raw, "y",
+                            dialogWindow->Pos.y + dialogWindow->Size.y * 0.12));
+                        s_magicEqQaPointer.active = true;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                        s_magicEqQaPointer.x = x;
+                        s_magicEqQaPointer.y = y;
+                        s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                    } else if (action == "pointer_clear") {
+                        s_magicEqQaPointer.active = false;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                    } else if (action == "resize_drag") {
+                        // Grab the bottom-right resize grip and drag it by the
+                        // requested delta over several frames. ImGui resolves
+                        // the hit test, the hold and the new size itself.
+                        s_qaDialogResizeDrag.fromX = dialogWindow->Pos.x + dialogWindow->Size.x - 6.0f;
+                        s_qaDialogResizeDrag.fromY = dialogWindow->Pos.y + dialogWindow->Size.y - 6.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                    }
+                    size_t failureRows = 0;
+                    {
+                        std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                        failureRows = state.batchFeatureResult.issues.size();
+                    }
+                    const ImVec2 size = dialogWindow->Size;
+                    bool tooltipVisible = false;
+                    for (int windowIndex = 0; windowIndex < ctx.Windows.Size; ++windowIndex) {
+                        const ImGuiWindow* candidate = ctx.Windows[windowIndex];
+                        if (candidate && candidate->Active &&
+                            (candidate->Flags & ImGuiWindowFlags_Tooltip) != 0) {
+                            tooltipVisible = true;
+                            break;
+                        }
+                    }
+                    char receipt[1024];
+                    std::snprintf(receipt, sizeof(receipt),
+                        "{\"ok\":true,\"cmd\":\"alert_dialog_preview\",\"action\":\"%s\","
+                        "\"dialog\":\"similar-analysis-report\","
+                        "\"rect\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"resizable\":%s,\"no_resize\":%s,\"always_auto_resize\":%s,"
+                        "\"viewport_owned\":%s,\"drag_active\":%s,\"tooltip_visible\":%s,"
+                        "\"hovered_is_dialog\":%s,\"mouse\":[%.1f,%.1f],"
+                        "\"work\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"stored\":[%.1f,%.1f],"
+                        "\"failure_rows\":%d,"
+                        "\"failure_row_height\":%.1f,"
+                        "\"failure_list_height\":%.1f,"
+                        "\"work_area_clamped\":%s,\"hovered_window\":\"%s\"}",
+                        action.c_str(),
+                        dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y,
+                        ((dialogWindow->Flags & ImGuiWindowFlags_NoResize) != 0 ||
+                         (dialogWindow->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0)
+                            ? "false" : "true",
+                        (dialogWindow->Flags & ImGuiWindowFlags_NoResize) != 0 ? "true" : "false",
+                        (dialogWindow->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0 ? "true" : "false",
+                        dialogWindow->ViewportOwned ? "true" : "false",
+                        s_qaDialogResizeDrag.active ? "true" : "false",
+                        tooltipVisible ? "true" : "false",
+                        ctx.HoveredWindow == dialogWindow ? "true" : "false",
+                        ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y,
+                        workArea.x, workArea.y, workArea.w, workArea.h,
+                        state.settings.similarAnalysisReportWidth,
+                        state.settings.similarAnalysisReportHeight,
+                        static_cast<int>(failureRows),
+                        HarkenSearch::similar_analysis_report::g_qaFailureRowHeight,
+                        HarkenSearch::similar_analysis_report::g_qaFailureListHeight,
+                        HarkenSearch::similar_analysis_report::ClampToWorkArea(
+                            HarkenSearch::similar_analysis_report::Rect{
+                                dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y},
+                            workArea).y == dialogWindow->Pos.y ? "true" : "false",
+                        jsonEscape(ctx.HoveredWindow ? ctx.HoveredWindow->Name : "").c_str());
                     result = receipt;
                 }
             } else if (action == "open") {
@@ -5089,6 +5240,50 @@ static void PollQaCommandFile(AppState& state) {
                     state.settings.defaultPlayerPrompted = false;
                     state.warmupFramesRemaining = 0;
                     state.filePlayerFastPathActive = false;
+                } else if (dialog == "similar-analysis-report") {
+                    // 44 failures mirror the field report: the list must read as
+                    // one line per file instead of a squeezed strip.
+                    const char* names[] = {
+                        "Impact_Metal_Heavy_01.wav", "Impact_Metal_Heavy_02.wav",
+                        "Footstep_Gravel_Walk_03.wav", "Footstep_Gravel_Run_07.wav",
+                        "Amb_Forest_Insects_Loop_02.wav", "Amb_Forest_Wind_Calm_05.wav",
+                        "UI_Button_Confirm_Soft_01.wav", "UI_Button_Cancel_Dry_02.wav",
+                        "Weapon_Swing_Whoosh_Heavy_04.wav", "Weapon_Blade_Sheath_06.wav",
+                        "Voice_Effort_Short_08.wav", "Voice_Breath_Tired_09.wav"};
+                    const char* folders[] = {
+                        "impact/metal", "footsteps/gravel", "ambience/forest",
+                        "ui/buttons", "weapons/blade", "voice/effort"};
+                    const char* formats[] = {"WAV", "WAV", "WAV", "FLAC"};
+                    std::lock_guard<std::mutex> lock(state.batchFeatureResultMutex);
+                    auto& report = state.batchFeatureResult;
+                    report.issues.clear();
+                    for (int index = 0; index < 44; ++index) {
+                        HarkenSearch::SimilarityIndexIssue issue;
+                        issue.file.id = index + 41;
+                        issue.file.name = names[index % 12];
+                        issue.file.path = std::string("D:/Harken-QA/preview-samples/") +
+                            folders[(index / 12) % 6] + "/" + issue.file.name;
+                        issue.file.format = formats[index % 4];
+                        issue.file.seconds = 1.25f + index * 0.5f;
+                        issue.reason = static_cast<HarkenSearch::SimilarityIndexFailure>(index % 5);
+                        report.issues.push_back(std::move(issue));
+                    }
+                    report.ok = false;
+                    report.cancelled = false;
+                    report.error.clear();
+                    report.modelError.clear();
+                    report.progress.saved = 8;
+                    report.progress.skipped = 0;
+                    report.progress.failed = static_cast<int>(report.issues.size());
+                    report.progress.completed = report.progress.failed + report.progress.saved;
+                    report.progress.total = report.progress.completed;
+                    state.manualSimilarityResultVisibleFrame = 0;
+                    // The report is drawn from the Similar Sounds body, so the
+                    // panel must be rendered for the modal to exist at all.
+                    state.panelSimilarSounds.floating = true;
+                    aura::ui::OpenSimilarSoundsWindow(state);
+                    state.panelSimilarSounds.floating = true;
+                    state.showSimilarAnalysisReport = true;
                 } else {
                     known = false;
                 }
@@ -5437,6 +5632,124 @@ static void PollQaCommandFile(AppState& state) {
         result = "{\"ok\":false,\"error\":\"fixed_preview_isolation_required\"}";
 #endif
 
+    } else if (cmd == "standalone_window") {
+#if ARIS_PREVIEW_ISOLATION
+        if (!MagicEqQaIsolationReady() || !s_mainUiReady.load(std::memory_order_acquire)) {
+            result = R"({"ok":false,"error":"fixed_preview_isolation_required"})";
+        } else {
+            const std::string action = getStr(raw, "action");
+            const std::string windowId = getStr(raw, "window");
+            if (windowId != "folder-auto-rename") {
+                result = R"({"ok":false,"error":"unknown_standalone_window"})";
+            } else {
+                std::string label = L(Dlg_FolderAutoRename);
+                label += state.folderAutoRenameWindow.maximized
+                    ? "###FolderAutoRenameWindow__Maximized"
+                    : "###FolderAutoRenameWindow";
+                ImGuiWindow* window = ImGui::FindWindowByName(label.c_str());
+                if (action == "open") {
+                    snprintf(state.folderRenameRoot, sizeof(state.folderRenameRoot), "%s",
+                             "QA:/preview-samples");
+                    state.folderRenamePreview.clear();
+                    state.folderRenameLog.clear();
+                    aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);
+                    result = R"({"ok":true,"window":"folder-auto-rename","action":"open"})";
+                } else if (action == "close") {
+                    aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);
+                    result = R"({"ok":true,"window":"folder-auto-rename","action":"close"})";
+                } else if (action == "resize") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        const float width = static_cast<float>(getDouble(raw, "w", window->Size.x));
+                        const float height = static_cast<float>(getDouble(raw, "h", window->Size.y));
+                        ImGui::SetWindowSize(window, ImVec2(width, height));
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"resize"})";
+                    }
+                } else if (action == "resize_drag") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        s_qaDialogResizeDrag.fromX = window->Pos.x + window->Size.x - 6.0f;
+                        s_qaDialogResizeDrag.fromY = window->Pos.y + window->Size.y - 6.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"resize_drag"})";
+                    }
+                } else if (action == "drag") {
+                    if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        s_qaDialogResizeDrag.fromX = window->Pos.x + 80.0f;
+                        s_qaDialogResizeDrag.fromY = window->Pos.y + 16.0f;
+                        s_qaDialogResizeDrag.toX = s_qaDialogResizeDrag.fromX +
+                            static_cast<float>(getDouble(raw, "dx", 0.0));
+                        s_qaDialogResizeDrag.toY = s_qaDialogResizeDrag.fromY +
+                            static_cast<float>(getDouble(raw, "dy", 0.0));
+                        s_qaDialogResizeDrag.moveSteps = static_cast<int>(getInt(raw, "steps", 8));
+                        if (s_qaDialogResizeDrag.moveSteps < 1) s_qaDialogResizeDrag.moveSteps = 1;
+                        s_qaDialogResizeDrag.moveStep = 0;
+                        s_qaDialogResizeDrag.phase = 0;
+                        s_qaDialogResizeDrag.active = true;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"drag"})";
+                    }
+                } else if (action == "hover" || action == "hover_clear") {
+                    if (action == "hover_clear") {
+                        s_magicEqQaPointer.active = false;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"hover_clear"})";
+                    } else if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        const int button = std::clamp(getInt(raw, "button", 0), 0, 2);
+                        const float extent = aura::ui::metrics::kHeightLg;
+                        s_magicEqQaPointer.active = true;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                        s_magicEqQaPointer.x = window->Pos.x + window->Size.x -
+                            extent * static_cast<float>(3 - button) + extent * 0.5f;
+                        s_magicEqQaPointer.y = window->Pos.y + extent * 0.5f;
+                        s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                        result = std::string(R"({"ok":true,"window":"folder-auto-rename","action":"hover","button":)") +
+                            std::to_string(button) + "}";
+                    }
+                } else if (action == "maximize" || action == "restore") {
+                    state.folderAutoRenameWindow.maximized = action == "maximize";
+                    state.folderAutoRenameWindow.requestFocus = true;
+                    result = std::string(R"({"ok":true,"window":"folder-auto-rename","action":")") +
+                        action + R"(","maximized":)" +
+                        (state.folderAutoRenameWindow.maximized ? "true" : "false") + "}";
+                } else if (action == "state" || action.empty()) {
+                    const ImVec2 pos = window ? window->Pos : ImVec2(0.0f, 0.0f);
+                    const ImVec2 size = window ? window->Size : ImVec2(0.0f, 0.0f);
+                    char buffer[512];
+                    snprintf(buffer, sizeof(buffer),
+                        "{\"ok\":true,\"window\":\"folder-auto-rename\",\"open\":%s,"
+                        "\"minimized\":%s,\"maximized\":%s,"
+                        "\"rect\":[%.1f,%.1f,%.1f,%.1f],"
+                        "\"remembered\":[%.1f,%.1f],\"has_remembered\":%s}",
+                        state.folderAutoRenameWindow.open ? "true" : "false",
+                        state.folderAutoRenameWindow.minimized ? "true" : "false",
+                        state.folderAutoRenameWindow.maximized ? "true" : "false",
+                        pos.x, pos.y, size.x, size.y,
+                        state.folderAutoRenameWindow.rememberedSize.x,
+                        state.folderAutoRenameWindow.rememberedSize.y,
+                        state.folderAutoRenameWindow.hasRememberedSize ? "true" : "false");
+                    result = buffer;
+                } else {
+                    result = R"({"ok":false,"error":"unknown_standalone_window_action"})";
+                }
+            }
+        }
+#else
+        result = R"({"ok":false,"error":"preview_isolation_disabled"})";
+#endif
     } else if (cmd == "batch_rule_edit") {
 #if ARIS_PREVIEW_ISOLATION
         const nlohmann::json payload = nlohmann::json::parse(raw, nullptr, false);
@@ -9653,7 +9966,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
                             else if (!metadata.comment.empty()) record.keywords = metadata.comment;
                             PopulateExtendedMeta(record.meta, metadata);
-                            if (!metadata.customTextTags.empty()) {
+                            if (metadata.customTextTagsRead) {
                                 record.id3TextTags = std::move(metadata.customTextTags);
                                 record.id3TextTagsRead = true;
                             }

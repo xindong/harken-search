@@ -266,7 +266,7 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
         const char* label = similar ? L(Similar_OpenTooltip) : (page < 4 ? PageLabel(page) : L(Info_VisiblePages));
         const char* id = similar ? "info.similarSounds" : (page < 4 ? PageId(page) : "info.pageVisibility");
         ThemeInspector::RegisterLastItem(id, label, "src/FileInfoPanel.cpp");
-        if (hovered) ImGui::SetTooltip("%s", label);
+        if (hovered) HarkenSearch::SetTooltipUngated("%s", label);
         ImGui::PopID();
         x += layout.buttonWidth;
         return clicked;
@@ -307,7 +307,7 @@ bool RenderFileInfoPageActions(AppState& state, ImVec2 position, float height, f
                 if (pages.SetVisible(page,!visible,kDiagnostics)) state.settingsDirty = true;
             }
             ThemeInspector::RegisterLastItem((std::string("info.visibility.")+std::to_string(i)).c_str(),PageLabel(i),"src/FileInfoPanel.cpp");
-            if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",L(Info_KeepOnePage));
+            if (!enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) HarkenSearch::SetTooltipUngated("%s",L(Info_KeepOnePage));
             ImGui::PopID();
         }
         ImGui::EndPopup();
