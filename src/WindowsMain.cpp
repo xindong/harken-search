@@ -9846,7 +9846,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
                             if (!metadata.keywords.empty()) record.keywords = metadata.keywords;
                             else if (!metadata.comment.empty()) record.keywords = metadata.comment;
                             PopulateExtendedMeta(record.meta, metadata);
-                            if (!metadata.customTextTags.empty()) {
+                            if (metadata.customTextTagsRead) {
                                 record.id3TextTags = std::move(metadata.customTextTags);
                                 record.id3TextTagsRead = true;
                             }

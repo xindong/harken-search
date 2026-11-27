@@ -206,6 +206,33 @@ void TestMp3RereadDistinguishesEmptyFromUnavailableTags() {
           "MP3 reread keeps saved tags when the tag read fails");
 }
 
+void TestVorbisRereadPublishesCustomTags() {
+    auto flac = Item();
+    flac.filePath = "C:/sounds/tagged.flac";
+    FakeOperationPort flacPort;
+    flacPort.metadata.id3TextTags.emplace();
+    (*flacPort.metadata.id3TextTags)["VENDOR LABEL"] = "Zephyr";
+    Check(RescanSelectedRecord(flac, flacPort) == SelectedRecordRescanItemResult::Updated &&
+              flacPort.update.rereadId3TextTags &&
+              flacPort.update.rereadId3TextTags->at("VENDOR LABEL") == "Zephyr",
+          "FLAC rescan saves reread custom tags");
+
+    auto ogg = Item();
+    ogg.filePath = "C:/sounds/tagged.OGG";
+    FakeOperationPort oggPort;
+    oggPort.metadata.id3TextTags.emplace();
+    Check(RescanSelectedRecord(ogg, oggPort) == SelectedRecordRescanItemResult::Updated &&
+              oggPort.update.rereadId3TextTags && oggPort.update.rereadId3TextTags->empty(),
+          "OGG rescan drops custom tags that were removed from the file");
+
+    auto wav = Item();
+    FakeOperationPort wavPort;
+    wavPort.metadata.id3TextTags.emplace();
+    Check(RescanSelectedRecord(wav, wavPort) == SelectedRecordRescanItemResult::Updated &&
+              !wavPort.update.rereadId3TextTags,
+          "WAV rescan still leaves its custom tags alone");
+}
+
 struct FakeBatchPort final : SelectedRecordRescanBatchPort {
     std::vector<SelectedRecordRescanItemResult> results;
     std::vector<std::string> trace;
@@ -283,6 +310,7 @@ int main() {
     TestWaveformRecoveryConditions();
     TestMp3RereadFillsMissingTagsWithoutOverwritingLibraryEdits();
     TestMp3RereadDistinguishesEmptyFromUnavailableTags();
+    TestVorbisRereadPublishesCustomTags();
     TestBatchLifecycleAndCounts();
     if (g_failed != 0) {
         std::cerr << "FAIL: " << g_failed
