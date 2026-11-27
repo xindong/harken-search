@@ -30,8 +30,10 @@ class ReaperBridgeDoctorDurableFileOpsCopyContract(unittest.TestCase):
         ):
             self.assertIn(token, WIN32)
 
-    def test_macos_copy_is_unsupported_without_side_effects(self):
-        self.assertIn("DurableFileOpStatus::Unsupported", MACOS)
+    def test_macos_copy_is_exclusive_and_syncs_the_directory_entry(self):
+        for token in ("O_EXCL", "DurableFileOpStatus::TargetExists", "CopyFailed", "FlushDirectoryOf"):
+            self.assertIn(token, MACOS)
+        self.assertNotIn("DurableFileOpStatus::Unsupported", MACOS)
         self.assertNotIn("CopyFileW", MACOS)
 
     def test_doctor_uses_copy_pal_for_stage_and_backup_only(self):

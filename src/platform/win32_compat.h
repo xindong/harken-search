@@ -69,18 +69,32 @@ inline int gmtime_s(std::tm* out, const std::time_t* timer) {
     return gmtime_r(timer, out) ? 0 : EINVAL;
 }
 
-// Secure CRT copies. MSVC truncates with _TRUNCATE and returns ERANGE when an
-// explicit count overflows the destination, emptying the buffer in that case.
+// Secure CRT copies. MSVC truncates with _TRUNCATE: the destination keeps the
+// longest prefix that fits, stays null-terminated, and STRUNCATE (80) is
+// returned. An explicit count that overflows the destination is an error
+// instead: the buffer is emptied and ERANGE returned.
+#ifndef STRUNCATE
+#define STRUNCATE 80
+#endif
+
 inline int strncpy_s(char* destination, std::size_t destinationSize,
                      const char* source, std::size_t count) {
     if (!destination || destinationSize == 0) return EINVAL;
+    const bool truncating = count == _TRUNCATE;
     std::size_t length = 0;
     if (source) {
-        while (source[length] && (count == _TRUNCATE || length < count)) ++length;
+        // Bound before the read: a source without a terminator must not be
+        // read past the count the caller promised.
+        while ((truncating || length < count) && source[length]) ++length;
     }
     if (length >= destinationSize) {
-        destination[0] = '\0';
-        return count == _TRUNCATE ? 0 : ERANGE;
+        if (!truncating) {
+            destination[0] = '\0';
+            return ERANGE;
+        }
+        std::memcpy(destination, source, destinationSize - 1);
+        destination[destinationSize - 1] = '\0';
+        return STRUNCATE;
     }
     if (length) std::memcpy(destination, source, length);
     destination[length] = '\0';
