@@ -12,6 +12,7 @@
 
 #include "imgui.h"
 #include "imgui_impl_osx.h"
+#include "platform/shim_window.h"
 #include "imgui_impl_opengl3.h"
 
 // Forward declaration — the main app loop lives in main.cpp
@@ -94,6 +95,9 @@ extern void AuroShutdown();
     // Application state and database initialization are not yet wired on macOS.
     // AuroInit();
 
+    // Hand the Cocoa window to the platform shim so the shared UI's
+    // GetWindowPlacement/IsZoomed/GetForegroundWindow have a real target.
+    Platform::Shim::RegisterMainWindow((__bridge void*)self.window);
     [self.window makeKeyAndOrderFront:nil];
     self.shouldClose = NO;
 
