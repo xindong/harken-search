@@ -549,13 +549,13 @@ static void DrawSimilarAnalysisReport(AppState& state) {
                 ImGui::PushID(index);
                 ImGui::Text("%s: %s", reasons[static_cast<int>(issue.reason)], issue.file.name.c_str());
                 if (ImGui::IsItemHovered() && !issue.file.path.empty())
-                    ImGui::SetTooltip("%s", issue.file.path.c_str());
+                    HarkenSearch::SetTooltip("%s", issue.file.path.c_str());
                 if (!issue.file.path.empty()) {
                     ImGui::SameLine();
                     ImGui::PushStyleColor(ImGuiCol_Text, secondaryText);
                     ImGui::TextUnformatted(issue.file.path.c_str());
                     ImGui::PopStyleColor();
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", issue.file.path.c_str());
+                    if (ImGui::IsItemHovered()) HarkenSearch::SetTooltip("%s", issue.file.path.c_str());
                 }
                 ImGui::PopID();
             }

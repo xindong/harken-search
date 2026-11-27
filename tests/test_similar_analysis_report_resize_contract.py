@@ -77,7 +77,9 @@ rows = dialog[dialog.index("clipper.Begin("):dialog.index("ImGui::EndChild()")]
 assert rows.count("ImGui::Text(") == 1, "one plain text item per failure row"
 assert rows.count("ImGui::SameLine()") == 1, "the path trails the reason on the same line"
 assert "ImGui::TextUnformatted(issue.file.path.c_str())" in rows
-assert "ImGui::SetTooltip(\"%s\", issue.file.path.c_str())" in rows
+assert "HarkenSearch::SetTooltip(\"%s\", issue.file.path.c_str())" in rows, (
+    "the path hints use the shared one-second tooltip entry")
+assert "ImGui::SetTooltip(" not in rows, "no direct ImGui tooltip in the failure list"
 assert "ImGui::TextWrapped(issue.file.path.c_str())" not in dialog
 
 # The list keeps a readable height at the default size instead of a strip, and
