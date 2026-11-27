@@ -6,7 +6,11 @@ ImGui's own mouse queue, closes and reopens it, pushes it past the window edge
 and finally restarts the app to prove the size was remembered.
 
 Requires pywin32 and Pillow. No input and no window switch reaches the user's
-desktop, and every fixture lives inside the isolation root.
+desktop, and every fixture lives inside the isolation root. The remembered
+dialog size is reset before each launch, so the run is repeatable on the same
+profile; the restart case later in the run still proves it is persisted. The remembered
+dialog size is reset before each launch, so the run is repeatable on the same
+profile; the restart case later in the run still proves it is persisted.
 
 Exit 0: every geometry assertion held. Exit 1: an assertion failed.
 Exit 2: fixture, app or capture error.
@@ -59,6 +63,15 @@ def prepare_profile(root: Path, exe: Path) -> tuple[Path, Path]:
         settings.write_text(
             "currentDbPath=" + library.as_posix() + "\nlanguage=0\n",
             encoding="utf-8")
+    # A reused isolation root already remembers the size from the previous run,
+    # which would fail the "opens at 1180x780" case for the wrong reason. Drop
+    # only the remembered size so every run starts like a first launch; the
+    # restart case later in this run still proves the size is persisted.
+    kept = [line for line in settings.read_text(encoding="utf-8").splitlines()
+            if line.split("=", 1)[0].strip() not in (
+                "similarAnalysisReportWidth", "similarAnalysisReportHeight")]
+    newline = "\n"
+    settings.write_text(newline.join(kept) + newline, encoding="utf-8")
     consent = settings.with_name(settings.name + ".legal-consent")
     if not consent.exists():
         consent.write_text("eulaVersion=1\nprivacyVersion=1\n"
