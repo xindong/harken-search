@@ -52,6 +52,7 @@ typedef unsigned int GLuint;
 #include "AIEngine.h"
 #include "NamingScript.h"
 #include "BatchRenamePolicy.h"
+#include "BatchMetadataRuleEdit.h"
 #include "SendToTargetSurfaceModel.h"
 #include "ScanWorkflow.h"
 #include "ScanDialogPresentation.h"
@@ -2901,6 +2902,17 @@ struct AppState {
         panel.floatH = 600.0f;
         return panel;
     }();
+    PanelState panelBatchEdit = [] {
+        PanelState panel;
+        panel.visible = false;
+        panel.floating = true;
+        panel.dockSide = DockSide::Right;
+        panel.dockedWidth = 560.0f;
+        panel.dockedHeight = 480.0f;
+        panel.floatW = 1040.0f;
+        panel.floatH = 700.0f;
+        return panel;
+    }();
     std::vector<ModulePanelInstanceState> modulePanels;
     ModulePanelLayoutState modulePanelLayout;
     
@@ -3034,8 +3046,37 @@ struct AppState {
     std::string browserMetaCacheDir;   // which directory the cache was built for
     
     // Batch rename dialog
-    bool showBatchRenameDialog = false;
-    int batchDialogTab = 0;
+    void openBatchEdit() {
+        if (!panelBatchEdit.visible) {
+            renamePreviewList.clear();
+            batchRuleEditPreview = {};
+            batchRuleEditStale = false;
+            batchRuleEditMessage.clear();
+        }
+        panelBatchEdit.visible = true;
+        if (const auto* group = dockTabGroups.Find("mod-batch-edit")) {
+            dockTabGroups.Select(group->id, "mod-batch-edit");
+        }
+        batchEditFocusRequested = true;
+    }
+    bool batchEditFocusRequested = false;
+    // Unified batch edit (REQ-20261126-UNIFIED-BATCH-EDIT)
+    int batchEditTarget = 0;           // 0 file name, 1 title, 2 description, 3 keywords, 4 category
+    int batchRuleEditModeIndex = 0;
+    int batchRuleEditSelectedIndex = -1;
+    char batchRuleEditSearch[256] = "";
+    char batchRuleEditReplace[256] = "";
+    char batchRuleEditSeparator[64] = "";
+    std::vector<aura::metadata::RuleEditRule> batchRuleEditRules;
+    aura::metadata::RuleEditPreview batchRuleEditPreview;
+    std::string batchRuleEditPreviewDbPath;
+    std::set<int> batchRuleEditPreviewSelection;
+    uint64_t batchRuleEditPreviewResultsGeneration = 0;
+    uint64_t batchRuleEditPreviewDataRevision = 0;
+    bool batchRuleEditPreviewAllSelected = false;
+    std::string batchRuleEditMessage;
+    bool batchRuleEditFailed = false;
+    bool batchRuleEditStale = false;
     
     // Batch metadata editing
     char batchMetaDescription[512] = "";
@@ -3051,6 +3092,7 @@ struct AppState {
     int renameDeleteToEndOccurrence = 0; // 0 = first match, 1 = last match
     int renameRuleSelectedIndex = -1;
     std::vector<RenamePreview> renamePreviewList;
+    std::string renamePreviewDbPath;
 
     // F-012: 重命名历史（最多保留 20 批次）
     std::deque<RenameHistoryBatch> renameHistory;

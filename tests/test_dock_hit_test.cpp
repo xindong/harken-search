@@ -404,7 +404,7 @@ int main() {
         using namespace aura::ui::dock;
         const char* resizeCases[] = {
             "mod-workflow", "filter", "info", "similar-sounds",
-            "mod-ucs-browser", "mod-tag-browser", "mod-transfer",
+            "mod-ucs-browser", "mod-tag-browser", "mod-transfer", "mod-batch-edit",
         };
         for (const char* panel : resizeCases) {
             const bool isWorkflow = std::string_view(panel) == "mod-workflow";
@@ -473,6 +473,16 @@ int main() {
         if (restored.Save() != groups.Save() || restored.Find("info")->active != "filter" ||
             !restored.Detach("filter") || restored.Find("filter") ||
             restored.Find("info")->active != "similar-sounds") return 1;
+        DockTabGroups batchEditTabs;
+        if (!batchEditTabs.Merge("mod-batch-edit", "info")) return 1;
+        DockTabGroups batchEditRestored;
+        batchEditRestored.Load(batchEditTabs.Save());
+        const auto* batchEditGroup = batchEditRestored.Find("mod-batch-edit");
+        if (!Check(batchEditGroup && batchEditGroup == batchEditRestored.Find("info") &&
+                   batchEditGroup->active == "mod-batch-edit" &&
+                   batchEditRestored.Select(batchEditGroup->id, "info") &&
+                   batchEditRestored.Select(batchEditGroup->id, "mod-batch-edit"),
+                   "batch edit must share a restorable tab group with other tools")) return 1;
         restored.Load("info:info,info;foo:foo,filter;info:info,similar-sounds;info:filter,info");
         if (restored.Find("filter") || !restored.Find("info") ||
             restored.Find("info")->members.size() != 2) return 1;

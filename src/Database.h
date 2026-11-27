@@ -669,6 +669,13 @@ public:
     /// 每条记录可使用不同 patch；按「更新字段掩码」分组，每组仅 prepare 一次再 bind/step
     BatchMetadataApplyResult applyMetadataPatchMany(
         const std::vector<std::pair<int64_t, MetadataEditPatch>>& items);
+    /// 单列原值复核后整批写入：每条 patch 只能含 expectedColumn 一个字段，
+    /// 且该记录当前值必须仍等于 expectedValues；任一不符则整批不写（独立事务）。
+    /// expectedColumn 必须是 EditableTextColumns() 中的列。
+    BatchMetadataApplyResult applyMetadataPatchManyGuarded(
+        const std::vector<std::pair<int64_t, MetadataEditPatch>>& items,
+        const std::string& expectedColumn,
+        const std::unordered_map<int64_t, std::string>& expectedValues);
 
     bool removeFile(int64_t id);
     bool removeFileByPath(const std::string& filePath);

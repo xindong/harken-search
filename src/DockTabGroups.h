@@ -11,7 +11,7 @@ namespace aura::ui::dock {
 inline bool IsDockTabPanel(std::string_view id) {
     return id == "filter" || id == "info" || id == "similar-sounds" ||
         id == "mod-ucs-browser" || id == "mod-tag-browser" ||
-        id == "mod-workflow" || id == "mod-transfer";
+        id == "mod-workflow" || id == "mod-transfer" || id == "mod-batch-edit";
 }
 
 class DockTabGroups {
