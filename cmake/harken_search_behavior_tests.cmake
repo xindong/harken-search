@@ -136,6 +136,23 @@ endif()
 add_test(NAME TestAudioPlaybackCursor COMMAND TestAudioPlaybackCursor)
 aura_set_test_labels(TestAudioPlaybackCursor core)
 
+add_executable(TestAudioStopResetPolicy EXCLUDE_FROM_ALL
+    tests/test_audio_stop_reset_policy.cpp
+)
+target_include_directories(TestAudioStopResetPolicy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+target_compile_features(TestAudioStopResetPolicy PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestAudioStopResetPolicy PRIVATE /W3 /utf-8)
+    set_target_properties(TestAudioStopResetPolicy PROPERTIES
+        LINK_FLAGS_RELEASE "/SUBSYSTEM:CONSOLE"
+        LINK_FLAGS_DEBUG "/SUBSYSTEM:CONSOLE"
+    )
+endif()
+add_test(NAME TestAudioStopResetPolicy COMMAND TestAudioStopResetPolicy)
+aura_set_test_labels(TestAudioStopResetPolicy core)
+
 add_executable(TestAudioPlaybackInit EXCLUDE_FROM_ALL
     tests/test_audio_playback_init.cpp
     tests/audio_playback_miniaudio_test_seam.cpp
