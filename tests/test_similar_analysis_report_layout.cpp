@@ -136,11 +136,12 @@ int main() {
 
     // The 660x380 default left the list a ~200 px strip. The 1180x780 default
     // must leave a list the user can read without scrolling for every row.
+    // The running dialog measures its own list; this only pins the budget.
     {
-        const float listHeight = report_layout::FailureListHeight(780.0f);
-        const float oldListHeight = report_layout::FailureListHeight(380.0f);
-        CheckClose(listHeight, 780.0f - 36.0f - 12.0f - 32.0f - 42.0f,
-                   "list height follows the dialog chrome");
+        const float listHeight = report_layout::kDefaultHeight - report_layout::kFailureListChrome;
+        const float oldListHeight = 380.0f - report_layout::kFailureListChrome;
+        CheckClose(report_layout::kFailureListChrome, 36.0f + 12.0f + 32.0f + 42.0f,
+                   "chrome budget matches the dialog metrics");
         Check(listHeight >= 600.0f, "the default dialog leaves at least 600 px for failures");
         Check(listHeight > oldListHeight * 2.0f,
               "the default dialog gives the list far more room than the old 380 px dialog");

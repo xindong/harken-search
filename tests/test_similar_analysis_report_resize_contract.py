@@ -80,9 +80,15 @@ assert "ImGui::TextUnformatted(issue.file.path.c_str())" in rows
 assert "ImGui::SetTooltip(\"%s\", issue.file.path.c_str())" in rows
 assert "ImGui::TextWrapped(issue.file.path.c_str())" not in dialog
 
-# The list keeps a readable height at the default size instead of a strip.
-assert "FailureListHeight" in layout
+# The list keeps a readable height at the default size instead of a strip, and
+# the receipt reports the height the dialog laid out (optional status lines
+# shrink it), not a formula over the chrome constants.
+assert "kFailureListChrome" in layout
 assert "FailureRowHeight" in layout
+assert "g_qaFailureListHeight" in layout
+assert "report_layout::g_qaFailureListHeight = ImGui::GetWindowHeight();" in dialog
+assert "HarkenSearch::similar_analysis_report::g_qaFailureListHeight," in qa_host
+assert "ReportFailureListHeight" not in qa_host
 
 # QA receipt: the dialog can be opened with a 44-failure fixture and the export
 # reports the geometry and resize state, so the size claim is measurable.

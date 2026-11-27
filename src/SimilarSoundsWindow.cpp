@@ -529,6 +529,11 @@ static void DrawSimilarAnalysisReport(AppState& state) {
         const ImVec4 secondaryText = SimilarSecondaryText(state);
         if (ImGui::BeginChild("##SimilarAnalysisFailures",
                               ImVec2(0, -report_layout::kFooterStripHeight), false)) {
+#if ARIS_PREVIEW_ISOLATION
+            // The list owns the remaining height after the summary block, so a
+            // cancel/error line shrinks it; report what was actually laid out.
+            report_layout::g_qaFailureListHeight = ImGui::GetWindowHeight();
+#endif
             const char* reasons[] = {L(Similar_FailureUnreadable), L(Similar_FailureSilent), L(Similar_FailureChanged), L(Similar_FailureModel), L(Similar_FailureSave)};
             // One failure per row: the reason and the file share a line and the
             // path trails it without wrapping, so 44 failures stay readable

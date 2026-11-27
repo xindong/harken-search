@@ -81,16 +81,18 @@ inline float FailureRowHeight(float textLineHeight, float itemSpacingY) {
     return line + gap;
 }
 
-#if ARIS_PREVIEW_ISOLATION
-// QA-only: the row pitch the dialog actually used. The geometry receipt runs
-// outside the dialog's pushed ItemSpacing, so it cannot recompute this.
-inline float g_qaFailureRowHeight = 0.0f;
-#endif
+// Everything the dialog draws outside the failure list. Used only to state how
+// much of the default height the list can claim; the running dialog measures
+// the list itself because optional status lines change it.
+inline constexpr float kFailureListChrome = kCaptionStripHeight + kCaptionToBodyGap +
+    kWindowPaddingY * 2.0f + kFooterStripHeight;
 
-inline float FailureListHeight(float dialogHeight) {
-    const float height = StoredOrDefault(dialogHeight, kDefaultHeight) - kCaptionStripHeight -
-        kCaptionToBodyGap - kWindowPaddingY * 2.0f - kFooterStripHeight;
-    return height > 0.0f ? height : 0.0f;
-}
+#if ARIS_PREVIEW_ISOLATION
+// QA-only: the values the dialog actually applied. The geometry receipt runs
+// outside the dialog's pushed ItemSpacing and its laid-out child, so it cannot
+// recompute either number.
+inline float g_qaFailureRowHeight = 0.0f;
+inline float g_qaFailureListHeight = 0.0f;
+#endif
 
 } // namespace HarkenSearch::similar_analysis_report

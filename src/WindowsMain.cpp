@@ -5176,7 +5176,7 @@ static void PollQaCommandFile(AppState& state) {
                         state.settings.similarAnalysisReportHeight,
                         static_cast<int>(failureRows),
                         HarkenSearch::similar_analysis_report::g_qaFailureRowHeight,
-                        HarkenSearch::similar_analysis_report::FailureListHeight(size.y),
+                        HarkenSearch::similar_analysis_report::g_qaFailureListHeight,
                         HarkenSearch::similar_analysis_report::ClampToWorkArea(
                             HarkenSearch::similar_analysis_report::Rect{
                                 dialogWindow->Pos.x, dialogWindow->Pos.y, size.x, size.y},
