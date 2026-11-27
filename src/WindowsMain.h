@@ -55,10 +55,22 @@ using UINT = unsigned int;
 using WPARAM = std::uintptr_t;
 using LPARAM = std::intptr_t;
 using LRESULT = std::intptr_t;
+// The shared UI saves and restores a placement (drag-hide path), so the macOS
+// shape has to carry the same fields the Windows struct does, not just the
+// header fields.
 struct WINDOWPLACEMENT {
     unsigned int length = 0;
     unsigned int flags = 0;
     unsigned int showCmd = 0;
+    struct { std::int32_t x; std::int32_t y; } ptMinPosition{};
+    struct { std::int32_t x; std::int32_t y; } ptMaxPosition{};
+    struct { std::int32_t left; std::int32_t top; std::int32_t right; std::int32_t bottom; } rcNormalPosition{};
+};
+
+enum : unsigned int {
+    WPF_SETMINPOSITION = 0x0001,
+    WPF_RESTORETOMAXIMIZED = 0x0002,
+    WPF_ASYNCWINDOWPLACEMENT = 0x0004,
 };
 #ifndef CALLBACK
 #define CALLBACK
