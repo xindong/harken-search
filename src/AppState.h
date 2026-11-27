@@ -2910,6 +2910,7 @@ struct AppState {
 
     // Folder auto-rename
     bool showFolderAutoRenameDialog = false;
+    aura::ui::StandaloneWindowState folderAutoRenameWindow;
     char folderRenameRoot[512] = "";
     bool folderRenameRecursiveFolders = false;
     bool folderRenameScanRecursive = true;

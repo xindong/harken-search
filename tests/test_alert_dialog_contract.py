@@ -185,7 +185,6 @@ def test_every_dialog_kind_uses_the_shared_surface():
             "L(PL_RenameTitle)",
             "L(AssetLib_Title)",
             "L(Menu_SendFeedback)",
-            "L(Dlg_FolderAutoRename)",
             '"##MetaEditDlg"',
             '"##ConfirmLoadPreset"',
             "kPopupTitle",
@@ -225,7 +224,6 @@ def test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body():
         "src/main.cpp": (
             "aura::ui::BeginAlertDialog((std::string(L(Set_ShellSetDefault))",
             "aura::ui::BeginAlertDialog(L(DAW_SettingsTitle)",
-            "aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename)",
             "aura::ui::BeginAlertDialog(playlistRenamePopupLabel.c_str()",
         ),
         "src/ModuleUI.cpp": ("aura::ui::BeginAlertDialog(L(ModuleUI_WorkflowPreviewTitle)",),
@@ -240,6 +238,82 @@ def test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body():
                 f"{rel}: {marker} still draws a rule under the title")
 
 
+def test_folder_auto_rename_uses_the_standalone_window_shell():
+    main = read(ROOT / "src" / "main.cpp")
+    header = read(ROOT / "src" / "HarkenSearchWidgets.h")
+    widgets = read(ROOT / "src" / "HarkenSearchWidgets.cpp")
+    app_state = read(ROOT / "src" / "AppState.h")
+
+    assert "aura::ui::StandaloneWindowState folderAutoRenameWindow;" in app_state
+    assert "aura::ui::OpenStandaloneWindow(&state.folderAutoRenameWindow);" in main
+    assert "aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);" in main
+    assert "aura::ui::BeginAlertDialog(L(Dlg_FolderAutoRename)" not in main
+
+    marker = 'aura::ui::BeginStandaloneWindow(L(Dlg_FolderAutoRename), "##FolderAutoRenameWindow"'
+    assert marker in main, "folder auto-rename must open on the shared standalone shell"
+    block = main[main.index(marker):main.index("// Edit Filename Dialog", main.index(marker))]
+    assert "aura::ui::StandaloneWindowBodyHeight()" in block
+    assert "aura::ui::BeginStandaloneWindowFooter();" in block
+    assert "aura::ui::StandaloneWindowFooterButton(" in block
+    assert "aura::ui::EndStandaloneWindowFooter();" in block
+    assert "ImGui::CloseCurrentPopup();" not in block
+
+    # The size memory and footer belong to the one shell, not to this window.
+    assert "bool requestRestoreSize = false;" in header
+    assert "ImVec2 rememberedSize" in header
+    assert "bool hasRememberedSize = false;" in header
+    assert "float StandaloneWindowBodyHeight();" in header
+    assert "bool StandaloneWindowFooterButton(" in header
+    shell = widgets[widgets.index("bool BeginStandaloneWindow"):widgets.index("void EndStandaloneWindow")]
+    assert "state->requestRestoreSize" in shell
+    assert "state->rememberedSize = ImGui::GetWindowSize();" in shell
+    assert "ImGui::SetNextWindowSize(state->rememberedSize, ImGuiCond_Always);" in shell
+    assert "g_standaloneFooter.active" in widgets[
+        widgets.index("void BeginStandaloneWindowFooter()"):
+        widgets.index("void EndStandaloneWindowFooter()")]
+
+
+def test_standalone_caption_buttons_share_lucide_ink():
+    widgets = read(ROOT / "src" / "HarkenSearchWidgets.cpp")
+    close_icon = read(ROOT / "src" / "ui" / "CloseIconButton.h")
+
+    start = widgets.index("bool DrawStandaloneCaptionButton")
+    block = widgets[start:widgets.index("void OpenStandaloneWindow", start)]
+    # One icon source, one optical rule: Lucide minus/square/copy/x, centered
+    # by the rasterized visible box instead of the padded glyph quad.
+    assert "ICON_LC_MINUS" in block
+    assert "ICON_LC_STOP" in block
+    assert "ICON_LC_COPY" in block
+    assert "ICON_LC_X" in block
+    assert "VisibleGlyphBounds" in block
+    assert "inkExtent" in block
+    assert "kIconXs / inkExtent" in block
+    assert "hoverExtent" in block
+    # The old hand-drawn line/rect strokes must not come back.
+    assert "AddLine(" not in block
+    assert "drawList->AddRect(" not in block
+
+    assert "ImRect VisibleGlyphBounds" in close_icon
+    assert "VisibleGlyphCenter" in close_icon
+    assert "bounds.Min.x = glyph.X0" in close_icon
+
+
+def test_database_switch_closes_folder_rename_preview():
+    main = read(ROOT / "src" / "main.cpp")
+    windows_main = read(ROOT / "src" / "WindowsMain.cpp")
+
+    start = main.index("static bool SwitchDatabase(AppState& state")
+    switch_block = main[start:main.index("bool BeginSwitchDatabase", start)]
+    assert "state.folderRenamePreview.clear();" in switch_block
+    assert "state.folderRenameLog.clear();" in switch_block
+    assert "aura::ui::CloseStandaloneWindow(&state.folderAutoRenameWindow);" in switch_block
+
+    # The QA receipt must follow the visible __Maximized window, not the hidden
+    # normal window that keeps the pre-maximize geometry.
+    assert '"###FolderAutoRenameWindow__Maximized"' in windows_main
+    assert "state.folderAutoRenameWindow.maximized" in windows_main
+
+
 if __name__ == "__main__":
     test_alert_helper_draws_title_inside_a_rounded_surface()
     test_dialogs_that_must_be_answered_hide_the_close_button()
@@ -251,4 +325,7 @@ if __name__ == "__main__":
     test_no_modal_dialog_keeps_the_default_title_bar()
     test_every_dialog_kind_uses_the_shared_surface()
     test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body()
+    test_folder_auto_rename_uses_the_standalone_window_shell()
+    test_standalone_caption_buttons_share_lucide_ink()
+    test_database_switch_closes_folder_rename_preview()
     print("alert dialog contract ok")

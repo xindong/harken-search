@@ -3,15 +3,15 @@
 #include "imgui_internal.h"
 
 namespace aura::ui::CloseIconButton {
-inline ImVec2 VisibleGlyphCenter(const ImFontGlyph& glyph, ImTextureData* texture) {
-    ImVec2 center((glyph.X0 + glyph.X1) * .5f, (glyph.Y0 + glyph.Y1) * .5f);
-    if (!texture || !texture->Pixels) return center;
+inline ImRect VisibleGlyphBounds(const ImFontGlyph& glyph, ImTextureData* texture) {
+    ImRect bounds(ImVec2(glyph.X0, glyph.Y0), ImVec2(glyph.X1, glyph.Y1));
+    if (!texture || !texture->Pixels) return bounds;
     const int left = int(ImFloor(glyph.U0 * texture->Width + .5f));
     const int top = int(ImFloor(glyph.V0 * texture->Height + .5f));
     const int right = int(ImFloor(glyph.U1 * texture->Width + .5f));
     const int bottom = int(ImFloor(glyph.V1 * texture->Height + .5f));
     if (left < 0 || top < 0 || right > texture->Width || bottom > texture->Height ||
-        left >= right || top >= bottom) return center;
+        left >= right || top >= bottom) return bounds;
     int minX = right, minY = bottom, maxX = left - 1, maxY = top - 1;
     for (int y = top; y < bottom; ++y) for (int x = left; x < right; ++x) {
         const auto* pixel = static_cast<const unsigned char*>(texture->GetPixelsAt(x, y));
@@ -22,10 +22,18 @@ inline ImVec2 VisibleGlyphCenter(const ImFontGlyph& glyph, ImTextureData* textur
         }
     }
     if (minX <= maxX && minY <= maxY) {
-        center.x = glyph.X0 + ((minX + maxX + 1) * .5f - left) / (right - left) * (glyph.X1 - glyph.X0);
-        center.y = glyph.Y0 + ((minY + maxY + 1) * .5f - top) / (bottom - top) * (glyph.Y1 - glyph.Y0);
+        const float scaleX = (glyph.X1 - glyph.X0) / (right - left);
+        const float scaleY = (glyph.Y1 - glyph.Y0) / (bottom - top);
+        bounds.Min.x = glyph.X0 + (minX - left) * scaleX;
+        bounds.Max.x = glyph.X0 + (maxX + 1 - left) * scaleX;
+        bounds.Min.y = glyph.Y0 + (minY - top) * scaleY;
+        bounds.Max.y = glyph.Y0 + (maxY + 1 - top) * scaleY;
     }
-    return center;
+    return bounds;
+}
+
+inline ImVec2 VisibleGlyphCenter(const ImFontGlyph& glyph, ImTextureData* texture) {
+    return VisibleGlyphBounds(glyph, texture).GetCenter();
 }
 
 inline bool Draw(const char* label, const ImVec2& size, ImVec4 preferred, ImVec4 surface) {
