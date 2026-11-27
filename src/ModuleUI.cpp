@@ -1617,7 +1617,14 @@ void RenderWorkflowDialogContent(AppState& state) {
                                 sink(progress.done, progress.total, progress.verifying);
                             },
                             cancelFlag);
-                        if (res.cancelled || !appState->database.commitTransaction()) {
+                        // 取消和提交失败分开：取消是用户主动停的，不能被当成常驻失败行。
+                        if (res.cancelled) {
+                            appState->database.rollbackTransaction();
+                            res.success = 0;
+                            res.failed = 0;
+                            return res;
+                        }
+                        if (!appState->database.commitTransaction()) {
                             appState->database.rollbackTransaction();
                             res.success = 0;
                             res.failed = res.total;

@@ -31906,12 +31906,10 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
     }
 
     // 批量改元数据：后台会话执行，这里只读进度快照。
+    // 起止边界由 StartMetadataBatch / PumpMetadataBatch 记，不靠这里是否恰好看到运行中。
     {
         const auto batch = state.metadataBatch.Snapshot();
         if (batch.active) {
-            state.metadataTaskWasActive = true;
-            state.metadataTaskDoneAt = 0.0;
-            state.metadataTaskDismissed = false;
             std::string detail;
             float fraction = -1.0f;
             if (batch.verifying) {
@@ -31931,10 +31929,6 @@ static std::vector<LibraryTaskRow> BuildLibraryTaskRows(
             rows.push_back({LibraryTaskKind::Metadata, Phase::Running, L(Task_MetadataBatch),
                             std::move(detail), fraction});
         } else {
-            if (state.metadataTaskWasActive) {
-                state.metadataTaskWasActive = false;
-                state.metadataTaskDoneAt = now;
-            }
             // 失败一直留着等人读；成功和取消 3 秒淡出。
             const bool keptFailure = state.metadataTaskLastPhase == Phase::Failed;
             if (!state.metadataTaskDismissed && state.metadataTaskDoneAt > 0.0 &&
@@ -32291,6 +32285,8 @@ bool AppState::StartMetadataBatch(MetadataBatchWork work, std::function<void(con
     metadataBatchMessage.clear();
     metadataBatchMessageFailed = false;
     metadataTaskDismissed = false;
+    // 起点在这里记：停靠面板在浮层行构建之后才提交任务，靠绘制时恰好看运行中会漏报。
+    metadataTaskDoneAt = 0.0;
     return true;
 }
 
@@ -32308,6 +32304,8 @@ void AppState::PumpMetadataBatch() {
         metadataTaskLastPhase = Phase::Succeeded;
         metadataTaskAppliedCount = result->success;
     }
+    // 终点也在这里记：即使整批在一帧内跑完，终态行仍然会出现。
+    metadataTaskDoneAt = ImGui::GetTime();
     auto done = std::move(metadataBatchDone);
     metadataBatchDone = {};
     if (done) done(*result, crashed);
@@ -36746,6 +36744,7 @@ void RenderUI(AppState& state) {
                 sMeSaveMsg.clear();
                 // 上一次关了弹窗才完成的后台写入不能把重新打开的弹窗直接关掉。
                 state.metadataEditDialogCloseRequested = false;
+                ++state.metadataEditDialogGeneration;
 
                 if (!state.metadataBatchMode && state.metadataEditFileId > 0) {
                     for (const auto& r : state.searchResults) {
@@ -36924,6 +36923,7 @@ void RenderUI(AppState& state) {
                     // 写入本人就在后台跑：逐条走数据库不变，只是不再堵界面。
                     auto* appState = &state;
                     auto* saveMsg = &sMeSaveMsg;
+                    const int dialogGeneration = state.metadataEditDialogGeneration;
                     const int skipped = svFail;
                     if (!applyIds.empty() &&
                         appState->StartMetadataBatch(
@@ -36936,7 +36936,7 @@ void RenderUI(AppState& state) {
                                     },
                                     cancelFlag);
                             },
-                            [appState, undoOp, skipped, saveMsg]
+                            [appState, undoOp, skipped, saveMsg, dialogGeneration]
                             (const BatchMetadataApplyResult& res, bool crashed) {
                                 char resultMsg[160];
                                 if (crashed) {
@@ -36959,7 +36959,10 @@ void RenderUI(AppState& state) {
                                 const int fail = wholeBatchOk ? skipped : skipped + res.total;
                                 std::snprintf(resultMsg, sizeof(resultMsg), L(MetaEdit_SaveResult), ok, 0, fail);
                                 *saveMsg = resultMsg;
-                                if (fail == 0) appState->metadataEditDialogCloseRequested = true;
+                                // 只关发起保存的那一次弹窗：期间用户可能又开了一条新草稿。
+                                if (fail == 0 &&
+                                    appState->metadataEditDialogGeneration == dialogGeneration)
+                                    appState->metadataEditDialogCloseRequested = true;
                             })) {
                         sMeSaveMsg.clear();
                     } else if (!applyIds.empty()) {

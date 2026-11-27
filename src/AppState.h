@@ -2801,6 +2801,8 @@ struct AppState {
     bool metadataTaskWasActive = false;
     double metadataTaskDoneAt = 0.0;
     bool metadataTaskDismissed = false;
+    // 批量编辑弹窗的会话号：提交保存时记下来，完成时只关“同一次弹窗”，不关后来新开的草稿。
+    int metadataEditDialogGeneration = 0;
     // 批量编辑弹窗：写入完成后由它下一帧自己关掉。
     bool metadataEditDialogCloseRequested = false;
     HarkenSearch::LibraryTaskPhase metadataTaskLastPhase = HarkenSearch::LibraryTaskPhase::Succeeded;
