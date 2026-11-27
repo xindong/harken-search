@@ -507,10 +507,36 @@ int64_t LastWriteTimeUnixSeconds(const std::string& pathUtf8) {
     return sctp.time_since_epoch().count();
 }
 
+FilePathKind QueryFilePathKind(const std::string& pathUtf8, PathLinkMode linkMode) {
+    namespace fs = std::filesystem;
+    const auto path = fs::u8path(pathUtf8);
+    std::error_code error;
+    const auto status = linkMode == PathLinkMode::Follow ? fs::status(path, error) : fs::symlink_status(path, error);
+    if (status.type() == fs::file_type::not_found &&
+        (!error || error == std::errc::no_such_file_or_directory)) return FilePathKind::Missing;
+    if (error || !fs::status_known(status)) return FilePathKind::Error;
+    if (fs::is_regular_file(status)) return FilePathKind::RegularFile;
+    if (fs::is_symlink(status)) return FilePathKind::Symlink;
+    return FilePathKind::Other;
+}
+
 bool ReadFileText(const std::string& pathUtf8, std::string& outText) {
     std::ifstream input(std::filesystem::u8path(pathUtf8));
     if (!input.is_open()) return false;
     outText.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    return true;
+}
+
+bool ReadFileBinaryText(const std::string& pathUtf8, std::string& outText) {
+    std::ifstream input(std::filesystem::u8path(pathUtf8), std::ios::binary);
+    std::string text;
+    char buffer[4096];
+    while (input) {
+        input.read(buffer, sizeof(buffer));
+        text.append(buffer, static_cast<std::size_t>(input.gcount()));
+    }
+    if (input.bad() || !input.eof()) return false;
+    outText.swap(text);
     return true;
 }
 
