@@ -128,6 +128,7 @@
 #include "AudioDragCard.h"
 #include "platform/animation_preferences.h"
 #include "HarkenSearchWidgets.h"        // Aris shared controls for core product flows
+#include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"          // 官方品牌字标（菜单栏/启动页同源）
 #include "../thirdparty/lucide/IconsLucide.h"
 #include "ThemeMascot.h"        // 主题精灵系统
@@ -40560,14 +40561,14 @@ void RenderUI(AppState& state) {
     };
 
     const auto renderIndependentSimilarSounds = [&](const ImVec2& outerSize, const ImVec2& contentMin,
-                                                     const ImVec2& contentMax) {
+                                                     const ImVec2& contentMax, bool useShellFooter = false) {
         constexpr float padding = aura::ui::workspace::kCoreWorkspaceMetrics.space4;
         ImGui::SetCursorScreenPos(ImVec2(contentMin.x + padding, contentMin.y + padding));
         const ImVec2 bodySize((std::max)(1.0f, contentMax.x - contentMin.x - 2.0f * padding),
                               (std::max)(1.0f, contentMax.y - contentMin.y - 2.0f * padding));
         if (beginDockContentViewport("similar-sounds", "##IndependentSimilarSoundsContent",
                 outerSize, bodySize, ImGuiWindowFlags_NoBackground)) {
-            aura::ui::RenderSimilarSoundsContent(state, true);
+            aura::ui::RenderSimilarSoundsContent(state, true, useShellFooter);
         }
         ImGui::EndChild();
     };
@@ -52498,9 +52499,23 @@ void RenderUI(AppState& state) {
                 }
                 ImGui::EndPopup();
             }
+            // The floating Similar Sounds window is this existing dock host,
+            // not the legacy RenderSimilarSoundsWindow shell. Reserve the same
+            // footer height here so both hosts use one action-bar implementation.
+            const float footerHeight = aura::ui::StandaloneWindowFooterHeight();
+            const float contentBottom = pos.y + size.y -
+                aura::ui::metrics::kGap16 - footerHeight - aura::ui::metrics::kGap12;
             renderIndependentSimilarSounds(size,
                 ImVec2(pos.x, ImGui::GetCurrentWindowRead()->TitleBarRect().Max.y),
-                ImVec2(pos.x + size.x, pos.y + size.y));
+                ImVec2(pos.x + size.x, contentBottom), true);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,
+                ImVec2(aura::ui::metrics::kGap16, aura::ui::metrics::kGap16));
+            ImGui::PushStyleColor(ImGuiCol_Separator, ThemeColors::current().chromeBorder);
+            aura::ui::BeginStandaloneWindowFooter();
+            aura::ui::RenderSimilarSoundsFooterActions(state);
+            aura::ui::EndStandaloneWindowFooter();
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
             ImGui::PopStyleColor();
         }
         if (!similarOpen) {

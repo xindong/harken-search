@@ -142,7 +142,7 @@ def run(args):
         driver.command({'cmd':'stop'})
         report['checks'].append({'case':'actual-result-waveform-audition-preserves-main-selection','passed':True})
         current=audit(driver,0)
-        next_button=next(c for c in current['checks'] if 'SimilarActionRow' in c['window'] and c['label']=='换一批')
+        next_button=next(c for c in current['checks'] if ('SimilarSoundsWindow' in c['window'] or 'FloatingSimilarSounds' in c['window']) and c['label']=='换一批')
         click(next_button['bounds'])
         next_result=until(state,lambda s:s['status'] in (3,4),180)
         assert (next_result['status']==3 and next_result['rows']>0) or (next_result['status']==4 and next_result['error']==8 and next_result['rows']==0),next_result
@@ -155,7 +155,7 @@ def run(args):
             driver.command({'cmd':'set_theme','theme':theme})
             for width in (640,320):
                 resize_similar(driver,width);observations=audit(driver,theme)
-                controls=[c for c in observations['checks'] if 'SimilarActionRow' in c['window']]
+                controls=[c for c in observations['checks'] if 'SimilarActionRow' in c['window'] or 'SimilarSoundsWindow' in c['window'] or 'FloatingSimilarSounds' in c['window']]
                 assert not any(c['label'] in ('听感接近','同类替代') for c in controls),controls
                 for c in controls:
                     b,clip=c['bounds'],c['clip']

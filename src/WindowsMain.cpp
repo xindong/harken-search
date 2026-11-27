@@ -5511,7 +5511,9 @@ static void PollQaCommandFile(AppState& state) {
                 const auto* window = ImGui::FindWindowByName(item.window.c_str());
                 const bool ownPopup = window && (window->Flags & ImGuiWindowFlags_Popup) &&
                     window->ParentWindow && std::strstr(window->ParentWindow->Name, "SimilarActionRow");
-                if ((item.window.find("SimilarActionRow") != std::string::npos || ownPopup) &&
+                const bool footerAction = item.window.find("SimilarSoundsWindow") != std::string::npos ||
+                    item.window.find("FloatingSimilarSounds") != std::string::npos;
+                if ((item.window.find("SimilarActionRow") != std::string::npos || footerAction || ownPopup) &&
                     x >= item.min.x && x < item.max.x && y >= item.min.y && y < item.max.y) hit = true;
             }
             const bool fresh = aura::ui::ActionButtonStyle::auditFrame + 2 >= ImGui::GetFrameCount();

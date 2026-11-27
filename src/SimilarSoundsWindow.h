@@ -9,7 +9,8 @@ namespace aura::ui {
 // duration of the call and retain no new reference or external lifetime.
 void OpenSimilarSoundsWindow(AppState& state);
 void InvalidateSimilarSoundsWindow(AppState& state);
-void RenderSimilarSoundsContent(AppState& state, bool independentLayout = false);
+void RenderSimilarSoundsContent(AppState& state, bool independentLayout = false, bool useShellFooter = false);
+void RenderSimilarSoundsFooterActions(AppState& state);
 void RenderSimilarSoundsWindow(AppState& state);
 
 } // namespace aura::ui

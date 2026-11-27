@@ -63,10 +63,16 @@ static std::optional<HarkenSearch::SimilarityReference> ResolveCurrentSimilarity
     return fromRecord(state.database.getFileById(state.currentFileId));
 }
 
+static bool TriggerSimilarSoundsAction(
+    AppState& state,
+    HarkenSearch::SimilarityWorkflow& workflow,
+    bool searching);
+
 static bool DrawSimilarSoundsActionRow(
     AppState& state,
     HarkenSearch::SimilarityWorkflow& workflow,
-    const HarkenSearch::SimilarityWorkflowSnapshot& snapshot) {
+    const HarkenSearch::SimilarityWorkflowSnapshot& snapshot,
+    bool showPrimaryAction) {
     const bool searching = snapshot.status == HarkenSearch::SimilarityWorkflowStatus::Searching;
     const bool indexing = state.batchFeatureExtracting.load();
     const bool hasReference = snapshot.status != HarkenSearch::SimilarityWorkflowStatus::NoSelection;
@@ -77,11 +83,14 @@ static bool DrawSimilarSoundsActionRow(
     constexpr float comboWidth = 132.0f;
     const float deepWidth = ImGui::CalcTextSize(L(Similar_DeepThink)).x + 52.0f;
     const float actionWidth = ImGui::CalcTextSize(actionLabel).x + 28.0f;
-    const bool stacked = available < comboWidth + deepWidth + actionWidth + 2*kItemGap;
+    const float requiredWidth = deepWidth + kItemGap + comboWidth +
+        (showPrimaryAction ? kItemGap + actionWidth : 0.0f);
+    const bool stacked = available < requiredWidth;
+    const int itemCount = showPrimaryAction ? 3 : 2;
     const float widths[] = {deepWidth, comboWidth, actionWidth};
     ImVec2 positions[3];
     float nextX = 0; int optionRow = 0;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < itemCount; ++i) {
         if (nextX > 0 && ((stacked && i == 2) || nextX + widths[i] > available)) {
             ++optionRow; nextX = 0;
         }
@@ -128,25 +137,67 @@ static bool DrawSimilarSoundsActionRow(
             workflow.Invalidate(); state.similarSoundsSelectedRow = -1;
             state.settingsDirty = true; state.settingsDirtyAt = ImGui::GetTime();
         }
-        ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
-        aura::ui::ButtonOptions options;
-        options.disabled = indexing || !hasReference;
-        options.variant = options.disabled
-            ? aura::ui::ButtonVariant::DisabledSearch
-            : aura::ui::ButtonVariant::PrimarySearch;
-        if (searching && !changed) {
-            if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
-                workflow.CancelSearch(); state.similarSoundsSelectedRow = -1; changed = true;
+        if (showPrimaryAction) {
+            ImGui::SetCursorPos(ImVec2(rowX+positions[2].x,rowY+positions[2].y));
+            aura::ui::ButtonOptions options;
+            options.disabled = indexing || !hasReference;
+            options.variant = options.disabled
+                ? aura::ui::ButtonVariant::DisabledSearch
+                : aura::ui::ButtonVariant::PrimarySearch;
+            if (searching && !changed) {
+                if (aura::ui::ActionButton(L(Cancel), ImVec2(0,height), aura::ui::ButtonVariant::Quiet)) {
+                    changed = TriggerSimilarSoundsAction(state, workflow, true);
+                }
+            } else if (aura::ui::Button(actionLabel, options)) {
+                searchRequested = TriggerSimilarSoundsAction(state, workflow, false);
             }
-        } else if (aura::ui::Button(actionLabel, options)) {
-            state.similarSoundsSelectedRow = -1;
-            HarkenSearch::SimilarityOptions searchOptions;
-            searchOptions.mode = HarkenSearch::SimilarityMode::Substitute; searchOptions.deep = state.similarSoundsDeep; searchOptions.preset = state.similarSoundsPreset;
-            searchRequested = workflow.RequestSearch(searchOptions, 50);
         }
     }
     ImGui::EndChild(); ImGui::PopStyleColor();
     return changed || searchRequested;
+}
+
+static bool TriggerSimilarSoundsAction(
+    AppState& state,
+    HarkenSearch::SimilarityWorkflow& workflow,
+    bool searching) {
+    if (searching) {
+        workflow.CancelSearch();
+        state.similarSoundsSelectedRow = -1;
+        return true;
+    }
+    state.similarSoundsSelectedRow = -1;
+    HarkenSearch::SimilarityOptions searchOptions;
+    searchOptions.mode = HarkenSearch::SimilarityMode::Substitute;
+    searchOptions.deep = state.similarSoundsDeep;
+    searchOptions.preset = state.similarSoundsPreset;
+    return workflow.RequestSearch(searchOptions, 50);
+}
+
+static void DrawSimilarSoundsFooterAction(
+    AppState& state,
+    HarkenSearch::SimilarityWorkflow& workflow,
+    const HarkenSearch::SimilarityWorkflowSnapshot& snapshot) {
+    const bool searching = snapshot.status == HarkenSearch::SimilarityWorkflowStatus::Searching;
+    const bool indexing = state.batchFeatureExtracting.load();
+    const bool hasReference = snapshot.status != HarkenSearch::SimilarityWorkflowStatus::NoSelection;
+    const char* actionLabel = indexing ? L(Similar_Indexing) : (searching ? L(Similar_Searching) :
+        (snapshot.batchNumber > 0 ? L(Similar_NextBatch) : L(Similar_Find)));
+    if (searching) {
+        if (StandaloneWindowFooterButton(L(Cancel), ImVec2(120.0f, 0.0f),
+                ButtonVariant::Quiet, StandaloneWindowFooterAlign::Right)) {
+            TriggerSimilarSoundsAction(state, workflow, true);
+        }
+        return;
+    }
+    const bool disabled = indexing || !hasReference;
+    if (disabled) ImGui::BeginDisabled();
+    if (StandaloneWindowFooterButton(actionLabel, ImVec2(140.0f, 0.0f),
+            disabled ? ButtonVariant::DisabledSearch : ButtonVariant::PrimarySearch,
+            StandaloneWindowFooterAlign::Right)) {
+        TriggerSimilarSoundsAction(state, workflow, false);
+    }
+    if (disabled) ImGui::EndDisabled();
 }
 
 static const char* SimilarSoundsBodyMessage(
@@ -576,7 +627,7 @@ static void DrawSimilarAnalysisReport(AppState& state) {
     }
 }
 
-static void DrawSimilarSoundsBody(AppState& state, bool windowFocused, bool independentLayout = false) {
+static void DrawSimilarSoundsBody(AppState& state, bool windowFocused, bool independentLayout = false, bool useShellFooter = false) {
     HarkenSearch::SimilarityWorkflow& workflow = *state.similarSoundsWorkflow;
     HarkenSearch::SimilarityWorkflowSnapshot snapshot = workflow.Snapshot();
     const bool sharedPanelStyle = state.settings.theme != AppTheme::Custom &&
@@ -602,7 +653,7 @@ static void DrawSimilarSoundsBody(AppState& state, bool windowFocused, bool inde
             return;
         }
     }
-    if (DrawSimilarSoundsActionRow(state, workflow, snapshot)) {
+    if (DrawSimilarSoundsActionRow(state, workflow, snapshot, !useShellFooter)) {
         snapshot = workflow.Snapshot();
     }
     if (sharedPanelLayout) {
@@ -685,7 +736,7 @@ static void PollSimilarSoundsWorkflow(AppState& state) {
     workflow.Poll();
 }
 
-void RenderSimilarSoundsContent(AppState& state, bool independentLayout) {
+void RenderSimilarSoundsContent(AppState& state, bool independentLayout, bool useShellFooter) {
     if (!state.similarSoundsWorkflow) {
         state.similarSoundsWorkflow =
             std::make_unique<HarkenSearch::SimilarityWorkflow>(
@@ -693,7 +744,14 @@ void RenderSimilarSoundsContent(AppState& state, bool independentLayout) {
     }
     PollSimilarSoundsWorkflow(state);
     DrawSimilarSoundsBody(state, ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows),
-        independentLayout);
+        independentLayout, useShellFooter);
+}
+
+void RenderSimilarSoundsFooterActions(AppState& state) {
+    if (!state.similarSoundsWorkflow) return;
+    PollSimilarSoundsWorkflow(state);
+    DrawSimilarSoundsFooterAction(state, *state.similarSoundsWorkflow,
+        state.similarSoundsWorkflow->Snapshot());
 }
 
 void RenderSimilarSoundsWindow(AppState& state) {
@@ -742,7 +800,17 @@ void RenderSimilarSoundsWindow(AppState& state) {
     if (IsTitleBarHovered && ImGui::IsMouseDragging(0)) {
         state.panelSimilarSounds.wasDragging = true;
     }
-    DrawSimilarSoundsBody(state, windowFocused);
+    {
+        if (ImGui::BeginChild("##SimilarShellBody",
+                ImVec2(0.0f, aura::ui::StandaloneWindowBodyHeight()), false,
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            DrawSimilarSoundsBody(state, windowFocused, false, true);
+        }
+        ImGui::EndChild();
+    }
+    aura::ui::BeginStandaloneWindowFooter();
+    DrawSimilarSoundsFooterAction(state, workflow, workflow.Snapshot());
+    aura::ui::EndStandaloneWindowFooter();
     aura::ui::EndStandaloneWindow();
 }
 

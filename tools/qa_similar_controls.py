@@ -52,18 +52,22 @@ def run(args):
 
         def observe(theme):
             current = audit(driver, theme)
-            controls = [x for x in current['checks'] if 'SimilarActionRow' in x['window']]
-            combo = next(x for x in controls if abs((x['bounds'][2] - x['bounds'][0]) - 132) < 1)
-            find = next(x for x in controls if x is not combo)
+            row_controls = [x for x in current['checks'] if 'SimilarActionRow' in x['window']]
+            footer_controls = [x for x in current['checks'] if 'SimilarSoundsWindow' in x['window'] or 'FloatingSimilarSounds' in x['window']]
+            controls = row_controls + footer_controls
+            combo = next(x for x in row_controls if abs((x['bounds'][2] - x['bounds'][0]) - 132) < 1)
+            # The primary Find/Next action moved to the shell footer; it is the
+            # only ActionButton there (the title bar uses invisible hit cells).
+            find = next(x for x in footer_controls if x['label'] not in ('关闭', 'Close'))
             for c in controls:
                 b, clip = c['bounds'], c['clip']
                 assert b[0] >= clip[0] - 1 and b[1] >= clip[1] - 1 and b[2] <= clip[2] + 1 and b[3] <= clip[3] + 1, c
                 if not c['disabled']:
                     c['contrast'] = contrast(c['fg'], c['fill'])
                     assert c['contrast'] >= 4.5, c
-            assert abs(combo['bounds'][1] - find['bounds'][1]) <= 1, controls
             assert abs(combo['bounds'][3] - combo['bounds'][1] - 28) <= 1, combo
-            assert abs(find['bounds'][3] - find['bounds'][1] - 28) <= 1, find
+            assert abs(find['bounds'][3] - find['bounds'][1] - 36) <= 1, find
+            assert find['bounds'][1] > combo['bounds'][3], (combo, find)
             return combo, find, current
 
         def shot(theme, state, observed):

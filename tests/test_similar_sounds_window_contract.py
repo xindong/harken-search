@@ -223,6 +223,16 @@ assert "windowWasOpen && !state.similarSoundsWindow.open" in close_branch
 assert "workflow.Invalidate()" in close_branch
 assert "state.similarSoundsLocalReference.reset()" in close_branch
 
+# S2-0: the standalone window uses the shared shell footer for its primary
+# action. The docked panel keeps the inline action row.
+assert "BeginStandaloneWindowFooter()" in render
+assert "DrawSimilarSoundsFooterAction" in render
+assert "StandaloneWindowBodyHeight()" in render
+assert "StandaloneWindowFooterButton" in window
+assert "useShellFooter" in window
+assert "showPrimaryAction" in window
+assert "DrawSimilarSoundsActionRow(state, workflow, snapshot, !useShellFooter)" in body
+
 # Repeated Find advances around the original reference. Audition/selection
 # never becomes an implicit new reference; the main-list selection owns it.
 action_impl = window[window.index("static bool DrawSimilarSoundsActionRow"):
@@ -390,10 +400,13 @@ def test_independent_similar_dock_and_float_share_one_content_viewport():
     docked_start = main.index('if (leaf.id == "similar-sounds" && !state.panelSimilarSounds.floating)')
     docked = main[docked_start:main.index("if (!open)", docked_start)]
     assert 'beginDockContentViewport("similar-sounds"' in viewport
-    assert "RenderSimilarSoundsContent(state, true)" in viewport
+    assert "RenderSimilarSoundsContent(state, true" in viewport
     assert "renderIndependentSimilarSounds(" in floating_full
     assert "renderIndependentSimilarSounds(" in docked
     assert "TitleBarRect()" in floating_full
+    assert "StandaloneWindowFooterHeight" in floating_full
+    assert "BeginStandaloneWindowFooter" in floating_full
+    assert "RenderSimilarSoundsFooterActions" in floating_full
     assert "similarShell.contentMin" in docked and "similarShell.contentMax" in docked
     assert ' &similarOpen, "similar-sounds", true)' in floating
     assert "similarContentInset" not in docked
