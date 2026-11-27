@@ -60,6 +60,7 @@
 #include "BackfillWorkerPool.h"
 #include "WorkerThreadPolicy.h"
 #include "HarkenSearchWidgets.h"  // Focus tracking.
+#include "HarkenSearchMetrics.h"
 #include "HarkenSearchIcons.h"    // Lucide font merge.
 #include "DockNativeCaptionBridge.h"
 #include "ui/dock/DockCaptionWndProc.h"
@@ -5697,6 +5698,31 @@ static void PollQaCommandFile(AppState& state) {
                         s_qaDialogResizeDrag.active = true;
                         result = R"({"ok":true,"window":"folder-auto-rename","action":"drag"})";
                     }
+                } else if (action == "hover" || action == "hover_clear") {
+                    if (action == "hover_clear") {
+                        s_magicEqQaPointer.active = false;
+                        result = R"({"ok":true,"window":"folder-auto-rename","action":"hover_clear"})";
+                    } else if (!window || !state.folderAutoRenameWindow.open) {
+                        result = R"({"ok":false,"error":"standalone_window_not_open"})";
+                    } else {
+                        const int button = std::clamp(getInt(raw, "button", 0), 0, 2);
+                        const float extent = aura::ui::metrics::kHeightLg;
+                        s_magicEqQaPointer.active = true;
+                        s_magicEqQaPointer.pending = false;
+                        s_magicEqQaPointer.held = false;
+                        s_magicEqQaPointer.x = window->Pos.x + window->Size.x -
+                            extent * static_cast<float>(3 - button) + extent * 0.5f;
+                        s_magicEqQaPointer.y = window->Pos.y + extent * 0.5f;
+                        s_magicEqQaPointer.viewport = ImGui::GetMainViewport()->ID;
+                        result = std::string(R"({"ok":true,"window":"folder-auto-rename","action":"hover","button":)") +
+                            std::to_string(button) + "}";
+                    }
+                } else if (action == "maximize" || action == "restore") {
+                    state.folderAutoRenameWindow.maximized = action == "maximize";
+                    state.folderAutoRenameWindow.requestFocus = true;
+                    result = std::string(R"({"ok":true,"window":"folder-auto-rename","action":")") +
+                        action + R"(","maximized":)" +
+                        (state.folderAutoRenameWindow.maximized ? "true" : "false") + "}";
                 } else if (action == "state" || action.empty()) {
                     const ImVec2 pos = window ? window->Pos : ImVec2(0.0f, 0.0f);
                     const ImVec2 size = window ? window->Size : ImVec2(0.0f, 0.0f);

@@ -1066,69 +1066,60 @@ bool DrawStandaloneCaptionButton(const char* id,
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     const ImVec2 itemMin = ImGui::GetItemRectMin();
     const ImVec2 itemMax = ImGui::GetItemRectMax();
+    const ImVec2 center((itemMin.x + itemMax.x) * 0.5f,
+                        (itemMin.y + itemMax.y) * 0.5f);
 
+    // All three caption buttons share one hit cell, one hover backplate and
+    // one ink rule. The backplate is inset so the group reads as three evenly
+    // spaced controls instead of one solid strip.
+    const float hoverExtent = ImMax(kHeightSm, extent - kGap8);
     if (hovered || active) {
-        if (action == StandaloneWindowAction::Close) {
-            ImVec4 background = th.filterBrowserButtonBG;
-            if (!active) background.w *= 0.50f;
-            const ImVec2 center((itemMin.x + itemMax.x) * 0.5f,
-                                (itemMin.y + itemMax.y) * 0.5f);
-            const float half = kHeightSm * 0.5f;
-            drawList->AddRectFilled(ImVec2(center.x - half, center.y - half),
-                                    ImVec2(center.x + half, center.y + half),
-                                    ImGui::ColorConvertFloat4ToU32(background),
-                                    kRadiusDefault);
-        } else {
-            const ImVec4& background = active ? th.frameBgBase : th.filterBrowserButtonBG;
-            drawList->AddRectFilled(itemMin, itemMax,
-                ImGui::ColorConvertFloat4ToU32(background));
-        }
+        ImVec4 background = th.filterBrowserButtonBG;
+        if (!active) background.w *= 0.50f;
+        drawList->AddRectFilled(
+            ImVec2(center.x - hoverExtent * 0.5f, center.y - hoverExtent * 0.5f),
+            ImVec2(center.x + hoverExtent * 0.5f, center.y + hoverExtent * 0.5f),
+            ImGui::ColorConvertFloat4ToU32(background), kRadiusDefault);
     }
 
-    const ImVec4 closeColor = TransportContrast::ForSurface(
-        th.sidebarIconInactive, th.menuBarBG, 3.0);
-    const ImVec4& iconColor = action == StandaloneWindowAction::Close
-        ? closeColor
-        : (hovered ? th.interfaceText : th.sidebarIconInactive);
-    const ImU32 packedIcon = ImGui::ColorConvertFloat4ToU32(iconColor);
-    const float centerX = (itemMin.x + itemMax.x) * 0.5f;
-    const float centerY = (itemMin.y + itemMax.y) * 0.5f;
-    const float halfIcon = kIconXs * 0.5f;
-
+    const char* icon = nullptr;
     switch (action) {
-        case StandaloneWindowAction::Minimize:
-            drawList->AddLine(
-                ImVec2(centerX - halfIcon, centerY + kRadiusTight),
-                ImVec2(centerX + halfIcon, centerY + kRadiusTight),
-                packedIcon, kFocusRingWidth);
-            break;
-        case StandaloneWindowAction::ToggleMaximize:
-            if (maximized) {
-                drawList->AddRect(
-                    ImVec2(centerX - halfIcon + kRadiusTight, centerY - halfIcon),
-                    ImVec2(centerX + halfIcon + kRadiusTight, centerY + halfIcon),
-                    packedIcon, kRadiusTight, ImDrawFlags_None, kFocusRingWidth);
-                drawList->AddRect(
-                    ImVec2(centerX - halfIcon - kRadiusTight, centerY - halfIcon + kRadiusTight),
-                    ImVec2(centerX + halfIcon - kRadiusTight, centerY + halfIcon + kRadiusTight),
-                    packedIcon, kRadiusTight, ImDrawFlags_None, kFocusRingWidth);
-            } else {
-                drawList->AddRect(
-                    ImVec2(centerX - halfIcon, centerY - halfIcon),
-                    ImVec2(centerX + halfIcon, centerY + halfIcon),
-                    packedIcon, kRadiusTight, ImDrawFlags_None, kFocusRingWidth);
-            }
-            break;
-        case StandaloneWindowAction::Close:
-            {
-                const ImVec2 glyphSize = ImGui::CalcTextSize(ICON_LC_X);
-                drawList->AddText(ImVec2(centerX - glyphSize.x * 0.5f,
-                                         centerY - glyphSize.y * 0.5f),
-                                  packedIcon, ICON_LC_X);
-            }
-            break;
-        case StandaloneWindowAction::None:
-            break;
+        case StandaloneWindowAction::Minimize:        icon = ICON_LC_MINUS; break;
+        case StandaloneWindowAction::ToggleMaximize: icon = maximized ? ICON_LC_COPY : ICON_LC_STOP; break;
+        case StandaloneWindowAction::Close:          icon = ICON_LC_X; break;
+        case StandaloneWindowAction::None:           break;
+    }
+    if (!icon) {
+        DrawFocusRing();
+        return pressed;
+    }
+
+    const ImVec4 baseIcon = TransportContrast::ForSurface(
+        th.sidebarIconInactive, th.menuBarBG, 3.0);
+    const ImVec4& iconColor = (hovered || active) ? th.interfaceText : baseIcon;
+    const ImU32 packedIcon = ImGui::ColorConvertFloat4ToU32(iconColor);
+
+    unsigned int codepoint = 0;
+    const int iconLength = ImTextCharFromUtf8(&codepoint, icon, nullptr);
+    ImFontBaked* baked = ImGui::GetFontBaked();
+    const ImFontGlyph* glyph = baked ? baked->FindGlyph((ImWchar)codepoint) : nullptr;
+    if (glyph) {
+        // Lucide's rasterized quad has unequal transparent margins. Center the
+        // visible ink box, not the advance or the padded quad, so minus,
+        // square and x share one optical center line.
+        const ImRect ink = CloseIconButton::VisibleGlyphBounds(
+            *glyph, ImGui::GetFont()->OwnerAtlas->TexData);
+        const ImVec2 inkCenter = ink.GetCenter();
+        // Minus, square and x have different ink extents at one em size. Give
+        // their largest ink dimension the same target so the three read as one
+        // set instead of a 10 px line, a 12 px square and an 8 px x.
+        const float inkExtent = ImMax(ink.GetWidth(), ink.GetHeight());
+        const float iconScale = inkExtent > 0.0f ? kIconXs / inkExtent : 1.0f;
+        const float iconFontSize = ImGui::GetFontSize() * iconScale;
+        const ImVec2 origin(ImFloor(center.x - inkCenter.x * iconScale + 0.5f),
+                            ImFloor(center.y - inkCenter.y * iconScale + 0.5f));
+        drawList->AddText(ImGui::GetFont(), iconFontSize, origin,
+                          packedIcon, icon, icon + iconLength);
     }
 
     DrawFocusRing();

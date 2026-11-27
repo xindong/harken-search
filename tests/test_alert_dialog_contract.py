@@ -273,6 +273,31 @@ def test_folder_auto_rename_uses_the_standalone_window_shell():
         widgets.index("void EndStandaloneWindowFooter()")]
 
 
+def test_standalone_caption_buttons_share_lucide_ink():
+    widgets = read(ROOT / "src" / "HarkenSearchWidgets.cpp")
+    close_icon = read(ROOT / "src" / "ui" / "CloseIconButton.h")
+
+    start = widgets.index("bool DrawStandaloneCaptionButton")
+    block = widgets[start:widgets.index("void OpenStandaloneWindow", start)]
+    # One icon source, one optical rule: Lucide minus/square/copy/x, centered
+    # by the rasterized visible box instead of the padded glyph quad.
+    assert "ICON_LC_MINUS" in block
+    assert "ICON_LC_STOP" in block
+    assert "ICON_LC_COPY" in block
+    assert "ICON_LC_X" in block
+    assert "VisibleGlyphBounds" in block
+    assert "inkExtent" in block
+    assert "kIconXs / inkExtent" in block
+    assert "hoverExtent" in block
+    # The old hand-drawn line/rect strokes must not come back.
+    assert "AddLine(" not in block
+    assert "drawList->AddRect(" not in block
+
+    assert "ImRect VisibleGlyphBounds" in close_icon
+    assert "VisibleGlyphCenter" in close_icon
+    assert "bounds.Min.x = glyph.X0" in close_icon
+
+
 if __name__ == "__main__":
     test_alert_helper_draws_title_inside_a_rounded_surface()
     test_dialogs_that_must_be_answered_hide_the_close_button()
@@ -285,4 +310,5 @@ if __name__ == "__main__":
     test_every_dialog_kind_uses_the_shared_surface()
     test_migrated_dialogs_do_not_draw_a_rule_between_title_and_body()
     test_folder_auto_rename_uses_the_standalone_window_shell()
+    test_standalone_caption_buttons_share_lucide_ink()
     print("alert dialog contract ok")
