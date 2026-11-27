@@ -278,15 +278,33 @@ inline size_t FindCaseInsensitive(const std::string& haystack, const std::string
     return std::string::npos;
 }
 
+// True when the start tag that ends at tagEnd closes itself ("<USER />").
+inline bool StartTagIsSelfClosing(const std::string& xml, size_t start, size_t tagEnd) {
+    if (tagEnd == std::string::npos || tagEnd <= start) return false;
+    size_t index = tagEnd;
+    while (index > start && (xml[index - 1] == ' ' || xml[index - 1] == '\t')) --index;
+    return index > start && xml[index - 1] == '/';
+}
+
 inline std::string RemoveSection(std::string xml) {
     for (;;) {
         const size_t start = FindCaseInsensitive(xml, "<HARKEN");
         if (start == std::string::npos) break;
-        const size_t end = FindCaseInsensitive(xml, "</HARKEN>", start);
-        if (end == std::string::npos) break;
+        const size_t tagEnd = xml.find('>', start);
+        if (tagEnd == std::string::npos) break;
+        size_t end = std::string::npos;
+        if (StartTagIsSelfClosing(xml, start, tagEnd)) {
+            // A vendor may carry an empty "<HARKEN/>"; it still counts as one
+            // section and must be replaced rather than duplicated.
+            end = tagEnd + 1;
+        } else {
+            const size_t close = FindCaseInsensitive(xml, "</HARKEN>", tagEnd);
+            if (close == std::string::npos) break;
+            end = close + std::string("</HARKEN>").size();
+        }
         size_t eraseStart = start;
         while (eraseStart > 0 && (xml[eraseStart - 1] == ' ' || xml[eraseStart - 1] == '\t')) --eraseStart;
-        size_t eraseEnd = end + std::string("</HARKEN>").size();
+        size_t eraseEnd = end;
         if (eraseStart > 0 && xml[eraseStart - 1] == '\n') --eraseStart;
         if (eraseEnd < xml.size() && xml[eraseEnd] == '\r') ++eraseEnd;
         if (eraseEnd < xml.size() && xml[eraseEnd] == '\n') ++eraseEnd;
@@ -313,17 +331,21 @@ inline std::string MergeIntoIXML(const std::string& existingXml, const Values& v
     const std::string section = Section(values);
     if (xml.empty()) return BuildIXML(values);
 
-    size_t userEnd = FindCaseInsensitive(xml, "</USER>");
-    if (userEnd != std::string::npos) {
-        if (userEnd > 0 && xml[userEnd - 1] != '\n') xml.insert(userEnd, "\n");
-        userEnd = FindCaseInsensitive(xml, "</USER>");
-        xml.insert(userEnd, section);
-        return xml;
-    }
-    const size_t selfClosing = FindCaseInsensitive(xml, "<USER/>");
-    if (selfClosing != std::string::npos) {
-        xml.replace(selfClosing, std::string("<USER/>").size(), "<USER>\n" + section + "  </USER>");
-        return xml;
+    const size_t userStart = FindCaseInsensitive(xml, "<USER");
+    if (userStart != std::string::npos) {
+        const size_t userTagEnd = xml.find('>', userStart);
+        if (StartTagIsSelfClosing(xml, userStart, userTagEnd)) {
+            // "<USER/>" and "<USER />" are the same empty section.
+            xml.replace(userStart, userTagEnd + 1 - userStart, "<USER>\n" + section + "  </USER>");
+            return xml;
+        }
+        size_t userEnd = FindCaseInsensitive(xml, "</USER>", userTagEnd == std::string::npos ? userStart : userTagEnd);
+        if (userEnd != std::string::npos) {
+            if (userEnd > 0 && xml[userEnd - 1] != '\n') xml.insert(userEnd, "\n");
+            userEnd = FindCaseInsensitive(xml, "</USER>");
+            xml.insert(userEnd, section);
+            return xml;
+        }
     }
     const size_t bwfEnd = FindCaseInsensitive(xml, "</BWFXML>");
     if (bwfEnd != std::string::npos) {

@@ -123,6 +123,49 @@ int main() {
     }
 
     {
+        // A vendor iXML may carry the empty section as "<USER />"; merging must
+        // fill it instead of leaving an empty USER next to a new one.
+        HarkenMeta::Values values;
+        values.category = "Weapons";
+        const std::string existing =
+            "<BWFXML>\n  <USER />\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        size_t userCount = 0;
+        for (size_t at = merged.find("<USER"); at != std::string::npos;
+             at = merged.find("<USER", at + 5)) ++userCount;
+        CHECK(userCount == 1, "spaced self-closing USER is filled, not duplicated");
+        CHECK(merged.find("<CATEGORY>Weapons</CATEGORY>") != std::string::npos,
+              "HARKEN written into the filled USER");
+    }
+
+    {
+        // The same holds for an empty "<HARKEN/>" already inside USER.
+        HarkenMeta::Values values;
+        values.category = "Weapons";
+        const std::string existing =
+            "<BWFXML>\n  <USER>\n    <HARKEN/>\n  </USER>\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        size_t harkenCount = 0;
+        for (size_t at = merged.find("<HARKEN"); at != std::string::npos;
+             at = merged.find("<HARKEN", at + 7)) ++harkenCount;
+        CHECK(harkenCount == 1, "self-closing HARKEN is replaced, not duplicated");
+        CHECK(merged.find("<CATEGORY>Weapons</CATEGORY>") != std::string::npos,
+              "replaced HARKEN carries the new value");
+    }
+
+    {
+        HarkenMeta::Values values;
+        values.category = "Weapons";
+        const std::string existing =
+            "<BWFXML>\n  <USER>\n    <HARKEN />\n  </USER>\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        size_t harkenCount = 0;
+        for (size_t at = merged.find("<HARKEN"); at != std::string::npos;
+             at = merged.find("<HARKEN", at + 7)) ++harkenCount;
+        CHECK(harkenCount == 1, "spaced self-closing HARKEN is replaced");
+    }
+
+    {
         HarkenMeta::Values values;
         values.function = "OnlyFunction";
         const std::string xml = HarkenMeta::MergeIntoIXML("", values);

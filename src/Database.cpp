@@ -962,11 +962,19 @@ static const ExtMetaCol kExtMetaCols[] = {
 };
 static constexpr size_t kExtMetaCount = sizeof(kExtMetaCols) / sizeof(kExtMetaCols[0]);
 
+// harken_meta is JSON, but a legacy library gets the column as TEXT DEFAULT ''
+// and a damaged write can leave anything behind. Guard every extraction so a
+// malformed document cannot fail the statement that touches the row.
+static std::string HarkenJsonText(const std::string& columnExpression, const char* key) {
+    return "IFNULL(json_extract(CASE WHEN json_valid(" + columnExpression + ") THEN " +
+           columnExpression + " ELSE NULL END,'$." + std::string(key) + "'),'')";
+}
+
 // Values inside harken_meta that participate in search. Keep this list in sync
 // with HarkenMeta::SearchText.
 static std::string HarkenMetaSearchSql(const std::string& columnExpression) {
-    return " || ' ' || IFNULL(json_extract(" + columnExpression + ",'$.category'),'')" +
-           " || ' ' || IFNULL(json_extract(" + columnExpression + ",'$.function'),'')";
+    return " || ' ' || " + HarkenJsonText(columnExpression, "category") +
+           " || ' ' || " + HarkenJsonText(columnExpression, "function");
 }
 
 static constexpr const char* kOptionalMetadataSearchColumns[] = {
@@ -4654,8 +4662,8 @@ bool BuildMetadataPatchUpdateSql(const MetadataEditPatch& patch, MetadataPatchSq
         return bound == searchParams.end()
             ? std::string("harken_meta") : "?" + std::to_string(bound->second);
     }();
-    searchData += " || ' ' || IFNULL(json_extract(" + harkenSource + ",'$.category'),'')"
-                  " || ' ' || IFNULL(json_extract(" + harkenSource + ",'$.function'),'')";
+    searchData += " || ' ' || " + HarkenJsonText(harkenSource, "category") +
+                  " || ' ' || " + HarkenJsonText(harkenSource, "function");
 
     plan.sql = "UPDATE audio_files SET " + setClauses +
         ", search_data = aura_search_data(" + searchData +
@@ -6683,8 +6691,7 @@ Database::BuiltSearchQuery Database::buildSearchWhere(const SearchFilter& filter
                 "IFNULL(af.artist,'') || ' ' || IFNULL(af.album,'') || ' ' || "
                 "IFNULL(af.category,'') || ' ' || IFNULL(af.description,'') || ' ' || "
                 "IFNULL(af.keywords,'')" + optionalMetaSearch +
-                " || ' ' || IFNULL(json_extract(af.harken_meta,'$.category'),'') || ' ' || "
-                "IFNULL(json_extract(af.harken_meta,'$.function'),'')) LIKE ? ESCAPE '\\'";
+                HarkenMetaSearchSql("af.harken_meta") + ") LIKE ? ESCAPE '\\'";
             bq.bindValues.push_back(pattern);
             bq.whereClause += ")";
         }

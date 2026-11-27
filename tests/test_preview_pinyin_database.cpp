@@ -281,6 +281,15 @@ int main(int argc, char** argv) {
             ok &= Expect(results.size() == 1 && results.front().fileName == "Tone.mp3",
                          std::string("Harken value immediately searchable: ") + value);
         }
+        // A legacy library gets the column as '' (TEXT DEFAULT ''); reading it
+        // must not fail the search on malformed JSON.
+        database.executeRawQuery("UPDATE audio_files SET harken_meta = '';");
+        filter.keyword = "Tone";
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "empty harken_meta still searches");
+        database.executeRawQuery("UPDATE audio_files SET harken_meta = 'not json';");
+        ok &= Expect(database.searchFiles(filter, 10).size() == 1, "damaged harken_meta still searches");
+        database.executeRawQuery(
+            "UPDATE audio_files SET harken_meta = '{\"category\":\"Weapons\",\"function\":\"Impact\",\"source\":\"manual\"}';");
 
         database.executeRawQuery("UPDATE audio_files SET search_data = 'Tone';");
         database.executeRawQuery(

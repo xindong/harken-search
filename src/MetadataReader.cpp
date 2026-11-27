@@ -765,9 +765,10 @@ bool MetadataReader::parseIXML(const std::string& xmlData, AudioMetadata& metada
 }
 
 bool MetadataReader::readIXMLChunk(const std::string& filePath, std::string& xmlData,
-                                   std::string& errorMessage) {
+                                   std::string& errorMessage, bool* chunkMissing) {
     xmlData.clear();
     errorMessage.clear();
+    if (chunkMissing) *chunkMissing = false;
     std::ifstream file(fs::u8path(filePath), std::ios::binary);
     if (!file) { errorMessage = "Cannot open WAV file"; return false; }
     char header[12] = {};
@@ -800,6 +801,7 @@ bool MetadataReader::readIXMLChunk(const std::string& filePath, std::string& xml
         file.seekg(static_cast<std::streamoff>(chunkSize + (chunkSize & 1)), std::ios::cur);
     }
     errorMessage = "No iXML chunk";
+    if (chunkMissing) *chunkMissing = true;
     return false;
 }
 

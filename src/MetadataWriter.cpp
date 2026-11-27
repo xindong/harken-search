@@ -1455,7 +1455,14 @@ bool MetadataWriter::writeHarkenMetadata(const std::string& audioFilePath,
     if (ext == ".wav") {
         std::string existing;
         std::string readError;
-        const bool hasIxml = MetadataReader::readIXMLChunk(audioFilePath, existing, readError);
+        bool chunkMissing = false;
+        const bool hasIxml = MetadataReader::readIXMLChunk(audioFilePath, existing, readError, &chunkMissing);
+        if (!hasIxml && !chunkMissing) {
+            // Never replace an iXML we failed to read: the write would drop the
+            // source project/note sections.
+            errorMessage = readError.empty() ? std::string("Cannot read the existing iXML") : readError;
+            return false;
+        }
         const bool existingHasHarken =
             HarkenMeta::FindCaseInsensitive(existing, "<HARKEN") != std::string::npos;
         if (values.empty() && !existingHasHarken) return true;

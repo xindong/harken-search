@@ -19458,10 +19458,12 @@ static bool SaveInfoMetadataDraft(AppState& state) {
         if(cat) { entry.oldValues["category"]=current.category; entry.newValues["category"]=values.category; }
         MetadataEditPatch filePatch = basePatch;
         if(harkenChanged) {
+            // Batch edits start from empty buffers, so only the field the user
+            // touched may be written; the untouched one must keep its value.
             HarkenMeta::Update update;
-            update.setCategory = true;
+            update.setCategory = values.harkenCategory != old.harkenCategory;
             update.category = values.harkenCategory;
-            update.setFunction = true;
+            update.setFunction = values.harkenFunction != old.harkenFunction;
             update.function = values.harkenFunction;
             update.setSource = true;
             update.source = "manual";
@@ -45789,7 +45791,9 @@ void RenderUI(AppState& state) {
                                                       state.selectedIndicesSet.count(i) > 0);
                                 if (!isMultiSelect && isCurrentFile && (audioAdjusted || hasRegion)) {
                                     // 单文件 + 有调整/选区：生成临时渲染文件，保证"所听即所得"
-                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix);
+                                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                                    state.settings.keepHarkenSearchOutputProcessingSuffix, nullptr,
+                                                    TransferHarkenMetaForPath(state, record.filePath));
                                 } else {
 
                                     // （有 DSP 调整时导出 temp WAV；无调整时直接传原始路径）
@@ -51334,7 +51338,9 @@ void RenderUI(AppState& state) {
                 if (state.audioEngine.isLoaded()) {
                     const RECT sourceRect = WaveformScreenRect(waveformPos.x, waveformPos.y, waveformWidth, waveformHeight);
                     DragCardOrigin dragOrigin = MakeRegionDragOrigin(state.audioEngine, true, sourceRect);
-                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm, state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin);
+                    StartRegionDrag(state.audioEngine, state.uiState.regionFadeInNorm, state.uiState.regionFadeOutNorm,
+                                    state.settings.keepHarkenSearchOutputProcessingSuffix, &dragOrigin,
+                                    TransferHarkenMetaForPath(state, state.audioEngine.getFileInfo().filePath));
                 }
                 state.uiState.isDraggingToExport = false;
                 state.uiState.exportPendingSeek = false;
