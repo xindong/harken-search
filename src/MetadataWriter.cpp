@@ -1464,7 +1464,7 @@ bool MetadataWriter::writeHarkenMetadata(const std::string& audioFilePath,
             return false;
         }
         const bool existingHasHarken =
-            HarkenMeta::FindCaseInsensitive(existing, "<HARKEN") != std::string::npos;
+            HarkenMeta::FindElementStart(existing, "HARKEN") != std::string::npos;
         if (values.empty() && !existingHasHarken) return true;
         const std::string merged = HarkenMeta::MergeIntoIXML(hasIxml ? existing : std::string(), values);
         if (merged.empty()) return true;

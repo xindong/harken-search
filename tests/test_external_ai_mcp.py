@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import shutil
 from contextlib import ExitStack, closing, contextmanager
 from pathlib import Path
 from queue import Queue
@@ -883,6 +884,34 @@ class ExternalAiMcpTest(unittest.TestCase):
             self.assertEqual(current["metadata"]["harken"]["category"], "Manual")
             self.assertEqual(current["metadata"]["harken"]["function"], "Keep")
             self.assertEqual(current["metadata"]["harken"]["source"], "manual")
+
+    def test_legacy_library_without_harken_column_still_reads_metadata(self):
+        """A library the desktop app has not upgraded yet must stay readable,
+        and a Harken write must say that an upgrade is needed."""
+        scratch = Path(tempfile.mkdtemp(dir=self.fixture))
+        legacy = scratch / "legacy catalog.db"
+        shutil.copyfile(self.database, legacy)
+        with closing(sqlite3.connect(legacy)) as connection:
+            connection.execute("ALTER TABLE audio_files DROP COLUMN harken_meta")
+            connection.commit()
+        document = write_authorization(
+            scratch / "editable.json", self.root,
+            capabilities={**ALL_READ, "editMetadata": "edit", "aiNamingMetadata": "edit"})
+        flags = ["--library-db", str(legacy), "--library-root", str(self.root),
+                 "--settings", str(document), "--library-id", LIBRARY_ID]
+        with self.live_session(flags) as exchange:
+            metadata = self.raw_tool_payload(exchange(call(METADATA, {"file_id": 1}, 1)))
+            self.assertEqual(metadata["status"], "ok")
+            self.assertEqual(metadata["metadata"]["category"], "")
+            self.assertEqual(metadata["metadata"]["harken"]["category"], "")
+            preview = self.raw_tool_payload(exchange(call(PREVIEW_METADATA, {
+                "file_id": 1,
+                "fields": {"harken": {"category": "Weapons"}},
+            }, 2)))
+            self.assertEqual(preview["status"], "ok")
+            applied = self.raw_tool_payload(exchange(call(APPLY_METADATA, {
+                "proposal_id": preview["proposal_id"]}, 3)))
+            self.assertEqual(applied["status"], "library_needs_upgrade")
 
     def test_metadata_apply_requires_edit_grants(self):
         scratch = Path(tempfile.mkdtemp(dir=self.fixture))

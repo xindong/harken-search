@@ -278,6 +278,41 @@ inline size_t FindCaseInsensitive(const std::string& haystack, const std::string
     return std::string::npos;
 }
 
+// True when pos sits inside an XML comment or a CDATA section.
+inline bool InsideMarkupLiteral(const std::string& xml, size_t pos) {
+    const size_t commentOpen = xml.rfind("<!--", pos);
+    if (commentOpen != std::string::npos) {
+        const size_t commentClose = xml.rfind("-->", pos);
+        if (commentClose == std::string::npos || commentOpen > commentClose) return true;
+    }
+    const size_t cdataOpen = xml.rfind("<![CDATA[", pos);
+    if (cdataOpen != std::string::npos) {
+        const size_t cdataClose = xml.rfind("]]>", pos);
+        if (cdataClose == std::string::npos || cdataOpen > cdataClose) return true;
+    }
+    return false;
+}
+
+// Finds "<name" as a whole element name: "<USER_DATA/>" and "<USERNOTES>" are
+// different elements, and a section that only appears inside a comment or a
+// CDATA block must never be rewritten.
+inline size_t FindElementStart(const std::string& xml, const std::string& name, size_t from = 0) {
+    const std::string needle = "<" + name;
+    size_t cursor = from;
+    while (cursor < xml.size()) {
+        const size_t found = FindCaseInsensitive(xml, needle, cursor);
+        if (found == std::string::npos) return std::string::npos;
+        const size_t next = found + needle.size();
+        const char boundary = next < xml.size() ? xml[next] : '\0';
+        const bool nameEnds = next >= xml.size() || boundary == ' ' || boundary == '\t' ||
+                              boundary == '\r' || boundary == '\n' || boundary == '>' ||
+                              boundary == '/';
+        if (nameEnds && !InsideMarkupLiteral(xml, found)) return found;
+        cursor = found + 1;
+    }
+    return std::string::npos;
+}
+
 // True when the start tag that ends at tagEnd closes itself ("<USER />").
 inline bool StartTagIsSelfClosing(const std::string& xml, size_t start, size_t tagEnd) {
     if (tagEnd == std::string::npos || tagEnd <= start) return false;
@@ -288,7 +323,7 @@ inline bool StartTagIsSelfClosing(const std::string& xml, size_t start, size_t t
 
 inline std::string RemoveSection(std::string xml) {
     for (;;) {
-        const size_t start = FindCaseInsensitive(xml, "<HARKEN");
+        const size_t start = FindElementStart(xml, "HARKEN");
         if (start == std::string::npos) break;
         const size_t tagEnd = xml.find('>', start);
         if (tagEnd == std::string::npos) break;
@@ -331,7 +366,7 @@ inline std::string MergeIntoIXML(const std::string& existingXml, const Values& v
     const std::string section = Section(values);
     if (xml.empty()) return BuildIXML(values);
 
-    const size_t userStart = FindCaseInsensitive(xml, "<USER");
+    const size_t userStart = FindElementStart(xml, "USER");
     if (userStart != std::string::npos) {
         const size_t userTagEnd = xml.find('>', userStart);
         if (StartTagIsSelfClosing(xml, userStart, userTagEnd)) {

@@ -166,6 +166,41 @@ int main() {
     }
 
     {
+        // "<USER_DATA/>" is a different element: merging must add its own USER
+        // and leave that node alone.
+        HarkenMeta::Values values;
+        values.category = "Weapons";
+        const std::string existing =
+            "<BWFXML>\n  <USER_DATA>keep</USER_DATA>\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        CHECK(merged.find("<USER_DATA>keep</USER_DATA>") != std::string::npos,
+              "sibling element with a USER prefix survives");
+        CHECK(merged.find("<CATEGORY>Weapons</CATEGORY>") != std::string::npos,
+              "HARKEN written into a real USER section");
+    }
+
+    {
+        // A commented-out section is not a section.
+        HarkenMeta::Values values;
+        const std::string existing =
+            "<BWFXML>\n  <!-- <HARKEN><CATEGORY>Old</CATEGORY></HARKEN> -->\n"
+            "  <USER>\n    <Category>Foley</Category>\n  </USER>\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        CHECK(merged.find("<!-- <HARKEN><CATEGORY>Old</CATEGORY></HARKEN> -->") != std::string::npos,
+              "commented-out HARKEN is left untouched");
+    }
+
+    {
+        // "<HARKEN_NOTE>" is not our section either.
+        HarkenMeta::Values values;
+        const std::string existing =
+            "<BWFXML>\n  <USER>\n    <HARKEN_NOTE>keep</HARKEN_NOTE>\n  </USER>\n</BWFXML>\n";
+        const std::string merged = HarkenMeta::MergeIntoIXML(existing, values);
+        CHECK(merged.find("<HARKEN_NOTE>keep</HARKEN_NOTE>") != std::string::npos,
+              "element with a HARKEN prefix is not removed");
+    }
+
+    {
         HarkenMeta::Values values;
         values.function = "OnlyFunction";
         const std::string xml = HarkenMeta::MergeIntoIXML("", values);

@@ -1187,6 +1187,15 @@ private:
                             {"reason", "harken_meta was edited manually; AI values were not applied"},
                         });
                     }
+                    if (writeError == "harken_meta_missing") {
+                        return ToolResult(id, {
+                            {"status", "library_needs_upgrade"},
+                            {"proposal_id", proposalId},
+                            {"file_id", pending.fileId},
+                            {"relative_path", pending.relativePath},
+                            {"reason", "harken_meta is missing; open the library in Harken Search once to upgrade it"},
+                        });
+                    }
                     return ToolResult(id, {{"status", "write_failed"}});
                 }
                 Json appliedPayload = {

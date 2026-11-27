@@ -1174,15 +1174,22 @@ Json ExternalAiLibrary::GetMetadata(std::int64_t fileId) {
     if (!session.Open(implementation_->catalog, implementation_->root)) {
         return {{"status", "query_failed"}};
     }
+    // A library that the desktop app has not upgraded yet has no harken_meta
+    // column. Reading the four standard fields must keep working there, so the
+    // column is only selected when it exists.
+    const bool hasHarken = HasColumn(session.Database(), "harken_meta").value_or(false);
     auto statement = Prepare(session.Database(),
-        "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1");
+        hasHarken
+            ? "SELECT file_name,title,description,category,keywords,harken_meta FROM main.audio_files WHERE id=?1"
+            : "SELECT file_name,title,description,category,keywords FROM main.audio_files WHERE id=?1");
     if (!statement || sqlite3_bind_int64(statement.get(), 1, fileId) != SQLITE_OK) {
         return {{"status", "query_failed"}};
     }
     if (sqlite3_step(statement.get()) != SQLITE_ROW) {
         return {{"status", "reference_not_found"}};
     }
-    const HarkenMeta::Values harkenValues = HarkenMeta::Parse(std::string(SqlText(statement.get(), 5)));
+    const HarkenMeta::Values harkenValues =
+        HarkenMeta::Parse(hasHarken ? std::string(SqlText(statement.get(), 5)) : std::string());
     return {
         {"status", "ok"},
         {"file_id", fileId},
@@ -1237,6 +1244,11 @@ bool ExternalAiLibrary::ApplyMetadata(std::int64_t fileId, const Json& fields, s
     const auto hasSearchData = HasColumn(raw, "search_data");
     if (!hasSearchData) {
         error = "metadata schema unavailable";
+        return false;
+    }
+    if (fields.contains("harken") && !HasColumn(raw, "harken_meta").value_or(false)) {
+        // Writing Harken values needs the column the desktop app adds on open.
+        error = "harken_meta_missing";
         return false;
     }
 
