@@ -95,6 +95,30 @@ int main() {
                 0,
                 u8"后缀") == u8"中文",
             "end deletion should count UTF-8 characters")) return 1;
+#ifdef __APPLE__
+    if (!Check(
+            ApplyRulesToFileName(
+                u8"🎵中文.wav",
+                {Rule(RenameMode::DeleteStartChars, "1")},
+                0,
+                u8"后缀") == u8"中文.wav",
+            "front deletion should remove one supplementary character without changing the extension")) return 1;
+    if (!Check(
+            ApplyRule(
+                u8"中文🎵",
+                Rule(RenameMode::DeleteEndChars, "1"),
+                0,
+                u8"后缀") == u8"中文",
+            "end deletion should not split a supplementary character")) return 1;
+    if (!Check(
+            ApplyRule(u8"中文", Rule(RenameMode::DeleteStartChars, "2"), 0, u8"后缀") == u8"中文" &&
+                ApplyRule(u8"中文", Rule(RenameMode::DeleteEndChars, "3"), 0, u8"后缀") == u8"中文",
+            "character deletion should leave a stem unchanged if nothing would remain")) return 1;
+    const std::string incompleteName = "take\xE4\xB8";
+    if (!Check(
+            ApplyRule(incompleteName, Rule(RenameMode::DeleteEndChars, "1"), 0, u8"后缀") == incompleteName,
+            "character deletion should leave invalid UTF-8 unchanged")) return 1;
+#endif
 
     if (!Check(
             ApplyRule(
