@@ -104,25 +104,30 @@ class PinnedTaskbarIconRefreshContract(unittest.TestCase):
             r"#if !ARIS_PREVIEW_ISOLATION\n(?:[^\n]*\n){0,6}\s*std::thread\(\[\] \{ \(void\)Platform::RefreshPinnedTaskbarIcons\(\); \}\)\.detach\(\);\n#endif",
         )
 
-    def test_installer_refreshes_as_the_original_non_elevated_user(self) -> None:
-        entries = [line for line in INSTALLER.splitlines()
-                   if "--refresh-pinned-taskbar-icons" in line]
-        self.assertEqual(1, len(entries), entries)
-        entry = entries[0]
-        self.assertIn('Filename: "{app}\\{#MyAppExeName}"', entry)
-        # 提权进程发 Shell 通知会被 UIPI 挡住，必须以安装前的当前用户身份执行。
-        self.assertIn("runasoriginaluser", entry)
-        # 应用内静默升级同样要在首次启动前刷新，因此不能跳过静默安装。
-        self.assertNotIn("skipifsilent", entry)
-        # 结束页可以立即启动程序：刷新没跑完就点启动会先看到旧图标。
-        self.assertIn("waituntilterminated", entry)
-        self.assertNotIn("nowait", entry)
+    def test_installer_icon_refresh_failure_does_not_interrupt_installation(self) -> None:
+        self.assertNotRegex(INSTALLER, r"(?m)^Filename:.*--refresh-pinned-taskbar-icons")
+        self.assertIn("procedure RefreshPinnedIconsAfterInstall;", INSTALLER)
+        refresh = INSTALLER.split("procedure RefreshPinnedIconsAfterInstall;", 1)[1]
+        refresh = refresh.split("procedure CurStepChanged", 1)[0]
+        self.assertIn("if not ExecAsOriginalUser", refresh)
+        self.assertIn("'--refresh-pinned-taskbar-icons'", refresh)
+        self.assertIn("ewWaitUntilTerminated", refresh)
+        self.assertIn("except", refresh)
+        self.assertIn("Log(", refresh)
+        self.assertNotIn("MsgBox(", refresh)
+        self.assertIn("RefreshPinnedIconsAfterInstall;", INSTALLER.split("procedure CurStepChanged", 1)[1])
 
-    def test_installer_launch_entry_keeps_its_existing_behaviour(self) -> None:
-        launches = [line for line in INSTALLER.splitlines()
-                    if "LaunchProgram" in line and "Filename:" in line]
-        self.assertEqual(1, len(launches))
-        self.assertIn("postinstall skipifsilent", launches[0])
+    def test_installer_only_launches_from_checked_interactive_finish(self) -> None:
+        self.assertIn("WizardForm.RunList.AddCheckBox", INSTALLER)
+        self.assertIn("WizardForm.RunList.Checked[FinishedLaunchIndex]", INSTALLER)
+        self.assertIn("WizardForm.RunList.Items.Delete(FinishedLaunchIndex);", INSTALLER)
+        self.assertIn("not WizardSilent", INSTALLER)
+        self.assertIn("procedure LaunchInstalledHarken;", INSTALLER)
+        launch = INSTALLER.split("procedure LaunchInstalledHarken;", 1)[1]
+        launch = launch.split("function NextButtonClick", 1)[0]
+        self.assertIn("ShellExecAsOriginalUser('runas'", launch)
+        self.assertIn("CustomMessage('PostInstallLaunchFailed')", launch)
+        self.assertIn("ewNoWait", launch)
 
 
 if __name__ == "__main__":
