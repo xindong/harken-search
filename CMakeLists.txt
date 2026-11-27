@@ -2017,6 +2017,7 @@ if(WIN32)
         tests/test_database_link_stubs.cpp
         tests/test_appstate_link_stubs.cpp
         src/AppState.cpp
+        src/FileTypeVisibilityPolicy.cpp
         src/CoverReplacementFoundation.cpp
         src/Database.cpp
         src/BackfillQueue.cpp
@@ -2074,6 +2075,8 @@ if(WIN32)
     )
    add_test(NAME PreviewPinyinDatabase COMMAND TestPreviewPinyinDatabase)
    aura_set_test_labels(PreviewPinyinDatabase db)
+   add_test(NAME Mp3MetadataSearch COMMAND TestPreviewPinyinDatabase --mp3-search)
+   aura_set_test_labels(Mp3MetadataSearch db)
     add_executable(TestCoverWallOrderIndex EXCLUDE_FROM_ALL
         tests/test_cover_wall_order_index.cpp
         tests/test_database_link_stubs.cpp
@@ -2998,6 +3001,34 @@ if(MSVC)
 endif()
 add_test(NAME WavPackDecode COMMAND TestWavPackDecode)
 
+add_executable(TestMp3Id3Reader EXCLUDE_FROM_ALL
+    tests/test_mp3_id3_reader.cpp
+    src/MetadataReader.cpp
+    src/platform/filesystem_std.cpp
+)
+if(WIN32)
+    target_sources(TestMp3Id3Reader PRIVATE
+        src/platform/filesystem_win32.cpp
+        src/platform/metadata_legacy_tag_content_win32.cpp
+        src/platform/text_encoding_win32.cpp)
+    target_compile_definitions(TestMp3Id3Reader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
+else()
+    target_sources(TestMp3Id3Reader PRIVATE
+        src/platform/metadata_legacy_tag_content_std.cpp
+        src/platform/text_encoding_std.cpp)
+endif()
+target_include_directories(TestMp3Id3Reader PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty
+    ${WAVPACK_DIR}/include
+)
+target_link_libraries(TestMp3Id3Reader PRIVATE harken_wavpack)
+target_compile_features(TestMp3Id3Reader PRIVATE cxx_std_17)
+if(MSVC)
+    target_compile_options(TestMp3Id3Reader PRIVATE /utf-8)
+endif()
+add_test(NAME Mp3Id3Reader COMMAND TestMp3Id3Reader)
+aura_set_test_labels(Mp3Id3Reader core)
 
 # WavPack decoding backend
 function(_harken_attach_wavpack_decoder target)
