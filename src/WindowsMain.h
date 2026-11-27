@@ -12,7 +12,6 @@
 
 #include "imgui.h"
 
-#ifdef _WIN32
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -21,6 +20,11 @@
 // Keep this public contract independent of the Win32 SDK.  WindowsMain.cpp
 // includes windows.h after this header; consumers only need ABI-compatible
 // handle and message types for the declarations below.
+//
+// The shell-service contract is shared by the Windows front end and the macOS
+// front end (app_entry_macos.mm + windowsmain_macos.mm), so the handle types are
+// aliased for non-Windows builds instead of hiding the declarations.
+#ifdef _WIN32
 #ifndef _WINDOWS_
 struct HWND__;
 struct HDC__;
@@ -36,6 +40,28 @@ using LPARAM = std::intptr_t;
 using LRESULT = std::intptr_t;
 #ifndef CALLBACK
 #define CALLBACK __stdcall
+#endif
+#endif
+#else
+// macOS: no Win32 SDK. The front end drives the product UI through AppKit, so
+// these handles are opaque placeholders that keep the shared signatures intact.
+struct HarkenPlatformWindow;
+struct HarkenPlatformDeviceContext;
+struct HarkenPlatformGLContext;
+using HWND = HarkenPlatformWindow*;
+using HDC = HarkenPlatformDeviceContext*;
+using HGLRC = HarkenPlatformGLContext*;
+using UINT = unsigned int;
+using WPARAM = std::uintptr_t;
+using LPARAM = std::intptr_t;
+using LRESULT = std::intptr_t;
+struct WINDOWPLACEMENT {
+    unsigned int length = 0;
+    unsigned int flags = 0;
+    unsigned int showCmd = 0;
+};
+#ifndef CALLBACK
+#define CALLBACK
 #endif
 #endif
 
@@ -261,5 +287,3 @@ void WriteBugReportJson(const std::string& type,
                         const std::string& email,
                         const std::string& sysInfo,
                         const std::string& recentLog);
-
-#endif // _WIN32
